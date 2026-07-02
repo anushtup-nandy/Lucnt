@@ -1,0 +1,85 @@
+[project]
+name = "lucnt"
+version = "0.1.0"
+description = "Financial infrastructure that attaches to your existing agents."
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "mypy>=1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lucnt"]
+
+# -----------------------------------------------------------------------------
+# Pytest
+# -----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+# -----------------------------------------------------------------------------
+# Ruff
+# -----------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "D",   # pydocstyle
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "D100", # Missing docstring in public module
+    "D104", # Missing docstring in public package
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "N"]
+# PolicyBlocked / BudgetExhausted are the documented public exception names
+# (sdk/PLAN.md §2, §7) — no Error suffix by design.
+"src/lucnt/exceptions.py" = ["N818"]
+
+# -----------------------------------------------------------------------------
+# mypy
+# -----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_subclassing_any = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_no_return = true
+warn_unreachable = true
+ignore_missing_imports = true
