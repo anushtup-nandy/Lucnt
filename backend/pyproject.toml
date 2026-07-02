@@ -14,6 +14,7 @@ dependencies = [
     "bcrypt>=4.1",
     "structlog>=24.0",
     "python-dotenv>=1.0",
+    "uuid6>=2024.1.12",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +80,8 @@ convention = "google"
 # -----------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.10"
+mypy_path = "src"
+explicit_package_bases = true
 strict = true
 warn_return_any = true
 warn_unused_configs = true
