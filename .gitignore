@@ -12,6 +12,7 @@ Thumbs.db
 # Logs
 logs/*.log
 *.log
+logs/
 
 # Python
 __pycache__/
@@ -77,3 +78,4 @@ docs/
 AGENTS.md
 CLAUDE.md
 
+.github/
