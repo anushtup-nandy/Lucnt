@@ -45,6 +45,7 @@ pnpm-debug.log*
 dist/
 dist-ssr/
 *.local
+CLAUDE.local.md
 
 # Frontend specific
 frontend/.env

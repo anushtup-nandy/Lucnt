@@ -1,1 +1,0 @@
-"""LUCNT backend package."""
