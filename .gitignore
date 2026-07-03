@@ -79,3 +79,4 @@ AGENTS.md
 CLAUDE.md
 
 .github/
+alembic/versions/*

@@ -1,0 +1,57 @@
+"""Authorization ORM model — a pending hold from `POST /transactions/authorize`.
+
+Money has not moved yet when this row is created (PLAN.md §3). `status` mirrors
+the SDK's `Verdict.status` (`sdk/src/lucnt/models.py`) exactly.
+"""
+
+from __future__ import annotations
+
+import enum
+import uuid
+from decimal import Decimal
+
+from sqlalchemy import Enum, ForeignKey, Numeric, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from lucnt.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
+
+
+class VerdictStatus(str, enum.Enum):
+    """Policy verdict on a spend, before money moves. Mirrors `sdk.Verdict.status`."""
+
+    APPROVED = "approved"
+    BLOCKED = "blocked"
+    REVIEW = "review"
+    HUMAN_HOLD = "human_hold"
+
+
+class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
+    """A pending spend hold awaiting (or having received) a policy verdict."""
+
+    __tablename__ = "authorizations"
+
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"))
+    entity_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id"))
+    vendor: Mapped[str] = mapped_column(String(255))
+    # NUMERIC, never FLOAT (sdk/PLAN.md: Decimal not float).
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    reason: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str | None] = mapped_column(String(255), default=None)
+    project: Mapped[str | None] = mapped_column(String(255), default=None)
+    model_used: Mapped[str | None] = mapped_column(String(100), default=None)
+    tokens_consumed: Mapped[int | None] = mapped_column(default=None)
+    status: Mapped[VerdictStatus] = mapped_column(
+        Enum(
+            VerdictStatus,
+            name="verdict_status",
+            values_callable=lambda e: [m.value for m in e],
+        )
+    )
+    # Plain UUID, no FK yet -- the `policies` table doesn't exist until Phase 3
+    # (root PLAN.md §4). The FK constraint lands with that migration.
+    policy_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    # The policy engine's own explanation for `status` (e.g. "exceeds monthly
+    # budget"), distinct from `reason` (the caller-supplied justification).
+    reason_text: Mapped[str | None] = mapped_column(Text, default=None)
