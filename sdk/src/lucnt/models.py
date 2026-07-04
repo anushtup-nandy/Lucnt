@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LucntConfig(BaseModel):
@@ -66,8 +66,47 @@ class Verdict(BaseModel):
         return self.status == "approved"
 
 
+class JournalLine(BaseModel):
+    """One double-entry journal line booked for a captured spend (Phase 2).
+
+    Mirrors the backend `JournalLine`; part of the frozen wire contract.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    account_name: str
+    account_code: str
+    debit: Decimal
+    credit: Decimal
+    ledger: str
+
+
+class TaxInfo(BaseModel):
+    """The jurisdiction tax treatment computed for a captured spend (Phase 2).
+
+    Mirrors the backend `TaxInfo`; part of the frozen wire contract. For a
+    reverse-charge spend `reverse_charge` and `self_invoice_generated` are True.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tax_type: str
+    jurisdiction: str
+    rate: Decimal
+    tax_amount: Decimal
+    is_reclaimable: bool
+    reclaim_amount: Decimal
+    legal_reference: str
+    reverse_charge: bool
+    self_invoice_generated: bool
+
+
 class Transaction(BaseModel):
-    """A committed spend, returned by `POST /transactions/capture`."""
+    """A committed spend, returned by `POST /transactions/capture`.
+
+    Phase 2 adds the `journal` (double-entry lines) and `tax` (treatment) the
+    backend books synchronously on capture.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -77,6 +116,8 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
+    journal: list[JournalLine] = Field(default_factory=list)
+    tax: TaxInfo | None = None
 
     @property
     def approved(self) -> bool:

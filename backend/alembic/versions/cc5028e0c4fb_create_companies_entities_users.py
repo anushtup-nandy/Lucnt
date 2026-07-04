@@ -75,4 +75,7 @@ def downgrade() -> None:
     op.drop_table('users')
     op.drop_table('entities')
     op.drop_table('companies')
+    # Postgres does not drop an ENUM type when its table is dropped; do it
+    # explicitly so a re-upgrade doesn't fail with "type already exists".
+    sa.Enum(name='user_role').drop(op.get_bind(), checkfirst=True)
     # ### end Alembic commands ###

@@ -130,4 +130,15 @@ def downgrade() -> None:
     op.drop_table('authorizations')
     op.drop_table('agents')
     op.drop_table('api_keys')
+    # Postgres does not drop ENUM types when their tables are dropped; do it
+    # explicitly so a re-upgrade doesn't fail with "type already exists".
+    bind = op.get_bind()
+    for enum_name in (
+        'transaction_status',
+        'transaction_source',
+        'verdict_status',
+        'agent_status',
+        'api_key_mode',
+    ):
+        sa.Enum(name=enum_name).drop(bind, checkfirst=True)
     # ### end Alembic commands ###

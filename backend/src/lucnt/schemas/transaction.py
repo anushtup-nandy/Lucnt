@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SpendRequest(BaseModel):
@@ -52,8 +52,46 @@ class CaptureRequest(BaseModel):
     invoice_url: str | None = None
 
 
+class JournalLine(BaseModel):
+    """One double-entry journal line returned with a captured transaction.
+
+    Mirrors `sdk.JournalLine`. Part of the frozen contract — keep in lockstep.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    account_name: str
+    account_code: str
+    debit: Decimal
+    credit: Decimal
+    ledger: str
+
+
+class TaxInfo(BaseModel):
+    """The tax treatment returned with a captured transaction.
+
+    Mirrors `sdk.TaxInfo`. Part of the frozen contract — keep in lockstep.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tax_type: str
+    jurisdiction: str
+    rate: Decimal
+    tax_amount: Decimal
+    is_reclaimable: bool
+    reclaim_amount: Decimal
+    legal_reference: str
+    reverse_charge: bool
+    self_invoice_generated: bool
+
+
 class Transaction(BaseModel):
-    """Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`."""
+    """Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`.
+
+    Phase 2 adds `journal` (double-entry lines) and `tax` (jurisdiction
+    treatment), both produced synchronously on capture.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -63,6 +101,8 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
+    journal: list[JournalLine] = Field(default_factory=list)
+    tax: TaxInfo | None = None
 
 
 class TransactionDetail(BaseModel):

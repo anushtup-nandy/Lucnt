@@ -22,6 +22,7 @@ from lucnt.models import (
     Authorization,
     Company,
     Entity,
+    TaxRecord,
     Transaction,
     TransactionSource,
     TransactionStatus,
@@ -29,12 +30,17 @@ from lucnt.models import (
 )
 from lucnt.schemas.transaction import (
     CaptureRequest,
+    JournalLine,
     SpendRequest,
+    TaxInfo,
     TransactionDetail,
     TransactionListResponse,
     Verdict,
 )
 from lucnt.schemas.transaction import Transaction as TransactionSchema
+from lucnt.services.chart_of_accounts import ensure_default_accounts
+from lucnt.services.journal_generator import generate_journal
+from lucnt.services.tax_engine import compute_tax
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -174,17 +180,71 @@ def capture(
 
     agent.spent_ytd += transaction.paid_amount
     agent.spent_today += transaction.paid_amount
-    db.commit()
-    db.refresh(transaction)
 
-    return TransactionSchema(
+    # Phase 2 (Books): compute tax + double-entry journal synchronously, in the
+    # same transaction as the capture, keyed off the persisted `transactions`
+    # row (lane-agnostic — CLAUDE.local.md). The card/invoice rails book
+    # through this exact path once they land.
+    entity = db.get(Entity, authorization.entity_id)
+    assert entity is not None, "authorizations.entity_id is FK-constrained"
+    tax = compute_tax(
+        tax_regime=entity.tax_regime,
+        paid_amount=transaction.paid_amount,
+        paid_currency=transaction.paid_currency,
+        entity_currency=entity.currency,
+    )
+    db.add(
+        TaxRecord(
+            transaction_id=transaction.id,
+            tax_type=tax.tax_type,
+            jurisdiction=tax.jurisdiction,
+            rate=tax.rate,
+            tax_amount=tax.tax_amount,
+            is_reclaimable=tax.is_reclaimable,
+            reclaim_amount=tax.reclaim_amount,
+            legal_reference=tax.legal_reference,
+            self_invoice_generated=tax.self_invoice_required,
+        )
+    )
+    accounts = ensure_default_accounts(db, company.id)
+    journal_lines = generate_journal(transaction, entity, tax, accounts)
+    db.add_all(journal_lines)
+
+    # Build the response payload before commit; expire_on_commit would otherwise
+    # force a reload per attribute below.
+    journal_payload = [
+        JournalLine(
+            account_name=line.account_name,
+            account_code=line.account_code,
+            debit=line.debit,
+            credit=line.credit,
+            ledger=line.ledger,
+        )
+        for line in journal_lines
+    ]
+    tax_payload = TaxInfo(
+        tax_type=tax.tax_type,
+        jurisdiction=tax.jurisdiction,
+        rate=tax.rate,
+        tax_amount=tax.tax_amount,
+        is_reclaimable=tax.is_reclaimable,
+        reclaim_amount=tax.reclaim_amount,
+        legal_reference=tax.legal_reference,
+        reverse_charge=tax.reverse_charge,
+        self_invoice_generated=tax.self_invoice_required,
+    )
+    result = TransactionSchema(
         id=transaction.id,
         authorization_id=transaction.authorization_id,
         status=transaction.status.value,
         vendor=transaction.vendor,
         amount=transaction.paid_amount,
         currency=transaction.paid_currency,
+        journal=journal_payload,
+        tax=tax_payload,
     )
+    db.commit()
+    return result
 
 
 @router.get("", response_model=TransactionListResponse)

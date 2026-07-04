@@ -74,7 +74,6 @@ secrets/
 temp/
 
 # Plans and OpenCode files
-docs/
 AGENTS.md
 CLAUDE.md
 

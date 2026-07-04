@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from lucnt.database import SessionLocal
 from lucnt.models import Agent, ApiKey, ApiKeyMode, Company, Entity
 from lucnt.security import generate_api_key, hash_api_key
+from lucnt.services.chart_of_accounts import ensure_default_accounts
 
 _COMPANY_SLUG = "acme-dev"
 
@@ -193,6 +194,9 @@ def main() -> None:
         company = _get_or_create_company(db)
         entities = _get_or_create_entities(db, company)
         _get_or_create_agents(db, company, entities)
+        # Default Chart of Accounts so the Books layer has accounts to post to
+        # (capture self-heals this too, but seed it explicitly for a clean start).
+        ensure_default_accounts(db, company.id)
         plaintext = _issue_api_key(db, company)
         db.commit()
         company_name, company_slug = company.name, company.slug

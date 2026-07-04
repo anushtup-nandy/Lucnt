@@ -8,11 +8,20 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt.database import get_db
 from lucnt.main import app
-from lucnt.models import Agent, ApiKey, ApiKeyMode, Company, Entity
+from lucnt.models import (
+    Agent,
+    ApiKey,
+    ApiKeyMode,
+    Company,
+    Entity,
+    JournalEntry,
+    TaxRecord,
+)
 from lucnt.security import generate_api_key, hash_api_key
 
 
@@ -218,6 +227,107 @@ def test_capture_commits_and_updates_agent_spend(
     db_session.refresh(agent)
     assert agent.spent_ytd == Decimal("1240.0000")
     assert agent.spent_today == Decimal("1240.0000")
+
+
+def test_capture_books_reverse_charge_journal_and_tax(
+    client: TestClient, db_session: Session
+) -> None:
+    """An imported service (USD paid by SGD entity) books RCM + balanced journal."""
+    company, key = _make_company_with_key(db_session)
+    entity = _make_entity(db_session, company, code="sg", currency="SGD")
+    _make_agent(db_session, company, entity)
+
+    verdict = client.post(
+        "/transactions/authorize",
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "openai",
+            "amount": "100",
+            "currency": "USD",
+            "reason": "token batch",
+            "model": "gpt-5",
+            "tokens": 128000,
+        },
+        headers=_auth_headers(key),
+    ).json()
+    body = client.post(
+        "/transactions/capture",
+        json={"authorization_id": verdict["authorization_id"], "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+
+    tax = body["tax"]
+    assert tax["tax_type"] == "GST_RCM"
+    assert tax["reverse_charge"] is True
+    assert tax["self_invoice_generated"] is True
+    assert Decimal(tax["rate"]) == Decimal("0.09")
+    assert Decimal(tax["tax_amount"]) == Decimal("9.00")  # 9% on top of 100
+
+    journal = body["journal"]
+    assert len(journal) == 4
+    total_debit = sum(Decimal(line["debit"]) for line in journal)
+    total_credit = sum(Decimal(line["credit"]) for line in journal)
+    assert total_debit == total_credit == Decimal("109.00")
+
+    # Persisted, not just returned.
+    tx_id = uuid.UUID(body["id"])
+    persisted_lines = (
+        db_session.execute(
+            select(JournalEntry).where(JournalEntry.transaction_id == tx_id)
+        )
+        .scalars()
+        .all()
+    )
+    assert len(persisted_lines) == 4
+    tax_rows = (
+        db_session.execute(
+            select(TaxRecord).where(TaxRecord.transaction_id == tx_id)
+        )
+        .scalars()
+        .all()
+    )
+    assert len(tax_rows) == 1
+    assert tax_rows[0].self_invoice_generated is True
+
+
+def test_capture_books_domestic_gst(
+    client: TestClient, db_session: Session
+) -> None:
+    """A domestic service (INR paid by an INR entity) extracts embedded GST, no RCM."""
+    company, key = _make_company_with_key(db_session)
+    entity = _make_entity(db_session, company, code="in", currency="INR")
+    _make_agent(db_session, company, entity)
+
+    verdict = client.post(
+        "/transactions/authorize",
+        json={
+            "agent": "ops",
+            "entity": "in",
+            "vendor": "local_saas",
+            "amount": "118",
+            "currency": "INR",
+            "reason": "domestic subscription",
+        },
+        headers=_auth_headers(key),
+    ).json()
+    body = client.post(
+        "/transactions/capture",
+        json={"authorization_id": verdict["authorization_id"], "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+
+    tax = body["tax"]
+    assert tax["tax_type"] == "GST"
+    assert tax["reverse_charge"] is False
+    assert tax["self_invoice_generated"] is False
+    assert Decimal(tax["tax_amount"]) == Decimal("18.00")  # 118 * 0.18 / 1.18
+
+    journal = body["journal"]
+    assert len(journal) == 3
+    total_debit = sum(Decimal(line["debit"]) for line in journal)
+    total_credit = sum(Decimal(line["credit"]) for line in journal)
+    assert total_debit == total_credit == Decimal("118")
 
 
 def test_capture_rejects_double_capture(

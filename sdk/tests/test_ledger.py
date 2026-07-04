@@ -186,6 +186,60 @@ def test_capture_sends_the_authorization_id_and_returns_the_transaction(
     assert tx.approved
 
 
+def test_capture_parses_journal_and_tax(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Phase 2 capture response deserializes journal lines + tax treatment."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "tx_2",
+                "authorization_id": "auth_2",
+                "status": "completed",
+                "vendor": "openai",
+                "amount": 100,
+                "currency": "USD",
+                "journal": [
+                    {
+                        "account_code": "6020",
+                        "account_name": "AI & Compute",
+                        "debit": 100,
+                        "credit": 0,
+                        "ledger": "in",
+                    },
+                    {
+                        "account_code": "1010",
+                        "account_name": "Cash & Wallet",
+                        "debit": 0,
+                        "credit": 100,
+                        "ledger": "in",
+                    },
+                ],
+                "tax": {
+                    "tax_type": "GST_RCM",
+                    "jurisdiction": "India",
+                    "rate": 0.18,
+                    "tax_amount": 18,
+                    "is_reclaimable": True,
+                    "reclaim_amount": 18,
+                    "legal_reference": "IGST Act 2017 s.5(3)",
+                    "reverse_charge": True,
+                    "self_invoice_generated": True,
+                },
+            },
+        )
+
+    _stub(monkeypatch, handler)
+    verdict = Verdict(authorization_id="auth_2", status="approved", reason=None)
+    tx = ledger.capture(verdict)
+    assert len(tx.journal) == 2
+    assert tx.journal[0].debit == Decimal("100")
+    assert tx.tax is not None
+    assert tx.tax.tax_type == "GST_RCM"
+    assert tx.tax.reverse_charge is True
+    assert tx.tax.tax_amount == Decimal("18")
+
+
 def test_spend_captures_when_approved(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/transactions/authorize":

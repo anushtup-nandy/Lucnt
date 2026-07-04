@@ -21,15 +21,17 @@ from lucnt.exceptions import (
     TransportError,
 )
 from lucnt.ledger import authorize, capture, spend
-from lucnt.models import TaskContext, Transaction, Verdict
+from lucnt.models import JournalLine, TaskContext, TaxInfo, Transaction, Verdict
 
 __all__ = [
     "AuthError",
     "BudgetExhausted",
     "ConfigurationError",
+    "JournalLine",
     "LucntError",
     "PolicyBlocked",
     "TaskContext",
+    "TaxInfo",
     "Transaction",
     "TransportError",
     "Verdict",
