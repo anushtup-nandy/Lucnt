@@ -130,24 +130,45 @@ def authorize(
     return verdict
 
 
-def capture(verdict: Verdict, *, invoice_url: str | None = None) -> Transaction:
+def capture(
+    verdict: Verdict,
+    *,
+    invoice_url: str | None = None,
+    amount: Decimal | float | int | str | None = None,
+    model: str | None = None,
+    tokens: int | None = None,
+) -> Transaction:
     """Commit the spend approved by `verdict` to the ledger.
+
+    `amount`/`model`/`tokens` **settle** the transaction with values known only
+    after the spend — the actual LLM cost from `meter()`, for instance. When
+    omitted, the authorization's held values stand (the common SDK path). This
+    is the hold-vs-settle split: `authorize` holds an estimate, `capture` books
+    the truth.
 
     Args:
         verdict: The `Verdict` returned by `authorize()`.
         invoice_url: Optional evidence link attached to the transaction.
+        amount: The actual settled amount (overrides the authorized estimate).
+        model: The actual model used (overrides the authorized value).
+        tokens: The actual tokens consumed (overrides the authorized value).
 
     Returns:
         The booked `Transaction`.
     """
+    body: dict[str, object] = {
+        "authorization_id": verdict.authorization_id,
+        "source": "sdk",
+        "invoice_url": invoice_url,
+    }
+    if amount is not None:
+        body["amount"] = str(_as_decimal(amount))  # Decimal → str for JSON
+    if model is not None:
+        body["model"] = model
+    if tokens is not None:
+        body["tokens"] = tokens
     response = _get_transport().request(
-        "POST",
-        "/transactions/capture",
-        json={
-            "authorization_id": verdict.authorization_id,
-            "source": "sdk",
-            "invoice_url": invoice_url,
-        },
+        "POST", "/transactions/capture", json=body
     )
     return Transaction.model_validate(response.json())
 

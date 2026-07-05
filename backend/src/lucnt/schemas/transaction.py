@@ -51,13 +51,23 @@ class Verdict(BaseModel):
 
 
 class CaptureRequest(BaseModel):
-    """Request body for `POST /transactions/capture`. Mirrors `sdk.ledger.capture()`."""
+    """Request body for `POST /transactions/capture`. Mirrors `sdk.ledger.capture()`.
+
+    Phase 3.5 adds optional settlement overrides (`amount`/`model`/`tokens`):
+    the actual values known only after the spend (e.g. the true LLM cost from
+    `meter()`). When omitted, the authorization's held values stand. This is the
+    hold-vs-settle split — `authorize` holds an estimate, `capture` books truth
+    — and the same fields serve the future card rail (auth $X, settle $Y).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     authorization_id: uuid.UUID
     source: Literal["sdk", "card", "invoice"] = "sdk"
     invoice_url: str | None = None
+    amount: Decimal | None = None
+    model: str | None = None
+    tokens: int | None = None
 
 
 class JournalLine(BaseModel):

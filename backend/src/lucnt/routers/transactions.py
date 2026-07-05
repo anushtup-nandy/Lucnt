@@ -203,6 +203,19 @@ def capture(
     assert agent is not None, "authorizations.agent_id is FK-constrained to agents.id"
     currency = authorization.currency or "USD"
 
+    # Settlement overrides (Phase 3.5): the actual amount/model/tokens known only
+    # after the spend (e.g. real LLM cost from meter()); the authorization's held
+    # values stand when not provided.
+    paid_amount = (
+        request.amount if request.amount is not None else authorization.amount
+    )
+    model_used = (
+        request.model if request.model is not None else authorization.model_used
+    )
+    tokens_consumed = (
+        request.tokens if request.tokens is not None else authorization.tokens_consumed
+    )
+
     transaction = Transaction(
         company_id=company.id,
         agent_id=authorization.agent_id,
@@ -211,14 +224,14 @@ def capture(
         source=TransactionSource.SDK,
         vendor=authorization.vendor,
         item_description=authorization.reason,
-        paid_amount=authorization.amount,
+        paid_amount=paid_amount,
         paid_currency=currency,
-        local_amount=authorization.amount,
+        local_amount=paid_amount,
         local_currency=currency,
         project=authorization.project,
         intent=authorization.intent,
-        model_used=authorization.model_used,
-        tokens_consumed=authorization.tokens_consumed,
+        model_used=model_used,
+        tokens_consumed=tokens_consumed,
         status=TransactionStatus.COMPLETED,
         approval_method="auto",
         reason_text=authorization.reason_text,

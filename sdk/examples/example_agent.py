@@ -15,6 +15,11 @@ authorize (the seeded "No crypto exchanges" merchant rule), surfaced as a typed
 `PolicyBlocked` under `strict=True`; `check_budget()` reads an agent's live
 utilisation (self-regulation).
 
+Phase 3.5 (meter) addition: `meter()` wraps a customer's LLM client so each
+completion call is authorized before and captured after — with the real
+cost/model/tokens read from usage. A stub client stands in here so the demo
+needs no API key.
+
 Requires a live backend at LUCNT_BASE_URL (see infra/PLAN.md) seeded via
 `scripts/seed_dev.py`. Not collected by pytest (testpaths = ["tests"]); run
 manually:
@@ -24,8 +29,36 @@ manually:
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import lucnt
+
+
+class _StubUsage:
+    """Token usage, shaped like an Anthropic `response.usage`."""
+
+    input_tokens = 12_000
+    output_tokens = 3_000
+
+
+class _StubMessages:
+    """Stands in for `client.messages` — records nothing, returns a fixed usage."""
+
+    def create(self, **kwargs: object) -> object:
+        """Mimic `messages.create`, returning a response with model + usage."""
+        print(f"[example]   (stub LLM call for model {kwargs.get('model')})")
+        return SimpleNamespace(model=kwargs["model"], usage=_StubUsage())
+
+
+class _StubAnthropicClient:
+    """A tiny stand-in for `anthropic.Anthropic()` so the demo needs no API key."""
+
+    messages = _StubMessages()
+
+
+# `meter()` detects the vendor by the client's module; spoof it so the stub is
+# treated as an Anthropic client. Real callers pass `OpenAI()` / `Anthropic()`.
+_StubAnthropicClient.__module__ = "anthropic"
 
 
 def _assert_booked(tx: lucnt.Transaction) -> None:
@@ -139,6 +172,23 @@ def main() -> None:
     print(
         f"[example] research budget: spent {status.spent}/{status.monthly_budget} "
         f"({status.pct_used}% used, status={status.status})"
+    )
+
+    # ── Phase 3.5: meter() auto-instrumentation ──────────────────────────
+    # Wrap the (stub) LLM client once; the completion call is now authorized
+    # before and captured after, with real cost/model/tokens from usage.
+    metered = lucnt.meter(_StubAnthropicClient(), agent="research", entity="in")
+    metered.messages.create(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "summarize the filing"}],
+        max_tokens=4096,
+    )
+    after = lucnt.check_budget(agent="research")
+    if after.spent <= status.spent:
+        raise AssertionError("metered call should have increased research spend")
+    print(
+        f"[example] metered LLM call captured; research spend {status.spent} "
+        f"-> {after.spent}"
     )
 
 

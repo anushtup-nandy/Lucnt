@@ -229,6 +229,54 @@ def test_capture_commits_and_updates_agent_spend(
     assert agent.spent_today == Decimal("1240.0000")
 
 
+def test_capture_settles_actual_amount_over_authorized_estimate(
+    client: TestClient, db_session: Session
+) -> None:
+    """capture() may settle a different amount/model/tokens than authorized."""
+    company, key = _make_company_with_key(db_session)
+    agent = _make_agent(db_session, company, _make_entity(db_session, company))
+
+    # Authorize an estimate (as meter() would, before the LLM call).
+    verdict = client.post(
+        "/transactions/authorize",
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "anthropic",
+            "amount": "5.00",  # pre-call estimate
+            "currency": "SGD",
+            "reason": "llm call",
+            "model": "claude-opus-4-8",
+        },
+        headers=_auth_headers(key),
+    ).json()
+
+    # Capture the actual, cheaper cost with real model/tokens.
+    body = client.post(
+        "/transactions/capture",
+        json={
+            "authorization_id": verdict["authorization_id"],
+            "source": "sdk",
+            "amount": "1.2340",
+            "model": "claude-opus-4-8",
+            "tokens": 1500,
+        },
+        headers=_auth_headers(key),
+    ).json()
+    # settled at the actual, not the 5.00 estimate
+    assert Decimal(body["amount"]) == Decimal("1.2340")
+
+    db_session.refresh(agent)
+    # agent spend reflects the actual, not the estimate
+    assert agent.spent_ytd == Decimal("1.2340")
+
+    detail = client.get(
+        f"/transactions/{body['id']}", headers=_auth_headers(key)
+    ).json()
+    assert detail["model_used"] == "claude-opus-4-8"
+    assert detail["tokens_consumed"] == 1500
+
+
 def test_capture_books_reverse_charge_journal_and_tax(
     client: TestClient, db_session: Session
 ) -> None:

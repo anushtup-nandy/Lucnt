@@ -2,9 +2,9 @@
 
 Public surface: `configure()`, `task()`, `authorize()`, `capture()`, `spend()`
 — the universal spend-type-agnostic primitive — plus `check_budget()` (Phase 3
-self-regulation read), their typed models, and the SDK's exception hierarchy.
-`meter`/`query` land in later phases as the backend surfaces they depend on are
-built out (see `sdk/PLAN.md` §5).
+self-regulation read) and `meter()` (Phase 3.5 auto-instrumentation for
+LLM/vendor clients), their typed models, and the SDK's exception hierarchy.
+`query` lands in a later phase (see `sdk/PLAN.md` §5).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from lucnt.exceptions import (
     TransportError,
 )
 from lucnt.ledger import authorize, capture, check_budget, spend
+from lucnt.meter import meter
 from lucnt.models import (
     BudgetStatus,
     JournalLine,
@@ -48,6 +49,7 @@ __all__ = [
     "capture",
     "check_budget",
     "configure",
+    "meter",
     "spend",
     "task",
 ]

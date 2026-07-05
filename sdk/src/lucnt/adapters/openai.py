@@ -1,0 +1,54 @@
+"""OpenAI client adapter for `meter()` (Phase 3.5 / B).
+
+Wraps `client.chat.completions.create(...)`; reads
+`response.usage.prompt_tokens` / `completion_tokens` and `response.model`.
+Detection is by module so `lucnt` never imports `openai`.
+
+⚠️ Pricing here is a STARTER TABLE, not authoritative. OpenAI prices drift and
+this list is intentionally small — verify against current OpenAI pricing and
+extend it for your models before relying on the booked cost. An unpriced model
+raises (fail loud) rather than booking a wrong number. `max_completion_tokens`
+is checked in addition to `max_tokens` for the output estimate.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from decimal import Decimal
+
+from lucnt.adapters.base import MeterAdapter, Usage, _int_attr
+from lucnt.exceptions import LucntError
+
+# USD per 1M tokens. STARTER VALUES — verify and extend before production use.
+_PRICING: Mapping[str, tuple[Decimal, Decimal]] = {
+    "gpt-4o": (Decimal("2.50"), Decimal("10.00")),
+    "gpt-4o-mini": (Decimal("0.15"), Decimal("0.60")),
+    "gpt-4-turbo": (Decimal("10.00"), Decimal("30.00")),
+    "gpt-3.5-turbo": (Decimal("0.50"), Decimal("1.50")),
+}
+
+
+class OpenAIAdapter(MeterAdapter):
+    """Adapter for the OpenAI Python SDK's synchronous client."""
+
+    vendor = "openai"
+    method_path = ("chat", "completions", "create")
+    pricing = _PRICING
+    output_token_keys = ("max_completion_tokens", "max_tokens")
+
+    def matches(self, client: object) -> bool:
+        """Match a synchronous `openai.OpenAI` client by module + class."""
+        module = type(client).__module__.split(".", 1)[0]
+        return module == "openai" and "Async" not in type(client).__qualname__
+
+    def usage_from_response(self, response: object) -> Usage:
+        """Read `.model` + `.usage.{prompt,completion}_tokens` off a chat response."""
+        usage = getattr(response, "usage", None)
+        model = getattr(response, "model", None)
+        if usage is None or not isinstance(model, str):
+            raise LucntError("openai: response has no usage/model to meter")
+        return Usage(
+            model=model,
+            input_tokens=_int_attr(usage, "prompt_tokens"),
+            output_tokens=_int_attr(usage, "completion_tokens"),
+        )
