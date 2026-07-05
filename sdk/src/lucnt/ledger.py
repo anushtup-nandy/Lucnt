@@ -15,8 +15,21 @@ from decimal import Decimal
 from lucnt.client import Transport
 from lucnt.config import get_config
 from lucnt.context import get_current_task
-from lucnt.exceptions import ConfigurationError
-from lucnt.models import LucntConfig, SpendRequest, Transaction, Verdict
+from lucnt.exceptions import (
+    BudgetExhausted,
+    ConfigurationError,
+    LucntError,
+    PolicyBlocked,
+)
+from lucnt.models import (
+    BudgetStatus,
+    LucntConfig,
+    SpendRequest,
+    Transaction,
+    Verdict,
+)
+
+_BUDGET_EXHAUSTED_CODE = "budget_exhausted"
 
 _transport: Transport | None = None
 _transport_config: LucntConfig | None = None
@@ -53,6 +66,19 @@ def _as_decimal(amount: Decimal | float | int | str) -> Decimal:
     return amount if isinstance(amount, Decimal) else Decimal(str(amount))
 
 
+def _raise_for_verdict(verdict: Verdict) -> None:
+    """Raise the typed exception matching a non-approved verdict (strict mode)."""
+    exc_type = (
+        BudgetExhausted if verdict.code == _BUDGET_EXHAUSTED_CODE else PolicyBlocked
+    )
+    raise exc_type(
+        f"spend {verdict.status}: {verdict.reason or verdict.code}",
+        status=verdict.status,
+        code=verdict.code,
+        reason=verdict.reason,
+    )
+
+
 def authorize(
     *,
     vendor: str,
@@ -65,16 +91,22 @@ def authorize(
     project: str | None = None,
     model: str | None = None,
     tokens: int | None = None,
+    strict: bool = False,
 ) -> Verdict:
     """Ask policy for a verdict on a spend, before any money moves.
 
     `agent`/`entity`/`intent`/`project` fall back to the ambient `task()`
-    context when not passed explicitly.
+    context when not passed explicitly. With `strict=True`, a non-approved
+    verdict raises instead of returning — `BudgetExhausted` if the block was a
+    budget cap, else `PolicyBlocked` (which `BudgetExhausted` subclasses).
 
     Returns:
-        A `Verdict`. Always check `.approved` before spending — a blocking
-        verdict is returned here, never raised. `strict=True` raising lands
-        in P3 once the policy engine differentiates block reasons.
+        A `Verdict`. With `strict=False` (default) a blocking verdict is
+        returned, never raised — always check `.approved` before spending.
+
+    Raises:
+        PolicyBlocked: `strict=True` and the verdict was not approved.
+        BudgetExhausted: `strict=True` and the block was a budget cap.
     """
     ctx = get_current_task()
     request = SpendRequest(
@@ -92,7 +124,10 @@ def authorize(
     response = _get_transport().request(
         "POST", "/transactions/authorize", json=request.model_dump(mode="json")
     )
-    return Verdict.model_validate(response.json())
+    verdict = Verdict.model_validate(response.json())
+    if strict and not verdict.approved:
+        _raise_for_verdict(verdict)
+    return verdict
 
 
 def capture(verdict: Verdict, *, invoice_url: str | None = None) -> Transaction:
@@ -130,15 +165,17 @@ def spend(
     model: str | None = None,
     tokens: int | None = None,
     invoice_url: str | None = None,
+    strict: bool = False,
 ) -> Verdict | Transaction:
     """Authorize and, if approved, immediately capture — the atomic convenience.
 
-    For flows with nothing to gate mid-way (no purchase step between
-    authorize and capture).
+    For flows with nothing to gate mid-way (no purchase step between authorize
+    and capture). `strict=True` is forwarded to `authorize()`, so a non-approved
+    verdict raises (`PolicyBlocked` / `BudgetExhausted`) instead of returning.
 
     Returns:
-        The booked `Transaction` if approved, otherwise the blocking
-        `Verdict` unchanged — check `.approved` on the result either way.
+        The booked `Transaction` if approved. With `strict=False`, a blocking
+        `Verdict` is returned unchanged; with `strict=True` it raises instead.
     """
     verdict = authorize(
         vendor=vendor,
@@ -151,7 +188,37 @@ def spend(
         project=project,
         model=model,
         tokens=tokens,
+        strict=strict,
     )
     if not verdict.approved:
         return verdict
     return capture(verdict, invoice_url=invoice_url)
+
+
+def check_budget(*, agent: str | None = None) -> BudgetStatus:
+    """Read an agent's live budget utilisation (M8 — self-regulation).
+
+    `agent` falls back to the ambient `task()` context when not passed.
+
+    Returns:
+        A `BudgetStatus` for the agent (monthly budget, spend, remaining,
+        pct used, and an `ok`/`warning`/`exhausted` label).
+
+    Raises:
+        ConfigurationError: No agent given and none set via `task()`.
+        LucntError: No budget row matches the agent for this API key.
+    """
+    ctx = get_current_task()
+    slug = _resolve_required(agent, ctx.agent if ctx else None, "agent")
+    response = _get_transport().request("GET", "/budgets")
+    for row in response.json()["agents"]:
+        if row["slug"] == slug:
+            return BudgetStatus(
+                agent=slug,
+                monthly_budget=row["monthly_budget"],
+                spent=row["spent"],
+                remaining=row["remaining"],
+                pct_used=row["pct_used"],
+                status=row["status"],
+            )
+    raise LucntError(f"no budget found for agent {slug!r}")

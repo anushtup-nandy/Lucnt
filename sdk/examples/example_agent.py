@@ -10,8 +10,14 @@ double-entry `journal` and a jurisdiction `tax` treatment. A domestic spend
 (SGD by the SG entity) is standard GST; an imported spend (USD by the IN
 entity) is reverse charge with a self-invoice.
 
-Requires a live backend at LUCNT_BASE_URL (see infra/PLAN.md). Not collected
-by pytest (testpaths = ["tests"]); run manually:
+Phase 3 (Policy engine + budgets) additions: a policy block is enforced at
+authorize (the seeded "No crypto exchanges" merchant rule), surfaced as a typed
+`PolicyBlocked` under `strict=True`; `check_budget()` reads an agent's live
+utilisation (self-regulation).
+
+Requires a live backend at LUCNT_BASE_URL (see infra/PLAN.md) seeded via
+`scripts/seed_dev.py`. Not collected by pytest (testpaths = ["tests"]); run
+manually:
     python -m examples.example_agent
 """
 
@@ -102,6 +108,37 @@ def main() -> None:
     print(
         f"[example] captured generic-vendor {result.id}: {result.tax.tax_type} "
         f"{result.tax.tax_amount} (reverse charge), {len(result.journal)} journal lines"
+    )
+
+    # ── Phase 3: policy engine + budgets ─────────────────────────────────
+    # The seeded "No crypto exchanges" policy blocks coinbase for every agent.
+    # strict=True turns the block into a typed PolicyBlocked instead of a
+    # falsy verdict — a blocked spend can never be silently ignored.
+    try:
+        lucnt.spend(
+            agent="ops",
+            entity="sg",
+            vendor="coinbase",
+            amount=100,
+            currency="SGD",
+            reason="buy crypto — must be policy-blocked",
+            strict=True,
+        )
+    except lucnt.PolicyBlocked as exc:
+        print(
+            f"[example] policy blocked coinbase as expected: "
+            f"{exc.code} - {exc.reason}"
+        )
+    else:
+        raise AssertionError("expected the crypto spend to be policy-blocked")
+
+    # check_budget: an agent reading its own live budget to self-regulate (M8).
+    status = lucnt.check_budget(agent="research")
+    if status.remaining < 0:
+        raise AssertionError("remaining budget should not be negative here")
+    print(
+        f"[example] research budget: spent {status.spent}/{status.monthly_budget} "
+        f"({status.pct_used}% used, status={status.status})"
     )
 
 

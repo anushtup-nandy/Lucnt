@@ -33,12 +33,20 @@ class SpendRequest(BaseModel):
 
 
 class Verdict(BaseModel):
-    """Response body for `POST /transactions/authorize`. Mirrors `sdk.Verdict`."""
+    """Response body for `POST /transactions/authorize`. Mirrors `sdk.Verdict`.
+
+    Phase 3 adds `code`, a machine-readable reason (`ok`, `budget_exhausted`,
+    `merchant_blocked`, `velocity_exceeded`, `amount_over_threshold`,
+    `outside_hours`) the SDK maps to typed exceptions under `strict=True`. It is
+    an open string set (each future rule adds a code), not a `Literal`, so a new
+    code never breaks an older SDK.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     authorization_id: uuid.UUID
     status: Literal["approved", "blocked", "review", "human_hold"]
+    code: str = "ok"
     reason: str | None = None
 
 

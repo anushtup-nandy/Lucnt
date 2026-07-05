@@ -22,7 +22,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt.database import SessionLocal
-from lucnt.models import Agent, ApiKey, ApiKeyMode, Company, Entity
+from lucnt.models import (
+    Agent,
+    ApiKey,
+    ApiKeyMode,
+    Company,
+    Entity,
+    Policy,
+    PolicyRuleType,
+    PolicyScopeType,
+)
 from lucnt.security import generate_api_key, hash_api_key
 from lucnt.services.chart_of_accounts import ensure_default_accounts
 
@@ -172,6 +181,45 @@ def _get_or_create_agents(
     db.flush()
 
 
+# (name, rule_type, config, description) — company-wide defaults. Chosen NOT to
+# block the example_agent's normal spends: crypto exchanges nobody uses, and a
+# review threshold well above the demo amounts.
+_POLICIES: list[tuple[str, PolicyRuleType, dict[str, object], str]] = [
+    (
+        "No crypto exchanges",
+        PolicyRuleType.MERCHANT_LIST,
+        {"mode": "block", "vendors": ["coinbase", "binance"]},
+        "Agent spend on crypto exchanges is blocked outright.",
+    ),
+    (
+        "Review large spends",
+        PolicyRuleType.AMOUNT_THRESHOLD,
+        {"max_amount": "100000", "action": "review"},
+        "Single spends over 100,000 are flagged for human review.",
+    ),
+]
+
+
+def _get_or_create_policies(db: Session, company: Company) -> None:
+    for name, rule_type, config, description in _POLICIES:
+        existing = db.execute(
+            select(Policy).where(Policy.company_id == company.id, Policy.name == name)
+        ).scalar_one_or_none()
+        if existing is not None:
+            continue
+        db.add(
+            Policy(
+                company_id=company.id,
+                name=name,
+                rule_type=rule_type,
+                config_json=config,
+                scope_type=PolicyScopeType.COMPANY,
+                description=description,
+            )
+        )
+    db.flush()
+
+
 def _issue_api_key(db: Session, company: Company) -> str:
     plaintext = generate_api_key(ApiKeyMode.LIVE)
     db.add(
@@ -194,6 +242,7 @@ def main() -> None:
         company = _get_or_create_company(db)
         entities = _get_or_create_entities(db, company)
         _get_or_create_agents(db, company, entities)
+        _get_or_create_policies(db, company)
         # Default Chart of Accounts so the Books layer has accounts to post to
         # (capture self-heals this too, but seed it explicitly for a clean start).
         ensure_default_accounts(db, company.id)
@@ -206,6 +255,7 @@ def main() -> None:
     print(f"Company: {company_name} ({company_slug})")
     print(f"Entities: {', '.join(sorted(entities))}")
     print(f"Agents: {', '.join(seed.slug for seed in _AGENTS)}")
+    print(f"Policies: {', '.join(name for name, *_ in _POLICIES)}")
     print()
     print(f"LUCNT_API_KEY={plaintext}")
     print("(shown once -- only its hash is stored)")

@@ -1,18 +1,20 @@
 """Transactions router — the authorize→capture spine (backend/PLAN.md §4).
 
-Phase 1 scope: the verdict is a single budget-cap check against
-`agents.monthly_budget`/`spent_ytd`. The full policy engine (merchant allow/
-blocklist, velocity, time-of-day, a `policies` table) is Phase 3.
+`authorize()` runs the full policy engine (`services/policy_engine.py`, Phase 3):
+an always-on monthly-budget invariant plus every active company/agent-scoped
+policy (merchant lists, velocity, amount thresholds, time-of-day), reduced
+most-restrictive-wins to a verdict + machine-readable `code`. `capture()` commits
+the spend and books tax + double-entry journal (Phase 2).
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,8 @@ from lucnt.models import (
     Authorization,
     Company,
     Entity,
+    Policy,
+    PolicyScopeType,
     TaxRecord,
     Transaction,
     TransactionSource,
@@ -40,6 +44,7 @@ from lucnt.schemas.transaction import (
 from lucnt.schemas.transaction import Transaction as TransactionSchema
 from lucnt.services.chart_of_accounts import ensure_default_accounts
 from lucnt.services.journal_generator import generate_journal
+from lucnt.services.policy_engine import SpendContext, evaluate_spend
 from lucnt.services.tax_engine import compute_tax
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -65,19 +70,30 @@ def _resolve_entity(db: Session, company: Company, code: str) -> Entity:
     return entity
 
 
-def _evaluate_budget_cap(
-    agent: Agent, amount: Decimal
-) -> tuple[VerdictStatus, str | None]:
-    """The Phase 1 verdict: block only if projected spend exceeds the monthly cap.
+def _now_in_entity_tz(entity: Entity) -> datetime:
+    """Current time in the entity's local timezone (UTC if the tz string is bad)."""
+    tz: tzinfo
+    try:
+        tz = ZoneInfo(entity.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = timezone.utc
+    return datetime.now(tz)
 
-    Superseded by the full policy engine in Phase 3 (root PLAN.md §4).
-    """
-    projected = agent.spent_ytd + amount
-    if projected > agent.monthly_budget:
-        return VerdictStatus.BLOCKED, (
-            f"projected spend {projected} exceeds monthly budget {agent.monthly_budget}"
-        )
-    return VerdictStatus.APPROVED, None
+
+def _fetch_active_policies(db: Session, company: Company, agent: Agent) -> list[Policy]:
+    """Active policies applicable to this agent: company-wide + agent-scoped (M5)."""
+    stmt = select(Policy).where(
+        Policy.company_id == company.id,
+        Policy.active.is_(True),
+        or_(
+            Policy.scope_type == PolicyScopeType.COMPANY,
+            and_(
+                Policy.scope_type == PolicyScopeType.AGENT,
+                Policy.scope_id == agent.id,
+            ),
+        ),
+    )
+    return list(db.execute(stmt).scalars().all())
 
 
 @router.post("/authorize", response_model=Verdict)
@@ -86,10 +102,47 @@ def authorize(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
 ) -> Verdict:
-    """Evaluate policy on a spend before any money moves."""
+    """Evaluate the policy engine on a spend before any money moves (M5)."""
     agent = _resolve_agent(db, company, request.agent)
     entity = _resolve_entity(db, company, request.entity)
-    verdict_status, reason_text = _evaluate_budget_cap(agent, request.amount)
+
+    policies = _fetch_active_policies(db, company, agent)
+    now = _now_in_entity_tz(entity)
+
+    def recent_count(window: timedelta) -> int:
+        """Committed spends by this agent within `window` ending now (for velocity)."""
+        return db.execute(
+            select(func.count())
+            .select_from(Transaction)
+            .where(
+                Transaction.agent_id == agent.id,
+                Transaction.transaction_date >= now - window,
+            )
+        ).scalar_one()
+
+    ctx = SpendContext(
+        amount=request.amount,
+        currency=request.currency,
+        vendor=request.vendor,
+        now=now,
+        agent_monthly_budget=agent.monthly_budget,
+        agent_spent=agent.spent_ytd,
+        agent_spent_today=agent.spent_today,
+        recent_count=recent_count,
+    )
+    decision = evaluate_spend(policies, ctx)
+
+    # Bump per-policy telemetry: hit for every rule that fired, block for the
+    # ones that returned a blocking verdict (drives the "blocked N times" UI).
+    for policy in policies:
+        if policy.id in decision.fired_policy_ids:
+            policy.hit_count += 1
+        if policy.id in decision.blocking_policy_ids:
+            policy.block_count += 1
+
+    policy_id = next(
+        iter(decision.blocking_policy_ids or decision.fired_policy_ids), None
+    )
 
     authorization = Authorization(
         company_id=company.id,
@@ -103,8 +156,9 @@ def authorize(
         project=request.project,
         model_used=request.model,
         tokens_consumed=request.tokens,
-        status=verdict_status,
-        reason_text=reason_text,
+        status=decision.status,
+        policy_id=policy_id,
+        reason_text=decision.reason,
     )
     db.add(authorization)
     db.commit()
@@ -112,8 +166,9 @@ def authorize(
 
     return Verdict(
         authorization_id=authorization.id,
-        status=verdict_status.value,
-        reason=reason_text,
+        status=decision.status.value,
+        code=decision.code.value,
+        reason=decision.reason,
     )
 
 

@@ -24,8 +24,30 @@ class TransportError(LucntError):
 
 
 class PolicyBlocked(LucntError):
-    """Raised by `authorize()`/`spend()` in strict mode when policy blocks a spend."""
+    """Raised by `authorize()`/`spend()` in strict mode on a non-approved verdict.
+
+    Carries the verdict's `status` (blocked/review/human_hold), machine-readable
+    `code`, and human `reason` so callers that catch it can still branch.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: str | None = None,
+        code: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Store the verdict fields alongside the message."""
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.reason = reason
 
 
-class BudgetExhausted(LucntError):
-    """Raised by `authorize()`/`spend()` in strict mode when a budget is exhausted."""
+class BudgetExhausted(PolicyBlocked):
+    """A `PolicyBlocked` whose `code == "budget_exhausted"`.
+
+    Subclasses `PolicyBlocked` so `except PolicyBlocked` catches budget blocks
+    too, while callers who care specifically can catch `BudgetExhausted`.
+    """

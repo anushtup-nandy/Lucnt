@@ -16,8 +16,13 @@ import pytest
 from lucnt import config, ledger
 from lucnt.client import Transport
 from lucnt.context import task
-from lucnt.exceptions import ConfigurationError
-from lucnt.models import Transaction, Verdict
+from lucnt.exceptions import (
+    BudgetExhausted,
+    ConfigurationError,
+    LucntError,
+    PolicyBlocked,
+)
+from lucnt.models import BudgetStatus, Transaction, Verdict
 
 
 @pytest.fixture(autouse=True)
@@ -306,6 +311,155 @@ def test_spend_returns_the_blocking_verdict_without_capturing(
     assert isinstance(result, Verdict)
     assert not result.approved
     assert requested_paths == ["/transactions/authorize"]
+
+
+def _blocked_response(
+    code: str, reason: str
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "authorization_id": "auth_b",
+                "status": "blocked",
+                "code": code,
+                "reason": reason,
+            },
+        )
+
+    return handler
+
+
+def test_strict_authorize_raises_policy_blocked_on_merchant_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub(monkeypatch, _blocked_response("merchant_blocked", "vendor blocklisted"))
+    with pytest.raises(PolicyBlocked) as exc_info:
+        ledger.authorize(
+            vendor="coinbase",
+            amount=10,
+            currency="USD",
+            reason="r",
+            agent="ops",
+            entity="sg",
+            strict=True,
+        )
+    assert exc_info.value.code == "merchant_blocked"
+    assert exc_info.value.status == "blocked"
+    assert not isinstance(exc_info.value, BudgetExhausted)
+
+
+def test_strict_authorize_raises_budget_exhausted_on_budget_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub(monkeypatch, _blocked_response("budget_exhausted", "over monthly budget"))
+    with pytest.raises(BudgetExhausted) as exc_info:
+        ledger.authorize(
+            vendor="v",
+            amount=999_999,
+            currency="USD",
+            reason="r",
+            agent="ops",
+            entity="sg",
+            strict=True,
+        )
+    # BudgetExhausted subclasses PolicyBlocked, so the broader catch works too.
+    assert isinstance(exc_info.value, PolicyBlocked)
+    assert exc_info.value.code == "budget_exhausted"
+
+
+def test_strict_spend_raises_and_never_captures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return _blocked_response("merchant_blocked", "blocked")(request)
+
+    _stub(monkeypatch, handler)
+    with pytest.raises(PolicyBlocked):
+        ledger.spend(
+            vendor="coinbase",
+            amount=10,
+            currency="USD",
+            reason="r",
+            agent="ops",
+            entity="sg",
+            strict=True,
+        )
+    assert paths == ["/transactions/authorize"]  # capture never attempted
+
+
+def test_non_strict_blocked_verdict_still_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (strict=False) returns the blocking verdict, code included."""
+    _stub(monkeypatch, _blocked_response("velocity_exceeded", "too fast"))
+    verdict = ledger.authorize(
+        vendor="v", amount=1, currency="USD", reason="r", agent="ops", entity="sg"
+    )
+    assert not verdict.approved
+    assert verdict.code == "velocity_exceeded"
+
+
+def test_check_budget_returns_status_for_matching_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/budgets"
+        return httpx.Response(
+            200,
+            json={
+                "agents": [
+                    {
+                        "id": "a1",
+                        "name": "Other",
+                        "slug": "other",
+                        "entity_id": "e1",
+                        "monthly_budget": 100,
+                        "spent": 10,
+                        "spent_today": 0,
+                        "remaining": 90,
+                        "pct_used": 10.0,
+                        "status": "ok",
+                    },
+                    {
+                        "id": "a2",
+                        "name": "Ops",
+                        "slug": "ops",
+                        "entity_id": "e1",
+                        "monthly_budget": 1000,
+                        "spent": 900,
+                        "spent_today": 50,
+                        "remaining": 100,
+                        "pct_used": 90.0,
+                        "status": "warning",
+                    },
+                ],
+                "workflows": [],
+            },
+        )
+
+    _stub(monkeypatch, handler)
+    with task(agent="ops", entity="sg"):
+        status = ledger.check_budget()
+    assert isinstance(status, BudgetStatus)
+    assert status.agent == "ops"
+    assert status.remaining == Decimal("100")
+    assert status.status == "warning"
+    assert status.exhausted is False
+
+
+def test_check_budget_raises_when_agent_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"agents": [], "workflows": []})
+
+    _stub(monkeypatch, handler)
+    with pytest.raises(LucntError):
+        ledger.check_budget(agent="ghost")
 
 
 def test_get_transport_is_reused_across_calls() -> None:

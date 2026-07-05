@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from lucnt.routers import agents, books, transactions
+from lucnt.routers import agents, books, budgets, policies, transactions
 
 
 def create_app() -> FastAPI:
@@ -13,6 +13,8 @@ def create_app() -> FastAPI:
     app.include_router(transactions.router)
     app.include_router(agents.router)
     app.include_router(books.router)
+    app.include_router(budgets.router)
+    app.include_router(policies.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

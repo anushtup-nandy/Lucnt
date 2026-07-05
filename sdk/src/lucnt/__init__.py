@@ -1,10 +1,10 @@
 """lucnt: financial infrastructure that attaches to your existing agents.
 
-Phase 1 (A) public surface: `configure()`, `task()`, `authorize()`,
-`capture()`, `spend()` — the universal spend-type-agnostic primitive — plus
-their typed models and the SDK's exception hierarchy. `meter`/`query`/
-`check_budget` land in later phases as the backend surfaces they depend on
-are built out (see `sdk/PLAN.md` §5).
+Public surface: `configure()`, `task()`, `authorize()`, `capture()`, `spend()`
+— the universal spend-type-agnostic primitive — plus `check_budget()` (Phase 3
+self-regulation read), their typed models, and the SDK's exception hierarchy.
+`meter`/`query` land in later phases as the backend surfaces they depend on are
+built out (see `sdk/PLAN.md` §5).
 """
 
 from __future__ import annotations
@@ -20,12 +20,20 @@ from lucnt.exceptions import (
     PolicyBlocked,
     TransportError,
 )
-from lucnt.ledger import authorize, capture, spend
-from lucnt.models import JournalLine, TaskContext, TaxInfo, Transaction, Verdict
+from lucnt.ledger import authorize, capture, check_budget, spend
+from lucnt.models import (
+    BudgetStatus,
+    JournalLine,
+    TaskContext,
+    TaxInfo,
+    Transaction,
+    Verdict,
+)
 
 __all__ = [
     "AuthError",
     "BudgetExhausted",
+    "BudgetStatus",
     "ConfigurationError",
     "JournalLine",
     "LucntError",
@@ -38,6 +46,7 @@ __all__ = [
     "__version__",
     "authorize",
     "capture",
+    "check_budget",
     "configure",
     "spend",
     "task",
