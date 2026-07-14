@@ -25,6 +25,12 @@ Phase 4 (recovery / reconciliation) addition: the agent double-charges a vendor
 second as a duplicate — and reports a paid-but-undelivered task via the SDK
 `mark_failed_delivery()` hook, which opens a `failed_delivery` recovery exception.
 
+Phase 5 (intelligence) addition: the agent reads its own living financial memory
+via `query()` — budget headroom, a month-end run-rate projection, cost-per-output,
+and its spend fingerprint — computed live from the ledger so it can self-regulate
+*before* it spends (M8). The `POST /intelligence/recompute` + Insights/Memory
+dashboard tables are the control-plane side, curled live like the recon scan.
+
 Requires a live backend at LUCNT_BASE_URL (see infra/PLAN.md) seeded via
 `scripts/seed_dev.py`. Not collected by pytest (testpaths = ["tests"]); run
 manually:
@@ -240,6 +246,35 @@ def main() -> None:
         f"[example] flagged failed delivery {recon_exc.id}: {recon_exc.status}, "
         f"${recon_exc.amount_at_stake} at stake, recovery={plan.get('method')}"
     )
+
+    # ── Phase 5: intelligence — living financial memory (query) ──────────
+    # The agent asks LUCNT about its own financial state — computed live from the
+    # ledger, so it self-regulates *before* it spends (M8). No recompute needed.
+    memory = lucnt.query(agent="research", question="am I on track this month?")
+    if memory.fingerprint is None:
+        raise AssertionError("research has spent; expected a fingerprint")
+    print(f"[example] research financial memory: {memory.headline}")
+    print(
+        f"[example]   budget {memory.budget.remaining}/{memory.budget.monthly_budget} "
+        f"left; projecting {memory.projection.projected_month_end} {memory.currency} "
+        f"(on_track={memory.on_track})"
+    )
+    top_vendors = memory.fingerprint.top_vendors
+    top_vendor = top_vendors[0].vendor if top_vendors else "n/a"
+    print(
+        f"[example]   fingerprint: {memory.fingerprint.total_records} spends, "
+        f"top vendor {top_vendor}"
+    )
+    if memory.cost_per_output:
+        top = memory.cost_per_output[0]
+        print(
+            f"[example]   priciest output: '{top.unit}' at {top.avg_cost} "
+            f"{top.currency}/unit across {top.count} charges"
+        )
+    # The same read via ambient task() context (agent inherited), cost-routed.
+    with lucnt.task(agent="research", entity="in"):
+        cost_view = lucnt.query(question="what is my cost per output?")
+    print(f"[example]   (via task ctx) {cost_view.headline}")
 
 
 if __name__ == "__main__":

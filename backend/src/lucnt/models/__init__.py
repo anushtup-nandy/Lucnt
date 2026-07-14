@@ -8,7 +8,10 @@ from lucnt.models.api_key import ApiKey, ApiKeyMode
 from lucnt.models.authorization import Authorization, VerdictStatus
 from lucnt.models.company import Company
 from lucnt.models.entity import Entity
+from lucnt.models.fingerprint import Fingerprint
+from lucnt.models.insight import Insight, InsightType
 from lucnt.models.journal_entry import JournalEntry
+from lucnt.models.memory import Memory, MemoryType
 from lucnt.models.policy import Policy, PolicyRuleType, PolicyScopeType
 from lucnt.models.reconciliation_exception import (
     ReconciliationException,
@@ -31,7 +34,12 @@ __all__ = [
     "VerdictStatus",
     "Company",
     "Entity",
+    "Fingerprint",
+    "Insight",
+    "InsightType",
     "JournalEntry",
+    "Memory",
+    "MemoryType",
     "Policy",
     "PolicyRuleType",
     "PolicyScopeType",

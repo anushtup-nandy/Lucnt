@@ -23,6 +23,7 @@ from lucnt.exceptions import (
 )
 from lucnt.models import (
     BudgetStatus,
+    FinancialMemory,
     LucntConfig,
     ReconException,
     SpendRequest,
@@ -244,6 +245,41 @@ def check_budget(*, agent: str | None = None) -> BudgetStatus:
                 status=row["status"],
             )
     raise LucntError(f"no budget found for agent {slug!r}")
+
+
+def query(
+    *,
+    agent: str | None = None,
+    question: str | None = None,
+) -> FinancialMemory:
+    """Read an agent's living financial memory (M8 — self-regulation).
+
+    Computed live from the ledger, so an agent can check itself *before* it
+    spends: budget headroom, a month-end run-rate projection, cost-per-output,
+    and its spend fingerprint. `agent` falls back to the ambient `task()`
+    context. `question` (e.g. "am I on track this month?") is answered in
+    `FinancialMemory.headline`, keyword-routed server-side to the most relevant
+    dimension — there is no LLM, so the full structured memory is always
+    returned regardless of the wording.
+
+    Args:
+        agent: Agent slug to read; falls back to `task()` context.
+        question: Optional free-text question, routed to `headline`.
+
+    Returns:
+        A `FinancialMemory` for the agent.
+
+    Raises:
+        ConfigurationError: No agent given and none set via `task()`.
+        LucntError: The agent is unknown for this API key (404).
+    """
+    ctx = get_current_task()
+    slug = _resolve_required(agent, ctx.agent if ctx else None, "agent")
+    params: dict[str, str] = {"agent": slug}
+    if question is not None:
+        params["q"] = question
+    response = _get_transport().request("GET", "/intelligence/query", params=params)
+    return FinancialMemory.model_validate(response.json())
 
 
 def _resolve_transaction_id(

@@ -45,7 +45,12 @@ class Transport:
         )
 
     def request(
-        self, method: str, path: str, *, json: dict[str, object] | None = None
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, object] | None = None,
+        params: dict[str, str] | None = None,
     ) -> httpx.Response:
         """Send a request and raise a typed `LucntError` on failure.
 
@@ -53,6 +58,7 @@ class Transport:
             method: HTTP method, e.g. `"POST"`.
             path: Path relative to the configured base URL.
             json: Optional JSON request body.
+            params: Optional URL query parameters (e.g. for GET reads).
 
         Returns:
             The successful `httpx.Response` (status < 400).
@@ -63,7 +69,7 @@ class Transport:
             LucntError: Any other non-2xx response.
         """
         try:
-            response = self._client.request(method, path, json=json)
+            response = self._client.request(method, path, json=json, params=params)
         except httpx.TimeoutException as exc:
             raise TransportError(f"Request to {path} timed out") from exc
         except httpx.HTTPError as exc:
