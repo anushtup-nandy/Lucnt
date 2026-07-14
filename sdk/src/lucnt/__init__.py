@@ -2,9 +2,10 @@
 
 Public surface: `configure()`, `task()`, `authorize()`, `capture()`, `spend()`
 — the universal spend-type-agnostic primitive — plus `check_budget()` (Phase 3
-self-regulation read) and `meter()` (Phase 3.5 auto-instrumentation for
-LLM/vendor clients), their typed models, and the SDK's exception hierarchy.
-`query` lands in a later phase (see `sdk/PLAN.md` §5).
+self-regulation read), `meter()` (Phase 3.5 auto-instrumentation for LLM/vendor
+clients), and `mark_failed_delivery()` (Phase 4 recovery hook), their typed
+models, and the SDK's exception hierarchy. `query` lands in a later phase (see
+`sdk/PLAN.md` §5).
 """
 
 from __future__ import annotations
@@ -20,11 +21,18 @@ from lucnt.exceptions import (
     PolicyBlocked,
     TransportError,
 )
-from lucnt.ledger import authorize, capture, check_budget, spend
+from lucnt.ledger import (
+    authorize,
+    capture,
+    check_budget,
+    mark_failed_delivery,
+    spend,
+)
 from lucnt.meter import meter
 from lucnt.models import (
     BudgetStatus,
     JournalLine,
+    ReconException,
     TaskContext,
     TaxInfo,
     Transaction,
@@ -39,6 +47,7 @@ __all__ = [
     "JournalLine",
     "LucntError",
     "PolicyBlocked",
+    "ReconException",
     "TaskContext",
     "TaxInfo",
     "Transaction",
@@ -49,6 +58,7 @@ __all__ = [
     "capture",
     "check_budget",
     "configure",
+    "mark_failed_delivery",
     "meter",
     "spend",
     "task",

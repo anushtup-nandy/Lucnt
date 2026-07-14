@@ -10,6 +10,11 @@ from lucnt.models.company import Company
 from lucnt.models.entity import Entity
 from lucnt.models.journal_entry import JournalEntry
 from lucnt.models.policy import Policy, PolicyRuleType, PolicyScopeType
+from lucnt.models.reconciliation_exception import (
+    ReconciliationException,
+    ReconExceptionStatus,
+    ReconExceptionType,
+)
 from lucnt.models.tax_record import TaxRecord
 from lucnt.models.transaction import Transaction, TransactionSource, TransactionStatus
 from lucnt.models.user import User, UserRole
@@ -30,6 +35,9 @@ __all__ = [
     "Policy",
     "PolicyRuleType",
     "PolicyScopeType",
+    "ReconExceptionStatus",
+    "ReconExceptionType",
+    "ReconciliationException",
     "TaxRecord",
     "Transaction",
     "TransactionSource",

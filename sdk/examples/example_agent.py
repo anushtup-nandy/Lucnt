@@ -20,6 +20,11 @@ completion call is authorized before and captured after — with the real
 cost/model/tokens read from usage. A stub client stands in here so the demo
 needs no API key.
 
+Phase 4 (recovery / reconciliation) addition: the agent double-charges a vendor
+(an accidental retry) — a later `POST /recon/scan` on the control side flags the
+second as a duplicate — and reports a paid-but-undelivered task via the SDK
+`mark_failed_delivery()` hook, which opens a `failed_delivery` recovery exception.
+
 Requires a live backend at LUCNT_BASE_URL (see infra/PLAN.md) seeded via
 `scripts/seed_dev.py`. Not collected by pytest (testpaths = ["tests"]); run
 manually:
@@ -189,6 +194,51 @@ def main() -> None:
     print(
         f"[example] metered LLM call captured; research spend {status.spent} "
         f"-> {after.spent}"
+    )
+
+    # ── Phase 4: recovery / reconciliation ───────────────────────────────
+    # (a) An accidental double-charge: the research agent pays the same vendor
+    #     the same amount twice within the window. A recon scan on the control
+    #     side (POST /recon/scan) flags the second as a duplicate — proven live
+    #     against the endpoints, not via the SDK (scan is a dashboard action).
+    for attempt in ("first", "accidental retry"):
+        dup = lucnt.spend(
+            agent="research",
+            entity="in",
+            vendor="dataprovider",
+            amount=5,
+            currency="USD",
+            reason=f"dataset licence ({attempt})",
+        )
+        if not isinstance(dup, lucnt.Transaction):
+            raise AssertionError(f"expected the dataprovider spend to book, got {dup}")
+    print("[example] booked two identical dataprovider spends (a double-charge)")
+
+    # (b) A failed delivery the ledger cannot detect on its own: the agent paid
+    #     but the downstream task errored. mark_failed_delivery() is the SDK
+    #     recovery hook — it opens a failed_delivery exception with a drafted
+    #     refund request.
+    paid = lucnt.spend(
+        agent="research",
+        entity="in",
+        vendor="flakyapi",
+        amount=12,
+        currency="USD",
+        reason="premium data pull",
+    )
+    if not isinstance(paid, lucnt.Transaction):
+        raise AssertionError(f"expected the flakyapi spend to book, got {paid}")
+    recon_exc = lucnt.mark_failed_delivery(
+        transaction=paid, reason="vendor returned a 500; no data delivered"
+    )
+    if recon_exc.exception_type != "failed_delivery":
+        raise AssertionError(
+            f"expected failed_delivery, got {recon_exc.exception_type}"
+        )
+    plan = recon_exc.evidence.get("recovery_plan", {})
+    print(
+        f"[example] flagged failed delivery {recon_exc.id}: {recon_exc.status}, "
+        f"${recon_exc.amount_at_stake} at stake, recovery={plan.get('method')}"
     )
 
 

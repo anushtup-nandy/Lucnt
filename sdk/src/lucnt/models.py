@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -153,3 +153,22 @@ class Transaction(BaseModel):
     def approved(self) -> bool:
         """Always True: a Transaction only exists once capture has succeeded."""
         return True
+
+
+class ReconException(BaseModel):
+    """A reconciliation exception, returned by `mark_failed_delivery()` (Phase 4).
+
+    Mirrors the fields of the backend `ReconExceptionResponse` the SDK cares
+    about (server-only timestamps are ignored). `evidence` carries the drafted
+    recovery plan the recovery layer will act on.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    transaction_id: str
+    exception_type: str
+    status: str
+    amount_at_stake: Decimal
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    fix_notes: str | None = None

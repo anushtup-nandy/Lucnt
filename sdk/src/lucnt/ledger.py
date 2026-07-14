@@ -24,6 +24,7 @@ from lucnt.exceptions import (
 from lucnt.models import (
     BudgetStatus,
     LucntConfig,
+    ReconException,
     SpendRequest,
     Transaction,
     Verdict,
@@ -243,3 +244,55 @@ def check_budget(*, agent: str | None = None) -> BudgetStatus:
                 status=row["status"],
             )
     raise LucntError(f"no budget found for agent {slug!r}")
+
+
+def _resolve_transaction_id(
+    transaction: Transaction | None, transaction_id: str | None
+) -> str:
+    """Take the id from `transaction` or `transaction_id`; error if neither is set."""
+    if transaction is not None:
+        return transaction.id
+    if transaction_id is not None:
+        return transaction_id
+    raise ConfigurationError(
+        "mark_failed_delivery() requires 'transaction' or 'transaction_id'."
+    )
+
+
+def mark_failed_delivery(
+    *,
+    transaction: Transaction | None = None,
+    transaction_id: str | None = None,
+    reason: str,
+    amount_at_stake: Decimal | float | int | str | None = None,
+) -> ReconException:
+    """Flag a committed spend whose downstream task failed (Phase 4 recovery, M7).
+
+    Some spend cannot be judged from ledger data alone — the agent paid but the
+    task errored (a corrupt dataset, an undelivered service). This reports that
+    to the recovery layer, which opens a `failed_delivery` exception and drafts a
+    refund request. Pass the `Transaction` returned by `capture()`/`spend()`, or
+    its id.
+
+    Args:
+        transaction: The committed `Transaction` whose task failed.
+        transaction_id: The transaction id, if the object isn't at hand.
+        reason: Human-readable description of the failure (stored as evidence).
+        amount_at_stake: Recoverable amount; defaults server-side to the
+            transaction's full paid amount when omitted.
+
+    Returns:
+        The created (or, on a repeat call, existing) `ReconException` — the
+        server dedupes an active failed-delivery per transaction.
+
+    Raises:
+        ConfigurationError: Neither `transaction` nor `transaction_id` given.
+    """
+    tx_id = _resolve_transaction_id(transaction, transaction_id)
+    body: dict[str, object] = {"transaction_id": tx_id, "reason": reason}
+    if amount_at_stake is not None:
+        body["amount_at_stake"] = str(_as_decimal(amount_at_stake))
+    response = _get_transport().request(
+        "POST", "/recon/failed-delivery", json=body
+    )
+    return ReconException.model_validate(response.json())
