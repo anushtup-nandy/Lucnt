@@ -21,8 +21,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lucnt.database import SessionLocal
-from lucnt.models import (
+from lucnt_api.database import SessionLocal
+from lucnt_api.models import (
     Agent,
     ApiKey,
     ApiKeyMode,
@@ -32,8 +32,8 @@ from lucnt.models import (
     PolicyRuleType,
     PolicyScopeType,
 )
-from lucnt.security import generate_api_key, hash_api_key
-from lucnt.services.chart_of_accounts import ensure_default_accounts
+from lucnt_api.security import generate_api_key, hash_api_key
+from lucnt_api.services.chart_of_accounts import ensure_default_accounts
 
 _COMPANY_SLUG = "acme-dev"
 

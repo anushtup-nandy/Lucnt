@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from lucnt.services.tax_engine import compute_tax
+from lucnt_api.services.tax_engine import compute_tax
 
 
 def test_india_imported_service_is_reverse_charge() -> None:

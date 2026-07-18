@@ -12,7 +12,7 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from lucnt.database import engine
+from lucnt_api.database import engine
 
 
 @pytest.fixture

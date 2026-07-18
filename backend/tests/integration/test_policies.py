@@ -15,9 +15,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lucnt.database import get_db
-from lucnt.main import app
-from lucnt.models import (
+from lucnt_api.database import get_db
+from lucnt_api.main import app
+from lucnt_api.models import (
     Agent,
     ApiKey,
     ApiKeyMode,
@@ -27,7 +27,7 @@ from lucnt.models import (
     PolicyRuleType,
     PolicyScopeType,
 )
-from lucnt.security import generate_api_key, hash_api_key
+from lucnt_api.security import generate_api_key, hash_api_key
 
 
 @pytest.fixture

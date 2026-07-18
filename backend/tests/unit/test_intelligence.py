@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from lucnt.services.intelligence import (
+from lucnt_api.services.intelligence import (
     FingerprintFeatures,
     SpendRecord,
     compute_fingerprint,

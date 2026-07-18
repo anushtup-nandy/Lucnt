@@ -13,9 +13,9 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from lucnt.models.authorization import VerdictStatus
-from lucnt.models.policy import Policy, PolicyRuleType
-from lucnt.services.policy_engine import (
+from lucnt_api.models.authorization import VerdictStatus
+from lucnt_api.models.policy import Policy, PolicyRuleType
+from lucnt_api.services.policy_engine import (
     SpendContext,
     VerdictCode,
     evaluate_spend,

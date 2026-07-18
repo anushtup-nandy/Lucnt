@@ -39,7 +39,7 @@ class Transport:
             timeout=config.timeout,
             transport=transport,
             headers={
-                "Authorization": f"Bearer {config.api_key}",
+                "Authorization": f"Bearer {config.api_key.get_secret_value()}",
                 "User-Agent": _USER_AGENT,
             },
         )

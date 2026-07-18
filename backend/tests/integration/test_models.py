@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from lucnt.models import Company, Entity, User, UserRole
+from lucnt_api.models import Company, Entity, User, UserRole
 
 
 def _make_company(db_session: Session, slug: str = "acme") -> Company:

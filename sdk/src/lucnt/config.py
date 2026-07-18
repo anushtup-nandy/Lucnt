@@ -3,14 +3,34 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
+
+from pydantic import SecretStr
 
 from lucnt.exceptions import ConfigurationError
 from lucnt.models import LucntConfig
 
 _DEFAULT_BASE_URL = "https://api.lucnt.dev"
 _DEFAULT_TIMEOUT = 30.0
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 _active_config: LucntConfig | None = None
+
+
+def _require_secure_base_url(base_url: str) -> None:
+    """Reject a plaintext base URL so the Bearer key never crosses the wire raw.
+
+    `http://` is allowed only for a localhost dev backend (T0-19).
+    """
+    parsed = urlparse(base_url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and parsed.hostname in _LOCAL_HOSTS:
+        return
+    raise ConfigurationError(
+        f"Insecure base_url {base_url!r}: use https:// (http:// is allowed only "
+        "for a localhost dev backend), so the API key is never sent in cleartext."
+    )
 
 
 def configure(
@@ -48,9 +68,10 @@ def configure(
     resolved_base_url = (
         base_url or os.environ.get("LUCNT_BASE_URL") or _DEFAULT_BASE_URL
     )
+    _require_secure_base_url(resolved_base_url)
 
     _active_config = LucntConfig(
-        api_key=resolved_key, base_url=resolved_base_url, timeout=timeout
+        api_key=SecretStr(resolved_key), base_url=resolved_base_url, timeout=timeout
     )
     return _active_config
 

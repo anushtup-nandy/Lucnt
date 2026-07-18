@@ -11,8 +11,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from lucnt.models.reconciliation_exception import ReconExceptionType
-from lucnt.services.detectors import (
+from lucnt_api.models.reconciliation_exception import ReconExceptionType
+from lucnt_api.services.detectors import (
     TxnView,
     detect_duplicates,
     detect_overcharges,

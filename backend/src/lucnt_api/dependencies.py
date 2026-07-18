@@ -1,0 +1,115 @@
+"""FastAPI dependencies: DB session, API-key auth, scope/mode gating.
+
+Three gates layer on one resolution (`get_auth_context`):
+
+* ``get_current_company`` — any active key; read endpoints.
+* ``require_live`` — a live key; the money path (authorize/capture). A test key
+  must not drive the live ledger (T0-13); a sandbox data partition is future.
+* ``require_admin`` — a live, admin-scoped key; governance mutations (budgets,
+  policies, reconciliation, approvals). Separates the governed principal (a
+  runtime agent key) from the governor (T0-12).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
+
+from lucnt_api.database import get_db
+from lucnt_api.models import ApiKey, ApiKeyMode, ApiKeyScope, Company
+from lucnt_api.security import hash_api_key
+
+__all__ = [
+    "get_db",
+    "get_auth_context",
+    "get_current_company",
+    "require_live",
+    "require_admin",
+    "AuthContext",
+]
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+# Only rewrite last_used_at when the stored value is older than this, so the hot
+# api_keys row isn't UPDATE'd (and WAL-written, row-locked) on every request (T0-17).
+_LAST_USED_THROTTLE = timedelta(minutes=5)
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    """The authenticated principal: the resolved company and the exact key used."""
+
+    company: Company
+    api_key: ApiKey
+
+
+def get_auth_context(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> AuthContext:
+    """Resolve the `Authorization: Bearer <api_key>` header to a principal.
+
+    Raises:
+        HTTPException: 401 if the header is missing, or the key is unknown or
+            inactive. The SDK's `Transport` maps 401/403 to `AuthError`.
+    """
+    if credentials is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing API key")
+
+    key_hash = hash_api_key(credentials.credentials)
+    api_key = db.query(ApiKey).filter(ApiKey.key_hash == key_hash).one_or_none()
+    if api_key is None or not api_key.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key")
+
+    # Throttled bookkeeping (T0-17): avoid a commit on the hot key row per request.
+    now = datetime.now(timezone.utc)
+    if (
+        api_key.last_used_at is None
+        or now - api_key.last_used_at > _LAST_USED_THROTTLE
+    ):
+        api_key.last_used_at = now
+        db.commit()
+
+    company = db.get(Company, api_key.company_id)
+    if company is None:  # FK-guaranteed; explicit guard, not an assert (T0-18)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "api key references a missing company",
+        )
+    return AuthContext(company=company, api_key=api_key)
+
+
+def get_current_company(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Company:
+    """Any active key — read endpoints."""
+    return ctx.company
+
+
+def require_live(ctx: AuthContext = Depends(get_auth_context)) -> Company:
+    """A live key — the money path. Test keys cannot write the live ledger (T0-13)."""
+    if ctx.api_key.mode != ApiKeyMode.LIVE:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "a live API key is required to write to the ledger",
+        )
+    return ctx.company
+
+
+def require_admin(ctx: AuthContext = Depends(get_auth_context)) -> Company:
+    """A live, admin-scoped key — governance mutations (T0-12)."""
+    if ctx.api_key.mode != ApiKeyMode.LIVE:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "a live API key is required for this operation",
+        )
+    if ctx.api_key.scope != ApiKeyScope.ADMIN:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "an admin-scoped API key is required for this operation",
+        )
+    return ctx.company

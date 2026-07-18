@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class LucntConfig(BaseModel):
@@ -13,7 +13,9 @@ class LucntConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    api_key: str
+    # SecretStr so the key never lands in a repr/log/traceback (T0-19). Read the
+    # plaintext with `api_key.get_secret_value()` only where it is actually sent.
+    api_key: SecretStr
     base_url: str
     timeout: float
 

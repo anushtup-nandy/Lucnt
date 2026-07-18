@@ -12,14 +12,14 @@ from decimal import Decimal
 
 import pytest
 
-from lucnt.models import (
+from lucnt_api.models import (
     Account,
     AccountCategory,
     Entity,
     Transaction,
     TransactionSource,
 )
-from lucnt.services.chart_of_accounts import (
+from lucnt_api.services.chart_of_accounts import (
     EXPENSE_AI_COMPUTE_CODE,
     EXPENSE_MARKETING_CODE,
     EXPENSE_SOFTWARE_CODE,
@@ -28,8 +28,8 @@ from lucnt.services.chart_of_accounts import (
     INPUT_TAX_CREDIT_CODE,
     WALLET_CODE,
 )
-from lucnt.services.journal_generator import generate_journal
-from lucnt.services.tax_engine import compute_tax
+from lucnt_api.services.journal_generator import generate_journal
+from lucnt_api.services.tax_engine import compute_tax
 
 _ALL_CODES = (
     WALLET_CODE,

@@ -5,14 +5,14 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from lucnt.models.insight import InsightType
-from lucnt.models.memory import MemoryType
-from lucnt.services.insight_generator import (
+from lucnt_api.models.insight import InsightType
+from lucnt_api.models.memory import MemoryType
+from lucnt_api.services.insight_generator import (
     AgentIntel,
     derive_memories,
     generate_insights,
 )
-from lucnt.services.intelligence import (
+from lucnt_api.services.intelligence import (
     AmountStats,
     CostUnit,
     FingerprintFeatures,

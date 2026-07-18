@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lucnt.database import get_db
-from lucnt.main import app
-from lucnt.models import (
+from lucnt_api.database import get_db
+from lucnt_api.main import app
+from lucnt_api.models import (
     Agent,
     ApiKey,
     ApiKeyMode,
@@ -22,7 +22,7 @@ from lucnt.models import (
     JournalEntry,
     TaxRecord,
 )
-from lucnt.security import generate_api_key, hash_api_key
+from lucnt_api.security import generate_api_key, hash_api_key
 
 
 @pytest.fixture
@@ -378,11 +378,13 @@ def test_capture_books_domestic_gst(
     assert total_debit == total_credit == Decimal("118")
 
 
-def test_capture_rejects_double_capture(
+def test_capture_double_capture_is_idempotent(
     client: TestClient, db_session: Session
 ) -> None:
+    """A retried capture returns the original transaction, not a 409 or a second
+    booking — the T0-6 "already captured, fetch & return" guarantee."""
     company, key = _make_company_with_key(db_session)
-    _make_agent(db_session, company, _make_entity(db_session, company))
+    agent = _make_agent(db_session, company, _make_entity(db_session, company))
 
     verdict = client.post(
         "/transactions/authorize",
@@ -405,7 +407,11 @@ def test_capture_rejects_double_capture(
     second = client.post(
         "/transactions/capture", json=capture_body, headers=_auth_headers(key)
     )
-    assert second.status_code == 409
+    assert second.status_code == 200
+    # Same transaction returned; spend booked exactly once.
+    assert second.json()["id"] == first.json()["id"]
+    db_session.refresh(agent)
+    assert agent.spent_ytd == Decimal("10.0000")
 
 
 def test_capture_rejects_blocked_authorization(

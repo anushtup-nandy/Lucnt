@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from lucnt.models.reconciliation_exception import ReconExceptionType
-from lucnt.services.recovery_agent import (
+from lucnt_api.models.reconciliation_exception import ReconExceptionType
+from lucnt_api.services.recovery_agent import (
     METHOD_CANCEL_SUBSCRIPTION,
     METHOD_REFUND_REQUEST,
     METHOD_VENDOR_EMAIL,

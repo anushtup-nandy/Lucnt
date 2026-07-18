@@ -7,9 +7,9 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-import lucnt.models  # noqa: F401 -- populates Base.metadata for autogenerate
-from lucnt.config import settings
-from lucnt.database import Base
+import lucnt_api.models  # noqa: F401 -- populates Base.metadata for autogenerate
+from lucnt_api.config import settings
+from lucnt_api.database import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
