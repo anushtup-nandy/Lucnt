@@ -45,7 +45,10 @@ class SpendRequest(BaseModel):
     entity: str
     vendor: str
     amount: Decimal
-    currency: str | None = None
+    # Mandatory (T1-5): the caller always states the currency it paid in — the one
+    # fact only it knows. Never silently defaulted, so a foreign spend is never
+    # mislabelled as domestic. The backend validates the ISO-4217 shape.
+    currency: str
     reason: str
     intent: str | None = None
     project: str | None = None
@@ -111,6 +114,7 @@ class JournalLine(BaseModel):
     debit: Decimal
     credit: Decimal
     ledger: str
+    currency: str  # the functional (entity) currency this line is booked in
 
 
 class TaxInfo(BaseModel):
@@ -128,6 +132,7 @@ class TaxInfo(BaseModel):
     tax_amount: Decimal
     is_reclaimable: bool
     reclaim_amount: Decimal
+    currency: str  # the functional currency tax_amount/reclaim_amount are in
     legal_reference: str
     reverse_charge: bool
     self_invoice_generated: bool

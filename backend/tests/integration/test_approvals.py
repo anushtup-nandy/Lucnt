@@ -99,6 +99,7 @@ def _authorize_for_review(client: TestClient, key: str, amount: str = "100") -> 
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": amount,
             "reason": "needs sign-off",
         },

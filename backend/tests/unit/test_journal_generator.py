@@ -102,7 +102,7 @@ def test_imported_reverse_charge_journal() -> None:
     txn = _txn(paid_amount=Decimal("100"), paid_currency="USD", model_used="gpt-5")
     tax = compute_tax(
         tax_regime="IN-GST",
-        paid_amount=txn.paid_amount,
+        functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
     )
@@ -123,7 +123,7 @@ def test_domestic_gst_journal_nets_expense() -> None:
     txn = _txn(paid_amount=Decimal("118"), paid_currency="INR")
     tax = compute_tax(
         tax_regime="IN-GST",
-        paid_amount=txn.paid_amount,
+        functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
     )
@@ -143,7 +143,7 @@ def test_us_no_tax_journal_is_two_lines() -> None:
     txn = _txn(paid_amount=Decimal("42.50"), paid_currency="USD")
     tax = compute_tax(
         tax_regime="US-Sales-Tax",
-        paid_amount=txn.paid_amount,
+        functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
     )
@@ -178,7 +178,7 @@ def test_expense_account_selection(
     )
     tax = compute_tax(
         tax_regime="US-Sales-Tax",
-        paid_amount=txn.paid_amount,
+        functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
     )
@@ -192,7 +192,7 @@ def test_ledger_is_entity_code() -> None:
     txn = _txn(paid_amount=Decimal("100"), paid_currency="USD")
     tax = compute_tax(
         tax_regime="SG-GST",
-        paid_amount=txn.paid_amount,
+        functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
     )

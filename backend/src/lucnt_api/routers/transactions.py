@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select, update
@@ -45,6 +46,7 @@ from lucnt_api.schemas.transaction import (
 )
 from lucnt_api.schemas.transaction import Transaction as TransactionSchema
 from lucnt_api.services.chart_of_accounts import ensure_default_accounts
+from lucnt_api.services.fx import FxRateUnavailableError, convert
 from lucnt_api.services.journal_generator import generate_journal
 from lucnt_api.services.policy_engine import SpendContext, evaluate_spend
 from lucnt_api.services.spend_window import (
@@ -135,6 +137,7 @@ def _capture_response(
                 debit=line.debit,
                 credit=line.credit,
                 ledger=line.ledger,
+                currency=line.currency,
             )
             for line in journal_lines
         ],
@@ -145,6 +148,7 @@ def _capture_response(
             tax_amount=tax.tax_amount,
             is_reclaimable=tax.is_reclaimable,
             reclaim_amount=tax.reclaim_amount,
+            currency=tax.currency,
             legal_reference=tax.legal_reference,
             reverse_charge=tax.reverse_charge,
             self_invoice_generated=tax.self_invoice_required,
@@ -179,7 +183,7 @@ def _replay_capture(
         )
     tax = compute_tax(
         tax_regime=entity.tax_regime,
-        paid_amount=existing.paid_amount,
+        functional_amount=existing.local_amount,
         paid_currency=existing.paid_currency,
         entity_currency=entity.currency,
     )
@@ -217,8 +221,16 @@ def _persist_authorization(
     reason: str | None,
     policy_id: uuid.UUID | None,
     idempotency_key: str | None,
+    exchange_rate: Decimal | None = None,
+    local_amount: Decimal | None = None,
+    local_currency: str | None = None,
 ) -> Verdict:
-    """Persist the hold and return its verdict, idempotency-race-safe (T0-6)."""
+    """Persist the hold and return its verdict, idempotency-race-safe (T0-6).
+
+    The FX snapshot (`exchange_rate`/`local_amount`/`local_currency`) is the
+    hold's value in the entity's functional currency (T1-2); left None for a
+    controls-blocked hold, which never reserves budget.
+    """
     authorization = Authorization(
         company_id=company.id,
         agent_id=agent.id,
@@ -226,6 +238,9 @@ def _persist_authorization(
         vendor=request.vendor,
         amount=request.amount,
         currency=request.currency,
+        exchange_rate=exchange_rate,
+        local_amount=local_amount,
+        local_currency=local_currency,
         reason=request.reason,
         intent=request.intent,
         project=request.project,
@@ -308,6 +323,24 @@ def authorize(
     now = now_in_entity_tz(entity)
     month_start, day_start = period_starts(now)
 
+    # Value the spend in the entity's functional currency (T1-2) so the budget
+    # invariant compares like with like, and snapshot the rate on the hold so its
+    # reservation is measured in one currency. Fail closed on an unknown currency
+    # rather than mis-valuing the spend — enforcement before money moves.
+    currency = request.currency or entity.currency
+    try:
+        exchange_rate, functional_amount = convert(
+            db,
+            amount=request.amount,
+            paid_currency=currency,
+            functional_currency=entity.currency,
+            on_date=now.date(),
+        )
+    except FxRateUnavailableError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
+        ) from exc
+
     # Spend measured against the budget = committed (ledger, period-resetting) +
     # reserved (outstanding approved holds). The stored spent_ytd/spent_today
     # counters are a display cache only; the invariant derives from truth here
@@ -320,8 +353,8 @@ def authorize(
         return recent_activity_count(db, agent.id, now - window)
 
     ctx = SpendContext(
-        amount=request.amount,
-        currency=request.currency,
+        amount=functional_amount,
+        currency=currency,
         vendor=request.vendor,
         now=now,
         agent_monthly_budget=agent.monthly_budget,
@@ -354,6 +387,9 @@ def authorize(
         reason=decision.reason,
         policy_id=policy_id,
         idempotency_key=idempotency_key,
+        exchange_rate=exchange_rate,
+        local_amount=functional_amount,
+        local_currency=entity.currency,
     )
 
 
@@ -390,7 +426,15 @@ def capture(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "authorization references a missing agent",
         )
-    currency = authorization.currency or "USD"
+    entity = db.get(Entity, authorization.entity_id)
+    if entity is None:  # FK-guaranteed; explicit guard, not an assert (T0-18)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "authorization references a missing entity",
+        )
+    # T1-5: an omitted currency defaults to the entity's own (functional)
+    # currency, not a hardcoded "USD".
+    currency = authorization.currency or entity.currency
 
     # Settlement overrides (Phase 3.5): the actual amount/model/tokens known only
     # after the spend (e.g. real LLM cost from meter()); the authorization's held
@@ -419,6 +463,23 @@ def capture(
         request.tokens if request.tokens is not None else authorization.tokens_consumed
     )
 
+    capture_date = datetime.now(timezone.utc)
+    # Convert the paid amount into the entity's functional currency and snapshot
+    # the rate on the ledger row (T1-1/T1-4). Fail closed if no rate exists,
+    # rather than silently booking at 1.0 (which corrupts tax + the budget).
+    try:
+        exchange_rate, local_amount = convert(
+            db,
+            amount=paid_amount,
+            paid_currency=currency,
+            functional_currency=entity.currency,
+            on_date=capture_date.date(),
+        )
+    except FxRateUnavailableError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
+        ) from exc
+
     transaction = Transaction(
         company_id=company.id,
         agent_id=authorization.agent_id,
@@ -429,8 +490,9 @@ def capture(
         item_description=authorization.reason,
         paid_amount=paid_amount,
         paid_currency=currency,
-        local_amount=paid_amount,
-        local_currency=currency,
+        exchange_rate=exchange_rate,
+        local_amount=local_amount,
+        local_currency=entity.currency,
         project=authorization.project,
         intent=authorization.intent,
         model_used=model_used,
@@ -438,7 +500,7 @@ def capture(
         status=TransactionStatus.COMPLETED,
         approval_method="auto",
         reason_text=authorization.reason_text,
-        transaction_date=datetime.now(timezone.utc),
+        transaction_date=capture_date,
     )
     db.add(transaction)
     try:
@@ -465,16 +527,11 @@ def capture(
     # Phase 2 (Books): compute tax + double-entry journal synchronously, in the
     # same transaction as the capture, keyed off the persisted `transactions`
     # row (lane-agnostic — CLAUDE.local.md). The card/invoice rails book
-    # through this exact path once they land.
-    entity = db.get(Entity, authorization.entity_id)
-    if entity is None:  # FK-guaranteed; explicit guard, not an assert (T0-18)
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "authorization references a missing entity",
-        )
+    # through this exact path once they land. Tax is assessed on the functional
+    # amount (T1-4); the journal is booked in functional currency (T1-1).
     tax = compute_tax(
         tax_regime=entity.tax_regime,
-        paid_amount=transaction.paid_amount,
+        functional_amount=transaction.local_amount,
         paid_currency=transaction.paid_currency,
         entity_currency=entity.currency,
     )
@@ -487,6 +544,7 @@ def capture(
             tax_amount=tax.tax_amount,
             is_reclaimable=tax.is_reclaimable,
             reclaim_amount=tax.reclaim_amount,
+            currency=tax.currency,
             legal_reference=tax.legal_reference,
             self_invoice_generated=tax.self_invoice_required,
         )

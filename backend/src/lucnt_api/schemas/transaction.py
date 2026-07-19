@@ -7,12 +7,19 @@ add, rename, or drop a field here without updating the SDK models in lockstep.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# ISO-4217 alpha codes are three uppercase letters. Membership in the *supported*
+# set is enforced downstream by the fail-closed FX table (a valid-format but
+# unrated currency is rejected at authorize/capture); the schema only guarantees
+# the shape and normalises case.
+_ISO_4217_RE = re.compile(r"[A-Z]{3}")
 
 
 class SpendRequest(BaseModel):
@@ -27,12 +34,24 @@ class SpendRequest(BaseModel):
     # projected spend and always approve, and a negative capture would decrement
     # spent_ytd (a budget-refund / theft primitive). See PRODUCTION_PLAN T0-4.
     amount: Decimal = Field(gt=0)
-    currency: str | None = None
+    # Mandatory (T1-5): the caller always states the currency it paid in — the one
+    # fact only it knows. Never silently defaulted, so a foreign spend can never be
+    # mislabelled as domestic. Validated to an ISO-4217 shape and upper-cased.
+    currency: str
     reason: str
     intent: str | None = None
     project: str | None = None
     model: str | None = None
     tokens: int | None = Field(default=None, ge=0)
+
+    @field_validator("currency")
+    @classmethod
+    def _normalise_currency(cls, value: str) -> str:
+        """Upper-case and validate the ISO-4217 shape (three letters)."""
+        code = value.strip().upper()
+        if not _ISO_4217_RE.fullmatch(code):
+            raise ValueError("currency must be a 3-letter ISO-4217 code")
+        return code
 
 
 class Verdict(BaseModel):
@@ -88,6 +107,7 @@ class JournalLine(BaseModel):
     debit: Decimal
     credit: Decimal
     ledger: str
+    currency: str
 
 
 class TaxInfo(BaseModel):
@@ -104,6 +124,7 @@ class TaxInfo(BaseModel):
     tax_amount: Decimal
     is_reclaimable: bool
     reclaim_amount: Decimal
+    currency: str
     legal_reference: str
     reverse_charge: bool
     self_invoice_generated: bool

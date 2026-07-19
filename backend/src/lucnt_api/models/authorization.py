@@ -42,6 +42,16 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # A hold amount is never zero/negative (T0-4) — enforced at the schema
         # too, but the DB is the last line of defence for any future writer.
         CheckConstraint("amount > 0", name="ck_authorizations_amount_positive"),
+        # The functional-currency snapshot (T1-2) is positive when present;
+        # NULL is allowed (a controls-blocked hold never reserves budget).
+        CheckConstraint(
+            "local_amount IS NULL OR local_amount > 0",
+            name="ck_authorizations_local_amount_positive",
+        ),
+        CheckConstraint(
+            "exchange_rate IS NULL OR exchange_rate > 0",
+            name="ck_authorizations_exchange_rate_positive",
+        ),
         # Idempotency (T0-6): at most one hold per (company, client key). Partial,
         # so the common no-key path is unconstrained (many NULLs allowed).
         Index(
@@ -60,6 +70,13 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # NUMERIC, never FLOAT (sdk/PLAN.md: Decimal not float).
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    # FX snapshot at authorize (T1-2): the hold's value in the entity's functional
+    # currency, so budget *reservation* is measured in one currency (never a raw
+    # sum of mixed paid currencies). Nullable — a controls-blocked hold is never
+    # approved and never reserves, so it carries no snapshot.
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), default=None)
+    local_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=None)
+    local_currency: Mapped[str | None] = mapped_column(String(3), default=None)
     reason: Mapped[str] = mapped_column(Text)
     intent: Mapped[str | None] = mapped_column(String(255), default=None)
     project: Mapped[str | None] = mapped_column(String(255), default=None)

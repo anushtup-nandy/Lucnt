@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from lucnt_api.database import get_db
 from lucnt_api.main import app
-from lucnt_api.models import Agent, ApiKey, ApiKeyMode, Company, Entity
+from lucnt_api.models import Agent, ApiKey, ApiKeyMode, Company, Entity, FxRate
 from lucnt_api.security import generate_api_key, hash_api_key
 
 
@@ -83,6 +84,16 @@ def _headers(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
+def _totals(payload: dict[str, object], currency: str = "SGD") -> dict[str, object]:
+    """The per-currency totals block for one currency (statements are per-currency)."""
+    currencies = payload["currencies"]
+    assert isinstance(currencies, list)
+    for entry in currencies:
+        if entry["currency"] == currency:
+            return entry  # type: ignore[no-any-return]
+    raise AssertionError(f"no {currency} totals in {currencies}")
+
+
 def _capture(
     client: TestClient,
     key: str,
@@ -118,7 +129,18 @@ def books_client(client: TestClient, db_session: Session) -> tuple[TestClient, s
     """A company with two captured spends: an imported RCM and a domestic GST one."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
-    # Imported (USD paid by SGD entity) -> 9% reverse charge on top of 100.
+    # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
+    # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
+    db_session.add(
+        FxRate(
+            currency="SGD",
+            usd_per_unit=Decimal("0.5"),
+            effective_from=date(2026, 1, 2),
+            source="test",
+        )
+    )
+    db_session.flush()
+    # Imported (USD 100 paid by SGD entity) -> SGD 200 @ 2.0; 9% RCM on top = 18.
     _capture(
         client, key, vendor="openai", amount="100", currency="USD",
         model="gpt-5", tokens=128000,
@@ -131,32 +153,39 @@ def books_client(client: TestClient, db_session: Session) -> tuple[TestClient, s
 def test_trial_balance_balances(books_client: tuple[TestClient, str]) -> None:
     client, key = books_client
     tb = client.get("/books/tb", headers=_headers(key)).json()
-    assert Decimal(tb["total_debit"]) == Decimal("327")
-    assert Decimal(tb["total_credit"]) == Decimal("327")
+    # Imported: expense 200 + ITC 18; domestic: expense 200 + ITC 18 -> debit 436.
+    # Credits: wallet (200 + 218) + GST payable 18 -> 436. Single currency (SGD).
+    sgd = _totals(tb)
+    assert Decimal(str(sgd["total_debit"])) == Decimal("436")
+    assert Decimal(str(sgd["total_credit"])) == Decimal("436")
+    assert sgd["balanced"] is True
     assert tb["balanced"] is True
 
 
 def test_profit_and_loss(books_client: tuple[TestClient, str]) -> None:
     client, key = books_client
     pl = client.get("/books/pl", headers=_headers(key)).json()
-    assert Decimal(pl["total_income"]) == Decimal("0")
-    assert Decimal(pl["total_expenses"]) == Decimal("300")  # 100 AI + 200 software
-    assert Decimal(pl["net_profit"]) == Decimal("-300")
+    sgd = _totals(pl)
+    assert Decimal(str(sgd["total_income"])) == Decimal("0")
+    assert Decimal(str(sgd["total_expenses"])) == Decimal("400")  # 200 AI + 200 sw
+    assert Decimal(str(sgd["net_profit"])) == Decimal("-400")
 
 
 def test_balance_sheet_balances(books_client: tuple[TestClient, str]) -> None:
     client, key = books_client
     bs = client.get("/books/bs", headers=_headers(key)).json()
-    assert Decimal(bs["total_assets"]) == Decimal("-291")  # wallet -318 + ITC 27
-    assert Decimal(bs["total_liabilities"]) == Decimal("9")  # GST payable
-    assert Decimal(bs["total_equity"]) == Decimal("-300")  # retained earnings
+    sgd = _totals(bs)
+    assert Decimal(str(sgd["total_assets"])) == Decimal("-382")  # wallet -418 + ITC 36
+    assert Decimal(str(sgd["total_liabilities"])) == Decimal("18")  # GST payable
+    assert Decimal(str(sgd["total_equity"])) == Decimal("-400")  # retained earnings
+    assert sgd["balanced"] is True
     assert bs["balanced"] is True
 
 
 def test_cash_flow_is_net_outflow(books_client: tuple[TestClient, str]) -> None:
     client, key = books_client
     cf = client.get("/books/cf", headers=_headers(key)).json()
-    assert Decimal(cf["net_cash_flow"]) == Decimal("-318")  # 100 + 218 out
+    assert Decimal(str(_totals(cf)["net_cash_flow"])) == Decimal("-418")  # 200 + 218
 
 
 def test_general_ledger_lists_posted_accounts(
@@ -165,9 +194,9 @@ def test_general_ledger_lists_posted_accounts(
     client, key = books_client
     gl = client.get("/books/gl", headers=_headers(key)).json()
     by_code = {a["account_code"]: a for a in gl["accounts"]}
-    assert Decimal(by_code["1010"]["balance"]) == Decimal("-318")  # wallet
-    assert Decimal(by_code["1400"]["balance"]) == Decimal("27")  # input tax credit
-    assert Decimal(by_code["2200"]["balance"]) == Decimal("-9")  # GST payable (credit)
+    assert Decimal(by_code["1010"]["balance"]) == Decimal("-418")  # wallet
+    assert Decimal(by_code["1400"]["balance"]) == Decimal("36")  # input tax credit
+    assert Decimal(by_code["2200"]["balance"]) == Decimal("-18")  # GST payable (credit)
 
 
 def test_journals_group_by_transaction(books_client: tuple[TestClient, str]) -> None:
@@ -185,7 +214,8 @@ def test_books_are_company_scoped(
     _, other_key = _make_company_with_key(db_session)
     tb = client.get("/books/tb", headers=_headers(other_key)).json()
     assert tb["rows"] == []
-    assert Decimal(tb["total_debit"]) == Decimal("0")
+    assert tb["currencies"] == []  # no postings -> no per-currency totals
+    assert tb["balanced"] is True  # vacuously (every currency balances)
     journals = client.get("/books/journals", headers=_headers(other_key)).json()
     assert journals["total"] == 0
 
@@ -193,6 +223,68 @@ def test_books_are_company_scoped(
 def test_books_entity_filter(books_client: tuple[TestClient, str]) -> None:
     client, key = books_client
     tb_sg = client.get("/books/tb?entity=sg", headers=_headers(key)).json()
-    assert Decimal(tb_sg["total_debit"]) == Decimal("327")
+    assert Decimal(str(_totals(tb_sg)["total_debit"])) == Decimal("436")
     resp = client.get("/books/tb?entity=nope", headers=_headers(key))
     assert resp.status_code == 404
+
+
+def test_company_level_statements_are_per_currency(
+    client: TestClient, db_session: Session
+) -> None:
+    """T1-1: a company spanning currencies gets per-currency totals, never a single
+    mixed 'balanced' total. Each currency balances independently."""
+    company, key = _make_company_with_key(db_session)
+    sg = _make_entity(db_session, company)  # SGD, SG-GST
+    us = Entity(
+        company_id=company.id,
+        name="LUCNT US",
+        code="us",
+        full_name="LUCNT US Inc",
+        currency="USD",
+        accounting_std="US-GAAP",
+        tax_regime="US-GST",  # not IN/SG-GST -> no self-assessed tax
+        timezone="America/Los_Angeles",
+    )
+    db_session.add(us)
+    db_session.flush()
+    _make_agent(db_session, company, sg)  # slug "ops" on the SGD entity
+    db_session.add(
+        Agent(
+            company_id=company.id,
+            entity_id=us.id,
+            name="US Agent",
+            slug="us_ops",
+            glyph="x",
+            role="Ops",
+            monthly_budget=Decimal("100000"),
+        )
+    )
+    db_session.flush()
+
+    def _spend(agent: str, entity: str, amount: str, currency: str) -> None:
+        v = client.post(
+            "/transactions/authorize",
+            json={
+                "agent": agent, "entity": entity, "vendor": "localcorp",
+                "amount": amount, "currency": currency, "reason": "t",
+            },
+            headers=_headers(key),
+        ).json()
+        client.post(
+            "/transactions/capture",
+            json={"authorization_id": v["authorization_id"], "source": "sdk"},
+            headers=_headers(key),
+        )
+
+    _spend("ops", "sg", "109", "SGD")  # domestic SGD: expense 100 + ITC 9 / wallet 109
+    _spend("us_ops", "us", "100", "USD")  # US no-tax: expense 100 / wallet 100
+
+    tb = client.get("/books/tb", headers=_headers(key)).json()
+    by_ccy = {c["currency"]: c for c in tb["currencies"]}
+    assert set(by_ccy) == {"SGD", "USD"}
+    assert Decimal(by_ccy["SGD"]["total_debit"]) == Decimal("109")
+    assert by_ccy["SGD"]["balanced"] is True
+    assert Decimal(by_ccy["USD"]["total_debit"]) == Decimal("100")
+    assert by_ccy["USD"]["balanced"] is True
+    assert tb["balanced"] is True  # every currency balances
+    assert "total_debit" not in tb  # no bogus cross-currency scalar total

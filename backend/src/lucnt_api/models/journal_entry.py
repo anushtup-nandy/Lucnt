@@ -41,3 +41,6 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     credit: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
     # Which entity's book this line belongs to (entity code, e.g. "sg"/"in"/"us").
     ledger: Mapped[str] = mapped_column(String(50))
+    # The functional (entity) currency this line is booked in. A single entity's
+    # journal is single-currency (T1-1); statements never sum across currencies.
+    currency: Mapped[str] = mapped_column(String(3))

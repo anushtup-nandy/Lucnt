@@ -46,9 +46,15 @@ import lucnt
 
 
 class _StubUsage:
-    """Token usage, shaped like an Anthropic `response.usage`."""
+    """Token usage, shaped like an Anthropic `response.usage`.
 
-    input_tokens = 12_000
+    Sized so the *actual* cost lands under the pre-call estimate (max_tokens=4096
+    of opus output) — a realistic metered call whose settlement is within the
+    T0-3 buffer. (Meter estimate-vs-buffer robustness for the general case is a
+    Tier-5 SDK hardening item.)
+    """
+
+    input_tokens = 2_000
     output_tokens = 3_000
 
 
@@ -135,6 +141,7 @@ def main() -> None:
         entity="in",
         vendor="openai",
         amount=1.83,
+        currency="USD",  # paid in USD by the INR entity -> imported (RCM)
         reason="600pg contract, needs 128K",
         model="gpt-5",
         tokens=128_000,

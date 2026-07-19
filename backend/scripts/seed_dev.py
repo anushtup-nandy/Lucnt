@@ -89,7 +89,7 @@ _AGENTS = [
         slug="marketing", entity="in", glyph="◆", name="Marketing Agent",
         role="Content and brand", wallet_ref="Razorpay corporate",
         models_list=["Claude", "Midjourney"], vendors_list=["Canva", "Meta", "Google"],
-        monthly_budget=Decimal("200000"), confidence_pct=99, is_live=False,
+        monthly_budget=Decimal("200000"), confidence_pct=99, is_live=True,
     ),
     _AgentSeed(
         slug="coding", entity="us", glyph="⌘", name="Coding Agent",
@@ -113,7 +113,7 @@ _AGENTS = [
         slug="ops", entity="sg", glyph="✦", name="Ops Agent",
         role="Operations and travel", wallet_ref="Airwallex",
         models_list=["Claude"], vendors_list=["Singapore Airlines", "Booking"],
-        monthly_budget=Decimal("9000"), confidence_pct=86, is_live=False,
+        monthly_budget=Decimal("9000"), confidence_pct=86, is_live=True,
     ),
 ]
 

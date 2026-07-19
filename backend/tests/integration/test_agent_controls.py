@@ -92,6 +92,7 @@ def _authorize(client: TestClient, key: str) -> dict:
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
         },

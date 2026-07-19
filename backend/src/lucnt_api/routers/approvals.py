@@ -102,10 +102,13 @@ def approve(
             "authorization references a missing entity",
         )
     month_start, _ = period_starts(now_in_entity_tz(entity))
+    # Value this hold in the entity's functional currency for the re-check (T1-2);
+    # fall back to the paid amount only for a legacy hold with no FX snapshot.
+    hold_functional = authorization.local_amount or authorization.amount
     projected = (
         committed_spend(db, agent.id, month_start)
         + reserved_spend(db, agent.id)
-        + authorization.amount
+        + hold_functional
     )
     if projected > agent.monthly_budget:
         raise HTTPException(

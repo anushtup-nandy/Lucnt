@@ -10,6 +10,7 @@ from lucnt_api.models.authorization import Authorization, VerdictStatus
 from lucnt_api.models.company import Company
 from lucnt_api.models.entity import Entity
 from lucnt_api.models.fingerprint import Fingerprint
+from lucnt_api.models.fx_rate import FxRate
 from lucnt_api.models.insight import Insight, InsightType
 from lucnt_api.models.journal_entry import JournalEntry
 from lucnt_api.models.memory import Memory, MemoryType
@@ -42,6 +43,7 @@ __all__ = [
     "Company",
     "Entity",
     "Fingerprint",
+    "FxRate",
     "Insight",
     "InsightType",
     "JournalEntry",

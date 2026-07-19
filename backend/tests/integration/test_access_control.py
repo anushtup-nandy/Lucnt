@@ -99,6 +99,7 @@ def _authorize(client: TestClient, key: str) -> int:
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
         },

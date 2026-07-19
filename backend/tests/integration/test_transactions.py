@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -19,6 +20,7 @@ from lucnt_api.models import (
     ApiKeyMode,
     Company,
     Entity,
+    FxRate,
     JournalEntry,
     TaxRecord,
 )
@@ -135,6 +137,7 @@ def test_authorize_blocks_over_budget(client: TestClient, db_session: Session) -
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "999",
             "reason": "deliberately over budget",
         },
@@ -157,6 +160,7 @@ def test_authorize_rejects_unknown_agent(
             "agent": "ghost",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "1",
             "reason": "x",
         },
@@ -172,6 +176,7 @@ def test_authorize_rejects_missing_api_key(client: TestClient) -> None:
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "1",
             "reason": "x",
         },
@@ -186,6 +191,7 @@ def test_authorize_rejects_unknown_api_key(client: TestClient) -> None:
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "1",
             "reason": "x",
         },
@@ -284,6 +290,17 @@ def test_capture_books_reverse_charge_journal_and_tax(
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="sg", currency="SGD")
     _make_agent(db_session, company, entity)
+    # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
+    # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
+    db_session.add(
+        FxRate(
+            currency="SGD",
+            usd_per_unit=Decimal("0.5"),
+            effective_from=date(2026, 1, 2),
+            source="test",
+        )
+    )
+    db_session.flush()
 
     verdict = client.post(
         "/transactions/authorize",
@@ -310,13 +327,14 @@ def test_capture_books_reverse_charge_journal_and_tax(
     assert tax["reverse_charge"] is True
     assert tax["self_invoice_generated"] is True
     assert Decimal(tax["rate"]) == Decimal("0.09")
-    assert Decimal(tax["tax_amount"]) == Decimal("9.00")  # 9% on top of 100
+    # USD 100 -> SGD 200 at the seeded 2.0 rate; 9% RCM on top = 18.00 SGD (T1-4).
+    assert Decimal(tax["tax_amount"]) == Decimal("18.00")
 
     journal = body["journal"]
     assert len(journal) == 4
     total_debit = sum(Decimal(line["debit"]) for line in journal)
     total_credit = sum(Decimal(line["credit"]) for line in journal)
-    assert total_debit == total_credit == Decimal("109.00")
+    assert total_debit == total_credit == Decimal("218.00")
 
     # Persisted, not just returned.
     tx_id = uuid.UUID(body["id"])
@@ -328,6 +346,8 @@ def test_capture_books_reverse_charge_journal_and_tax(
         .all()
     )
     assert len(persisted_lines) == 4
+    # Every line is stamped with the functional (entity) currency (T1-1).
+    assert all(line.currency == "SGD" for line in persisted_lines)
     tax_rows = (
         db_session.execute(
             select(TaxRecord).where(TaxRecord.transaction_id == tx_id)
@@ -337,6 +357,7 @@ def test_capture_books_reverse_charge_journal_and_tax(
     )
     assert len(tax_rows) == 1
     assert tax_rows[0].self_invoice_generated is True
+    assert tax_rows[0].currency == "SGD"  # tax denominated in functional currency
 
 
 def test_capture_books_domestic_gst(
@@ -378,6 +399,91 @@ def test_capture_books_domestic_gst(
     assert total_debit == total_credit == Decimal("118")
 
 
+def test_cross_currency_spend_valued_in_functional_currency_for_budget(
+    client: TestClient, db_session: Session
+) -> None:
+    """T1-2: a USD spend by an INR entity is valued in INR against the budget.
+
+    Under the pre-Tier-1 bug the raw USD figure was compared to an INR budget, so
+    a USD 50 spend looked trivially small against a 4000 budget and was approved.
+    Converted to INR (5000 at the seeded 100x rate) it correctly exceeds the
+    budget and is blocked — enforcement before money moves, in the right currency.
+    """
+    company, key = _make_company_with_key(db_session)
+    entity = _make_entity(db_session, company, code="in", currency="INR")
+    _make_agent(db_session, company, entity, monthly_budget=Decimal("4000"))
+    # Seed USD->INR = 100 (one INR worth 0.01 USD); effective before any spend.
+    db_session.add(
+        FxRate(
+            currency="INR",
+            usd_per_unit=Decimal("0.01"),
+            effective_from=date(2026, 1, 2),
+            source="test",
+        )
+    )
+    db_session.flush()
+
+    verdict = client.post(
+        "/transactions/authorize",
+        json={
+            "agent": "ops",
+            "entity": "in",
+            "vendor": "openai",
+            "amount": "50",  # USD 50 -> INR 5000 > 4000 budget
+            "currency": "USD",
+            "reason": "token batch",
+        },
+        headers=_auth_headers(key),
+    ).json()
+    assert verdict["status"] == "blocked"
+    assert verdict["code"] == "budget_exhausted"
+    assert "5000" in (verdict["reason"] or "")  # projected in INR, not USD 50
+
+
+def test_authorize_requires_currency(client: TestClient, db_session: Session) -> None:
+    """T1-5: currency is mandatory — an omitted currency is a 422, never a silent
+    default that could mislabel a foreign spend as domestic."""
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    response = client.post(
+        "/transactions/authorize",
+        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "10",
+              "reason": "no currency"},
+        headers=_auth_headers(key),
+    )
+    assert response.status_code == 422
+
+
+def test_authorize_rejects_malformed_currency(
+    client: TestClient, db_session: Session
+) -> None:
+    """A non-ISO-4217 currency is rejected at the schema (422)."""
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    response = client.post(
+        "/transactions/authorize",
+        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "10",
+              "currency": "dollars", "reason": "bad currency"},
+        headers=_auth_headers(key),
+    )
+    assert response.status_code == 422
+
+
+def test_authorize_normalises_currency_case(
+    client: TestClient, db_session: Session
+) -> None:
+    """A lowercase currency is upper-cased by the schema validator ('sgd'->'SGD')."""
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    verdict = client.post(
+        "/transactions/authorize",
+        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "10",
+              "currency": "sgd", "reason": "lowercase currency"},
+        headers=_auth_headers(key),
+    ).json()
+    assert verdict["status"] == "approved"  # 'sgd' -> 'SGD', domestic, within budget
+
+
 def test_capture_double_capture_is_idempotent(
     client: TestClient, db_session: Session
 ) -> None:
@@ -392,6 +498,7 @@ def test_capture_double_capture_is_idempotent(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
         },
@@ -431,6 +538,7 @@ def test_capture_rejects_blocked_authorization(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "999",
             "reason": "x",
         },
@@ -473,6 +581,7 @@ def test_list_transactions_is_scoped_to_company(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
         },

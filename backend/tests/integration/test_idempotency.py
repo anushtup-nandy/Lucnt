@@ -97,6 +97,7 @@ def _authorize(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": amount,
             "reason": "x",
         },

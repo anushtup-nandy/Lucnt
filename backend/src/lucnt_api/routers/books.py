@@ -3,6 +3,12 @@
 Every figure derives from `journal_entries` joined to `transactions` (for
 company/entity scope) and `accounts` (for category). Nothing here writes; the
 journal is produced at capture time by `services/journal_generator.py`.
+
+**Per-currency (PRODUCTION_PLAN T1-1).** Journal lines carry a functional
+currency; a statement only balances *within* one currency. Every figure is
+grouped and totalled per currency, so a company spanning entities in INR/SGD/USD
+gets one set of per-currency totals rather than a single meaningless mixed sum.
+A consolidated (FX-translated) view is deferred to T1-6.
 """
 
 from __future__ import annotations
@@ -27,14 +33,18 @@ from lucnt_api.models import (
 )
 from lucnt_api.schemas.books import (
     BalanceSheetResponse,
+    BalanceSheetTotals,
     BookLine,
     CashFlowResponse,
+    CashFlowTotals,
+    CurrencyTotals,
     GeneralLedgerResponse,
     GLAccount,
     JournalGroup,
     JournalLineRead,
     JournalsResponse,
     ProfitAndLossResponse,
+    ProfitAndLossTotals,
     TrialBalanceResponse,
     TrialBalanceRow,
 )
@@ -49,11 +59,12 @@ _RETAINED_EARNINGS_NAME = "Retained Earnings"
 
 @dataclass(frozen=True)
 class _Aggregate:
-    """Per-account debit/credit totals across all posted journal lines."""
+    """Per-account, per-currency debit/credit totals across posted journal lines."""
 
     account_code: str
     account_name: str
     category: str
+    currency: str
     debit: Decimal
     credit: Decimal
 
@@ -75,12 +86,13 @@ def _resolve_entity_id(
 def _aggregates(
     db: Session, company: Company, entity_id: uuid.UUID | None
 ) -> list[_Aggregate]:
-    """Sum debit/credit per account over the company's (optionally entity's) journal."""
+    """Sum debit/credit per (currency, account) over the company's journal."""
     stmt = (
         select(
             JournalEntry.account_code,
             JournalEntry.account_name,
             Account.category,
+            JournalEntry.currency,
             func.coalesce(func.sum(JournalEntry.debit), _ZERO).label("total_debit"),
             func.coalesce(func.sum(JournalEntry.credit), _ZERO).label("total_credit"),
         )
@@ -95,8 +107,9 @@ def _aggregates(
             JournalEntry.account_code,
             JournalEntry.account_name,
             Account.category,
+            JournalEntry.currency,
         )
-        .order_by(JournalEntry.account_code)
+        .order_by(JournalEntry.currency, JournalEntry.account_code)
     )
     if entity_id is not None:
         stmt = stmt.where(Transaction.entity_id == entity_id)
@@ -106,6 +119,7 @@ def _aggregates(
             account_code=row.account_code,
             account_name=row.account_name,
             category=_category_str(row.category),
+            currency=row.currency,
             debit=row.total_debit,
             credit=row.total_credit,
         )
@@ -113,19 +127,30 @@ def _aggregates(
     ]
 
 
+def _by_currency(aggregates: list[_Aggregate]) -> dict[str, list[_Aggregate]]:
+    """Bucket aggregates by their currency, preserving order."""
+    buckets: dict[str, list[_Aggregate]] = defaultdict(list)
+    for a in aggregates:
+        buckets[a.currency].append(a)
+    return buckets
+
+
 def _category_str(category: AccountCategory | str) -> str:
     """Normalise an account category to its string value."""
     return category.value if isinstance(category, AccountCategory) else str(category)
 
 
-def _gl_account(code: str, category: str, lines: list[JournalEntry]) -> GLAccount:
-    """Assemble one general-ledger account section from its postings."""
+def _gl_account(
+    code: str, category: str, currency: str, lines: list[JournalEntry]
+) -> GLAccount:
+    """Assemble one general-ledger account section (per account + currency)."""
     total_debit = sum((ln.debit for ln in lines), _ZERO)
     total_credit = sum((ln.credit for ln in lines), _ZERO)
     return GLAccount(
         account_code=code,
         account_name=lines[0].account_name,
         category=category,
+        currency=currency,
         total_debit=total_debit,
         total_credit=total_credit,
         balance=total_debit - total_credit,
@@ -136,6 +161,7 @@ def _gl_account(code: str, category: str, lines: list[JournalEntry]) -> GLAccoun
                 debit=ln.debit,
                 credit=ln.credit,
                 ledger=ln.ledger,
+                currency=ln.currency,
             )
             for ln in lines
         ],
@@ -197,6 +223,7 @@ def get_journals(
             transaction_id=txn.id,
             vendor=txn.vendor,
             date=txn.transaction_date,
+            currency=txn.local_currency,
             total_debit=sum((ln.debit for ln in lines_by_txn[txn.id]), _ZERO),
             total_credit=sum((ln.credit for ln in lines_by_txn[txn.id]), _ZERO),
             lines=[
@@ -206,6 +233,7 @@ def get_journals(
                     debit=ln.debit,
                     credit=ln.credit,
                     ledger=ln.ledger,
+                    currency=ln.currency,
                 )
                 for ln in lines_by_txn[txn.id]
             ],
@@ -221,7 +249,7 @@ def get_general_ledger(
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
 ) -> GeneralLedgerResponse:
-    """General ledger: every posted account with its postings and running balance."""
+    """General ledger: every posted account/currency with postings and balance."""
     entity_id = _resolve_entity_id(db, company, entity)
 
     stmt = (
@@ -233,20 +261,27 @@ def get_general_ledger(
             & (Account.account_code == JournalEntry.account_code),
         )
         .where(Transaction.company_id == company.id)
-        .order_by(JournalEntry.account_code, JournalEntry.created_at)
+        .order_by(
+            JournalEntry.currency,
+            JournalEntry.account_code,
+            JournalEntry.created_at,
+        )
     )
     if entity_id is not None:
         stmt = stmt.where(Transaction.entity_id == entity_id)
 
-    grouped: dict[str, list[JournalEntry]] = defaultdict(list)
-    category_by_code: dict[str, str] = {}
+    # Key each section by (account_code, currency): the same account posted to in
+    # two currencies is two sections, never one mixed-currency balance.
+    grouped: dict[tuple[str, str], list[JournalEntry]] = defaultdict(list)
+    category_by_key: dict[tuple[str, str], str] = {}
     for line, category in db.execute(stmt):
-        grouped[line.account_code].append(line)
-        category_by_code[line.account_code] = _category_str(category)
+        key = (line.account_code, line.currency)
+        grouped[key].append(line)
+        category_by_key[key] = _category_str(category)
 
     accounts = [
-        _gl_account(code, category_by_code[code], lines)
-        for code, lines in sorted(grouped.items())
+        _gl_account(code, category_by_key[(code, currency)], currency, lines)
+        for (code, currency), lines in sorted(grouped.items())
     ]
     return GeneralLedgerResponse(accounts=accounts)
 
@@ -257,7 +292,7 @@ def get_trial_balance(
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
 ) -> TrialBalanceResponse:
-    """Trial balance: debit/credit totals per account. `balanced` must be True."""
+    """Trial balance per currency; `balanced` iff every currency balances."""
     entity_id = _resolve_entity_id(db, company, entity)
     aggregates = _aggregates(db, company, entity_id)
 
@@ -266,18 +301,25 @@ def get_trial_balance(
             account_code=a.account_code,
             account_name=a.account_name,
             category=a.category,
+            currency=a.currency,
             debit=a.debit,
             credit=a.credit,
         )
         for a in aggregates
     ]
-    total_debit = sum((a.debit for a in aggregates), _ZERO)
-    total_credit = sum((a.credit for a in aggregates), _ZERO)
+    currencies = [
+        CurrencyTotals(
+            currency=ccy,
+            total_debit=(td := sum((a.debit for a in aggs), _ZERO)),
+            total_credit=(tc := sum((a.credit for a in aggs), _ZERO)),
+            balanced=td == tc,
+        )
+        for ccy, aggs in sorted(_by_currency(aggregates).items())
+    ]
     return TrialBalanceResponse(
         rows=rows,
-        total_debit=total_debit,
-        total_credit=total_credit,
-        balanced=total_debit == total_credit,
+        currencies=currencies,
+        balanced=all(c.balanced for c in currencies),
     )
 
 
@@ -287,30 +329,37 @@ def get_profit_and_loss(
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
 ) -> ProfitAndLossResponse:
-    """Profit & loss: income (credit-normal) less expenses (debit-normal)."""
+    """Profit & loss per currency: income (credit-normal) less expenses."""
     entity_id = _resolve_entity_id(db, company, entity)
     aggregates = _aggregates(db, company, entity_id)
 
     income = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
-                 amount=a.credit - a.debit)
+                 currency=a.currency, amount=a.credit - a.debit)
         for a in aggregates
         if a.category == "income"
     ]
     expenses = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
-                 amount=a.debit - a.credit)
+                 currency=a.currency, amount=a.debit - a.credit)
         for a in aggregates
         if a.category == "expense"
     ]
-    total_income = sum((line.amount for line in income), _ZERO)
-    total_expenses = sum((line.amount for line in expenses), _ZERO)
+    currencies = [
+        ProfitAndLossTotals(
+            currency=ccy,
+            total_income=(ti := sum(
+                (a.credit - a.debit for a in aggs if a.category == "income"), _ZERO
+            )),
+            total_expenses=(te := sum(
+                (a.debit - a.credit for a in aggs if a.category == "expense"), _ZERO
+            )),
+            net_profit=ti - te,
+        )
+        for ccy, aggs in sorted(_by_currency(aggregates).items())
+    ]
     return ProfitAndLossResponse(
-        income=income,
-        expenses=expenses,
-        total_income=total_income,
-        total_expenses=total_expenses,
-        net_profit=total_income - total_expenses,
+        income=income, expenses=expenses, currencies=currencies
     )
 
 
@@ -320,50 +369,68 @@ def get_balance_sheet(
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
 ) -> BalanceSheetResponse:
-    """Balance sheet: assets = liabilities + equity (incl. retained earnings)."""
+    """Balance sheet per currency: assets = liabilities + equity (incl. RE)."""
     entity_id = _resolve_entity_id(db, company, entity)
     aggregates = _aggregates(db, company, entity_id)
 
     assets = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
-                 amount=a.debit - a.credit)
+                 currency=a.currency, amount=a.debit - a.credit)
         for a in aggregates
         if a.category == "asset"
     ]
     liabilities = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
-                 amount=a.credit - a.debit)
+                 currency=a.currency, amount=a.credit - a.debit)
         for a in aggregates
         if a.category == "liability"
     ]
     equity = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
-                 amount=a.credit - a.debit)
+                 currency=a.currency, amount=a.credit - a.debit)
         for a in aggregates
         if a.category == "equity"
     ]
-    # Undistributed P&L rolls into equity as retained earnings — the line that
-    # makes assets == liabilities + equity hold under double entry.
-    retained = _net_profit(aggregates)
-    equity.append(
-        BookLine(
-            account_code=_RETAINED_EARNINGS_CODE,
-            account_name=_RETAINED_EARNINGS_NAME,
-            amount=retained,
-        )
-    )
 
-    total_assets = sum((line.amount for line in assets), _ZERO)
-    total_liabilities = sum((line.amount for line in liabilities), _ZERO)
-    total_equity = sum((line.amount for line in equity), _ZERO)
+    currencies: list[BalanceSheetTotals] = []
+    for ccy, aggs in sorted(_by_currency(aggregates).items()):
+        # Undistributed P&L rolls into equity as retained earnings — the line
+        # that makes assets == liabilities + equity hold, per currency.
+        retained = _net_profit(aggs)
+        equity.append(
+            BookLine(
+                account_code=_RETAINED_EARNINGS_CODE,
+                account_name=_RETAINED_EARNINGS_NAME,
+                currency=ccy,
+                amount=retained,
+            )
+        )
+        total_assets = sum(
+            (a.debit - a.credit for a in aggs if a.category == "asset"), _ZERO
+        )
+        total_liabilities = sum(
+            (a.credit - a.debit for a in aggs if a.category == "liability"), _ZERO
+        )
+        total_equity = (
+            sum((a.credit - a.debit for a in aggs if a.category == "equity"), _ZERO)
+            + retained
+        )
+        currencies.append(
+            BalanceSheetTotals(
+                currency=ccy,
+                total_assets=total_assets,
+                total_liabilities=total_liabilities,
+                total_equity=total_equity,
+                balanced=total_assets == total_liabilities + total_equity,
+            )
+        )
+
     return BalanceSheetResponse(
         assets=assets,
         liabilities=liabilities,
         equity=equity,
-        total_assets=total_assets,
-        total_liabilities=total_liabilities,
-        total_equity=total_equity,
-        balanced=total_assets == total_liabilities + total_equity,
+        currencies=currencies,
+        balanced=all(c.balanced for c in currencies),
     )
 
 
@@ -373,17 +440,24 @@ def get_cash_flow(
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
 ) -> CashFlowResponse:
-    """Cash flow: net movement on cash/wallet accounts (MVP: all operating)."""
+    """Cash flow per currency: net movement on cash/wallet accounts (MVP: operating)."""
     entity_id = _resolve_entity_id(db, company, entity)
     aggregates = _aggregates(db, company, entity_id)
 
     operating = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
-                 amount=a.debit - a.credit)
+                 currency=a.currency, amount=a.debit - a.credit)
         for a in aggregates
         if a.account_code == WALLET_CODE
     ]
-    return CashFlowResponse(
-        operating=operating,
-        net_cash_flow=sum((line.amount for line in operating), _ZERO),
-    )
+    currencies = [
+        CashFlowTotals(
+            currency=ccy,
+            net_cash_flow=sum(
+                (a.debit - a.credit for a in aggs if a.account_code == WALLET_CODE),
+                _ZERO,
+            ),
+        )
+        for ccy, aggs in sorted(_by_currency(aggregates).items())
+    ]
+    return CashFlowResponse(operating=operating, currencies=currencies)

@@ -103,6 +103,7 @@ def test_authorize_rejects_non_positive_amount(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": amount,
             "reason": "negative-amount attack",
         },
@@ -121,6 +122,7 @@ def test_authorize_rejects_negative_tokens(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
             "tokens": -1,
@@ -142,6 +144,7 @@ def test_capture_rejects_non_positive_settlement(
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
         },
@@ -169,6 +172,7 @@ def _authorize_ten(client: TestClient, key: str) -> str:
             "agent": "ops",
             "entity": "sg",
             "vendor": "x",
+            "currency": "SGD",
             "amount": "10",
             "reason": "x",
         },
@@ -270,6 +274,7 @@ def test_db_rejects_two_sided_journal_line(db_session: Session) -> None:
                 debit=Decimal("5"),
                 credit=Decimal("5"),  # two-sided line is corruption
                 ledger="sg",
+                currency="SGD",  # set so the one-sided CHECK is what fails
             )
         )
         db_session.flush()

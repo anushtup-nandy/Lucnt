@@ -1,19 +1,27 @@
 """Jurisdiction-aware tax engine (backend/PLAN.md §5, Module 2).
 
-Given an entity's tax regime and the amount actually paid, compute the tax
-treatment for the transaction. Pure and side-effect-free: it returns a
-`TaxTreatment` value; persistence and journalling happen elsewhere.
+Given an entity's tax regime and the transaction amount **in the entity's
+functional currency**, compute the tax treatment. Pure and side-effect-free: it
+returns a `TaxTreatment` value; persistence and journalling happen elsewhere.
 
 MVP scope — India GST, Singapore GST, US sales tax:
 
-- **Imported services** (`paid_currency != entity_currency`, i.e. a foreign
-  vendor that bills no local tax) under IN/SG GST trigger the **reverse charge
-  (RCM)**: the buyer self-assesses tax *on top of* the tax-exclusive paid
-  amount, claims it back as input credit, and must issue a self-invoice.
-- **Domestic services** carry GST *embedded* in the (tax-inclusive) paid
-  amount; the engine extracts it and records the reclaimable input credit.
-- **US sales tax**: there is no federal VAT and state sales/use-tax nexus is
-  not evaluated in the MVP, so no tax is self-assessed (rate 0).
+- **Imported services** (paid in a foreign currency, i.e. a foreign vendor that
+  bills no local tax) under IN/SG GST trigger the **reverse charge (RCM)**: the
+  buyer self-assesses tax *on top of* the tax-exclusive amount, claims it back as
+  input credit, and must issue a self-invoice.
+- **Domestic services** carry GST *embedded* in the (tax-inclusive) amount; the
+  engine extracts it and records the reclaimable input credit.
+- **US sales tax**: no federal VAT and state sales/use-tax nexus is not evaluated
+  in the MVP, so no tax is self-assessed (rate 0).
+
+**Currency (PRODUCTION_PLAN T1-4).** Tax is computed on ``functional_amount`` —
+the paid amount already converted to the entity's functional currency by
+`services/fx.py` at capture — never on the raw foreign amount. Computing an INR
+entity's RCM on a USD figure understated GST by the whole FX factor. The
+``paid_currency`` vs ``entity_currency`` comparison still decides *import vs
+domestic* (T1-3 refines this to place-of-supply in Sprint 2b); the *amount* the
+rate applies to is always functional.
 
 All money math is `Decimal`; tax is quantized to two places, ROUND_HALF_UP.
 """
@@ -41,6 +49,9 @@ class TaxTreatment:
     legal_reference: str
     reverse_charge: bool
     self_invoice_required: bool
+    # The functional (entity) currency ``tax_amount``/``reclaim_amount`` are
+    # denominated in — tax is always assessed in functional currency (T1-4).
+    currency: str
 
 
 @dataclass(frozen=True)
@@ -86,7 +97,7 @@ def _quantize(amount: Decimal) -> Decimal:
 def compute_tax(
     *,
     tax_regime: str,
-    paid_amount: Decimal,
+    functional_amount: Decimal,
     paid_currency: str,
     entity_currency: str,
 ) -> TaxTreatment:
@@ -94,13 +105,15 @@ def compute_tax(
 
     Args:
         tax_regime: The entity's regime (e.g. ``"IN-GST"``, ``"US-Sales-Tax"``).
-        paid_amount: The amount the vendor was paid (transaction currency).
-        paid_currency: ISO code of what was paid.
-        entity_currency: ISO code of the entity's home currency.
+        functional_amount: The transaction amount **in the entity's functional
+            currency** (already FX-converted from the paid amount, T1-4).
+        paid_currency: ISO code of what was actually paid — used only to decide
+            import vs domestic.
+        entity_currency: ISO code of the entity's functional currency.
 
     Returns:
         A `TaxTreatment`; ``tax_amount`` is 0 for regimes with no self-assessed
-        tax (US / unknown).
+        tax (US / unknown). ``currency`` is always ``entity_currency``.
     """
     imported = paid_currency.upper() != entity_currency.upper()
     rule = _REGIMES.get(tax_regime)
@@ -122,11 +135,13 @@ def compute_tax(
             ),
             reverse_charge=False,
             self_invoice_required=False,
+            currency=entity_currency,
         )
 
     if imported:
-        # Reverse charge: tax self-assessed on top of the tax-exclusive amount.
-        tax = _quantize(paid_amount * rule.rate)
+        # Reverse charge: tax self-assessed on top of the tax-exclusive amount,
+        # in the functional currency.
+        tax = _quantize(functional_amount * rule.rate)
         return TaxTreatment(
             tax_type="GST_RCM",
             jurisdiction=rule.jurisdiction,
@@ -137,10 +152,11 @@ def compute_tax(
             legal_reference=rule.legal_reference_imported,
             reverse_charge=True,
             self_invoice_required=True,
+            currency=entity_currency,
         )
 
-    # Domestic: GST is embedded in the tax-inclusive paid amount.
-    tax = _quantize(paid_amount * rule.rate / (_ONE + rule.rate))
+    # Domestic: GST is embedded in the tax-inclusive (functional) amount.
+    tax = _quantize(functional_amount * rule.rate / (_ONE + rule.rate))
     return TaxTreatment(
         tax_type="GST",
         jurisdiction=rule.jurisdiction,
@@ -151,4 +167,5 @@ def compute_tax(
         legal_reference=rule.legal_reference_domestic,
         reverse_charge=False,
         self_invoice_required=False,
+        currency=entity_currency,
     )

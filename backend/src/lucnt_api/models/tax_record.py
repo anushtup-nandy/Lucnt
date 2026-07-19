@@ -32,5 +32,9 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     reclaim_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 4), default=Decimal("0")
     )
+    # The functional (entity) currency tax_amount/reclaim_amount are computed in
+    # (T1-4) — tax is assessed on the FX-converted local amount, not the foreign
+    # paid amount.
+    currency: Mapped[str] = mapped_column(String(3))
     legal_reference: Mapped[str] = mapped_column(Text)
     self_invoice_generated: Mapped[bool] = mapped_column(default=False)

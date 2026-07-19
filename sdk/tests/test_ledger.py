@@ -211,6 +211,7 @@ def test_capture_parses_journal_and_tax(monkeypatch: pytest.MonkeyPatch) -> None
                         "debit": 100,
                         "credit": 0,
                         "ledger": "in",
+                        "currency": "INR",
                     },
                     {
                         "account_code": "1010",
@@ -218,6 +219,7 @@ def test_capture_parses_journal_and_tax(monkeypatch: pytest.MonkeyPatch) -> None
                         "debit": 0,
                         "credit": 100,
                         "ledger": "in",
+                        "currency": "INR",
                     },
                 ],
                 "tax": {
@@ -227,6 +229,7 @@ def test_capture_parses_journal_and_tax(monkeypatch: pytest.MonkeyPatch) -> None
                     "tax_amount": 18,
                     "is_reclaimable": True,
                     "reclaim_amount": 18,
+                    "currency": "INR",
                     "legal_reference": "IGST Act 2017 s.5(3)",
                     "reverse_charge": True,
                     "self_invoice_generated": True,

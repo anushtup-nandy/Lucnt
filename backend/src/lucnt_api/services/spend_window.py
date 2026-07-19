@@ -61,11 +61,12 @@ def committed_spend(db: Session, agent_id: uuid.UUID, since: datetime) -> Decima
 
     Derived from `transactions.transaction_date`, so 'this month'/'today' windows
     reset automatically at the period boundary — no stored running counter to
-    drift or need a scheduled reset. NB: sums `paid_amount` as-is; FX
-    normalisation to a functional currency is Tier 1 (T1-2).
+    drift or need a scheduled reset. Sums `local_amount` (the entity's functional
+    currency, FX-converted at capture) so the budget invariant never adds mixed
+    currencies (T1-2).
     """
     total = db.execute(
-        select(func.coalesce(func.sum(Transaction.paid_amount), 0)).where(
+        select(func.coalesce(func.sum(Transaction.local_amount), 0)).where(
             Transaction.agent_id == agent_id,
             Transaction.transaction_date >= since,
         )
@@ -80,15 +81,20 @@ def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
     period, so counting it now is correct and stops a stale hold from being
     captured to bust a later period's budget. Holds that never capture keep
     reserving (fail-closed) until a TTL / `void()` releases them (Tier 5, T5-4).
+
+    Sums `local_amount` (the hold's functional-currency snapshot from authorize)
+    so reservation is measured in the same currency as the budget (T1-2).
     """
     total = db.execute(
-        select(func.coalesce(func.sum(Authorization.amount), 0)).where(
+        select(func.coalesce(func.sum(Authorization.local_amount), 0)).where(
             Authorization.agent_id == agent_id,
             Authorization.status == VerdictStatus.APPROVED,
             ~_captured_hold_exists(),
         )
     ).scalar_one()
-    return Decimal(total)
+    # coalesce guarantees non-null at SQL level; the guard is for the type checker
+    # (local_amount is a nullable column).
+    return Decimal(total if total is not None else 0)
 
 
 def recent_activity_count(db: Session, agent_id: uuid.UUID, since: datetime) -> int:
