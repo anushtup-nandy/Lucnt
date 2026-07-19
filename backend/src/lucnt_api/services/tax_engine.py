@@ -31,9 +31,35 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
-_TWO_PLACES = Decimal("0.01")
+# Tax is carried at the ledger's 4dp money scale (T1-13); rounding to 2dp happens
+# only at return/invoice aggregation, so token-scale micro-amounts don't vanish
+# to zero (100k charges of ₹0.03 tax are ~₹457, not ₹0).
+_FOUR_PLACES = Decimal("0.0001")
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
+
+# The regimes the engine understands. Anything else is a misconfigured entity and
+# must fail loud (T1-8), never silently book zero tax for months.
+KNOWN_TAX_REGIMES: frozenset[str] = frozenset({"IN-GST", "SG-GST", "US-Sales-Tax"})
+
+# ITC is blocked for these expense categories under CGST s.17(5) (T1-14): the GST
+# becomes a cost, not a reclaimable credit. Keyed by regime (India only for MVP).
+_BLOCKED_ITC_CATEGORIES: dict[str, frozenset[str]] = {
+    "IN-GST": frozenset({"travel"}),
+}
+_BLOCKED_ITC_NOTE = " — input tax credit blocked under CGST s.17(5)"
+
+
+class UnknownTaxRegimeError(Exception):
+    """The entity's `tax_regime` is not one the engine understands (T1-8)."""
+
+    def __init__(self, regime: str) -> None:
+        """Record the offending regime string for the caller / logs."""
+        self.regime = regime
+        super().__init__(
+            f"unknown tax regime {regime!r}; expected one of "
+            f"{sorted(KNOWN_TAX_REGIMES)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -90,8 +116,16 @@ _REGIMES: dict[str, _RegimeRule] = {
 
 
 def _quantize(amount: Decimal) -> Decimal:
-    """Round a money amount to two decimal places, half-up (standard tax rounding)."""
-    return amount.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+    """Round tax to the ledger's 4dp scale, half-up (T1-13)."""
+    return amount.quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
+
+
+def _is_itc_blocked(tax_regime: str, expense_category: str | None) -> bool:
+    """Whether input tax credit is barred for this category/regime (T1-14)."""
+    if expense_category is None:
+        return False
+    blocked = _BLOCKED_ITC_CATEGORIES.get(tax_regime, frozenset())
+    return expense_category.strip().lower() in blocked
 
 
 def compute_tax(
@@ -100,6 +134,7 @@ def compute_tax(
     functional_amount: Decimal,
     paid_currency: str,
     entity_currency: str,
+    expense_category: str | None = None,
 ) -> TaxTreatment:
     """Compute the tax treatment for a captured spend.
 
@@ -110,61 +145,85 @@ def compute_tax(
         paid_currency: ISO code of what was actually paid — used only to decide
             import vs domestic.
         entity_currency: ISO code of the entity's functional currency.
+        expense_category: Optional caller-stated category; drives blocked input
+            tax credit (T1-14) — e.g. IN travel spend cannot reclaim ITC.
 
     Returns:
-        A `TaxTreatment`; ``tax_amount`` is 0 for regimes with no self-assessed
-        tax (US / unknown). ``currency`` is always ``entity_currency``.
+        A `TaxTreatment`; ``tax_amount`` is 0 for US (no self-assessed tax in the
+        MVP). ``currency`` is always ``entity_currency``.
+
+    Raises:
+        UnknownTaxRegimeError: ``tax_regime`` is not in `KNOWN_TAX_REGIMES` (T1-8).
     """
+    if tax_regime not in KNOWN_TAX_REGIMES:
+        # Fail loud on a misconfigured regime rather than silently booking zero
+        # tax for months (T1-8). Validating the regime at entity creation is the
+        # proper guard (deferred with the entities CRUD endpoint); this is the
+        # last line of defence at capture.
+        raise UnknownTaxRegimeError(tax_regime)
+
     imported = paid_currency.upper() != entity_currency.upper()
     rule = _REGIMES.get(tax_regime)
 
     if rule is None:
-        # US sales tax and any unrecognised regime: no tax self-assessed in MVP.
-        is_us = tax_regime == "US-Sales-Tax"
+        # US sales tax: no federal VAT, and state sales/use-tax nexus is not
+        # evaluated in the MVP, so no tax is self-assessed (T1-15 — a labeled
+        # gap surfaced per-transaction, not a silent zero).
         return TaxTreatment(
-            tax_type="SALES_TAX" if is_us else "NONE",
-            jurisdiction="United States" if is_us else tax_regime,
+            tax_type="SALES_TAX",
+            jurisdiction="United States",
             rate=_ZERO,
             tax_amount=_ZERO,
             is_reclaimable=False,
             reclaim_amount=_ZERO,
             legal_reference=(
-                "US: no federal VAT; state sales/use-tax nexus not evaluated (MVP)"
-                if is_us
-                else f"No tax rule configured for regime {tax_regime!r} (MVP)"
+                "US: no federal VAT; state sales/use-tax nexus not evaluated "
+                "(MVP gap — PRODUCTION_PLAN T1-15)"
             ),
             reverse_charge=False,
             self_invoice_required=False,
             currency=entity_currency,
         )
 
+    blocked = _is_itc_blocked(tax_regime, expense_category)
+
     if imported:
         # Reverse charge: tax self-assessed on top of the tax-exclusive amount,
-        # in the functional currency.
+        # in the functional currency. When ITC is blocked (T1-14) the output GST
+        # is still owed but not reclaimable.
         tax = _quantize(functional_amount * rule.rate)
         return TaxTreatment(
             tax_type="GST_RCM",
             jurisdiction=rule.jurisdiction,
             rate=rule.rate,
             tax_amount=tax,
-            is_reclaimable=True,
-            reclaim_amount=tax,
-            legal_reference=rule.legal_reference_imported,
+            is_reclaimable=not blocked,
+            reclaim_amount=_ZERO if blocked else tax,
+            legal_reference=(
+                rule.legal_reference_imported + _BLOCKED_ITC_NOTE
+                if blocked
+                else rule.legal_reference_imported
+            ),
             reverse_charge=True,
             self_invoice_required=True,
             currency=entity_currency,
         )
 
-    # Domestic: GST is embedded in the tax-inclusive (functional) amount.
+    # Domestic: GST is embedded in the tax-inclusive (functional) amount; when
+    # ITC is blocked (T1-14) it stays inside the expense, not reclaimable.
     tax = _quantize(functional_amount * rule.rate / (_ONE + rule.rate))
     return TaxTreatment(
         tax_type="GST",
         jurisdiction=rule.jurisdiction,
         rate=rule.rate,
         tax_amount=tax,
-        is_reclaimable=True,
-        reclaim_amount=tax,
-        legal_reference=rule.legal_reference_domestic,
+        is_reclaimable=not blocked,
+        reclaim_amount=_ZERO if blocked else tax,
+        legal_reference=(
+            rule.legal_reference_domestic + _BLOCKED_ITC_NOTE
+            if blocked
+            else rule.legal_reference_domestic
+        ),
         reverse_charge=False,
         self_invoice_required=False,
         currency=entity_currency,

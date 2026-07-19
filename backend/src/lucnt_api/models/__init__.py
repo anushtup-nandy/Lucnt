@@ -20,6 +20,7 @@ from lucnt_api.models.reconciliation_exception import (
     ReconExceptionStatus,
     ReconExceptionType,
 )
+from lucnt_api.models.self_invoice import SelfInvoice
 from lucnt_api.models.tax_record import TaxRecord
 from lucnt_api.models.transaction import (
     Transaction,
@@ -55,6 +56,7 @@ __all__ = [
     "ReconExceptionStatus",
     "ReconExceptionType",
     "ReconciliationException",
+    "SelfInvoice",
     "TaxRecord",
     "Transaction",
     "TransactionSource",

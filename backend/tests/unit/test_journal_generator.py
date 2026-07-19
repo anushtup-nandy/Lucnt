@@ -62,6 +62,7 @@ def _txn(
     vendor: str = "acme",
     model_used: str | None = None,
     tokens_consumed: int | None = None,
+    category: str | None = None,
 ) -> Transaction:
     """An in-memory captured transaction with an explicit id (not flushed)."""
     return Transaction(
@@ -75,6 +76,7 @@ def _txn(
         paid_currency=paid_currency,
         local_amount=paid_amount,
         local_currency=paid_currency,
+        category=category,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
     )
@@ -184,6 +186,62 @@ def test_expense_account_selection(
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     assert _debit(lines, expected_code) == Decimal("10")
+
+
+def test_caller_category_overrides_vendor_inference() -> None:
+    """An explicit, known caller category wins over vendor inference (T1-19)."""
+    entity = Entity(code="us", currency="USD")
+    txn = _txn(
+        paid_amount=Decimal("10"), paid_currency="USD",
+        vendor="mystery vendor", category="travel",
+    )
+    tax = compute_tax(
+        tax_regime="US-Sales-Tax", functional_amount=txn.local_amount,
+        paid_currency=txn.paid_currency, entity_currency=entity.currency,
+    )
+    lines = generate_journal(txn, entity, tax, _accounts())
+    assert _debit(lines, EXPENSE_TRAVEL_CODE) == Decimal("10")
+
+
+@pytest.mark.parametrize(
+    ("vendor", "expected_code"),
+    [
+        ("Metabase", EXPENSE_SOFTWARE_CODE),  # not Marketing via substring "meta"
+        ("Roads Logistics", EXPENSE_SOFTWARE_CODE),  # not Marketing via "ads"
+        ("Singapore Airlines", EXPENSE_TRAVEL_CODE),  # plural token matches
+    ],
+)
+def test_whole_token_vendor_matching(vendor: str, expected_code: str) -> None:
+    """Vendor classification matches whole tokens, not substrings (T1-19)."""
+    entity = Entity(code="us", currency="USD")
+    txn = _txn(paid_amount=Decimal("10"), paid_currency="USD", vendor=vendor)
+    tax = compute_tax(
+        tax_regime="US-Sales-Tax", functional_amount=txn.local_amount,
+        paid_currency=txn.paid_currency, entity_currency=entity.currency,
+    )
+    lines = generate_journal(txn, entity, tax, _accounts())
+    assert _debit(lines, expected_code) == Decimal("10")
+
+
+def test_blocked_itc_rcm_books_tax_into_expense() -> None:
+    """Blocked-ITC RCM (IN travel): no input-credit leg; GST is a cost (T1-14)."""
+    entity = Entity(code="in", currency="INR")
+    txn = _txn(
+        paid_amount=Decimal("100"), paid_currency="USD",
+        vendor="grand hotel", category="travel",
+    )
+    tax = compute_tax(
+        tax_regime="IN-GST", functional_amount=txn.local_amount,
+        paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        expense_category="travel",
+    )
+    lines = generate_journal(txn, entity, tax, _accounts())
+    _assert_balances(lines)
+    assert len(lines) == 3  # expense, wallet, GST payable — no ITC leg
+    assert _debit(lines, EXPENSE_TRAVEL_CODE) == Decimal("118.0000")  # 100 + 18 GST
+    assert _credit(lines, WALLET_CODE) == Decimal("100")
+    assert _credit(lines, GST_PAYABLE_CODE) == Decimal("18.0000")
+    assert _debit(lines, INPUT_TAX_CREDIT_CODE) == Decimal("0")
 
 
 def test_ledger_is_entity_code() -> None:

@@ -22,11 +22,13 @@ asserts and raises rather than persisting a broken ledger.
 
 from __future__ import annotations
 
+import re
 import uuid
 from decimal import Decimal
 
 from lucnt_api.models import Account, Entity, JournalEntry, Transaction
 from lucnt_api.services.chart_of_accounts import (
+    CATEGORY_TO_ACCOUNT,
     EXPENSE_AI_COMPUTE_CODE,
     EXPENSE_MARKETING_CODE,
     EXPENSE_SOFTWARE_CODE,
@@ -39,27 +41,38 @@ from lucnt_api.services.tax_engine import TaxTreatment
 
 _ZERO = Decimal("0")
 
-_TRAVEL_KEYWORDS = (
-    "airline", "airways", "booking", "expedia", "flight", "travel", "hotel"
+# Whole-token vendor keywords (T1-19): matched against the vendor's tokenised
+# words, so "roads" no longer matches "ads" and "metabase" no longer matches
+# "meta". Plurals are listed explicitly (word-boundary alone misses "airlines").
+_TRAVEL_KEYWORDS = frozenset(
+    {"airline", "airlines", "airways", "flight", "flights",
+     "travel", "hotel", "hotels", "booking", "expedia"}
 )
-_MARKETING_KEYWORDS = ("meta", "google ads", "canva", "ads", "marketing", "linkedin")
+_MARKETING_KEYWORDS = frozenset({"ads", "meta", "canva", "marketing", "linkedin"})
 
 
 def _select_expense_code(
-    vendor: str, model_used: str | None, tokens_consumed: int | None
+    vendor: str,
+    model_used: str | None,
+    tokens_consumed: int | None,
+    category: str | None,
 ) -> str:
-    """Pick the expense account for a spend from its vendor / model signals.
+    """Pick the expense account for a spend from caller category / vendor signals.
 
-    LLM/API spend (a model or token count is present) books to AI & Compute;
-    otherwise a vendor-keyword heuristic routes to Travel or Marketing, falling
-    back to Software & Subscriptions (the common case for agent SaaS commerce).
+    An explicit, known caller `category` wins (T1-19); otherwise LLM/API spend (a
+    model or token count) books to AI & Compute, and a **whole-token** vendor
+    match routes to Travel or Marketing, falling back to Software & Subscriptions.
     """
+    if category is not None:
+        code = CATEGORY_TO_ACCOUNT.get(category.strip().lower())
+        if code is not None:
+            return code
     if model_used or tokens_consumed:
         return EXPENSE_AI_COMPUTE_CODE
-    vendor_lc = vendor.lower()
-    if any(keyword in vendor_lc for keyword in _TRAVEL_KEYWORDS):
+    tokens = set(re.split(r"[^a-z0-9]+", vendor.lower()))
+    if tokens & _TRAVEL_KEYWORDS:
         return EXPENSE_TRAVEL_CODE
-    if any(keyword in vendor_lc for keyword in _MARKETING_KEYWORDS):
+    if tokens & _MARKETING_KEYWORDS:
         return EXPENSE_MARKETING_CODE
     return EXPENSE_SOFTWARE_CODE
 
@@ -115,12 +128,24 @@ def generate_journal(
     txn_id = transaction.id
 
     expense_code = _select_expense_code(
-        transaction.vendor, transaction.model_used, transaction.tokens_consumed
+        transaction.vendor,
+        transaction.model_used,
+        transaction.tokens_consumed,
+        transaction.category,
     )
     reclaim = tax.reclaim_amount if tax.is_reclaimable else _ZERO
-    # For domestic GST the tax is embedded in the functional amount; the pure
-    # expense is the net. For reverse charge / no-tax it is the full amount.
-    expense_amount = functional if tax.reverse_charge else functional - reclaim
+    # Expense recognition per case:
+    #  - reverse charge, ITC reclaimable: expense = functional (ITC offsets GST);
+    #  - reverse charge, ITC blocked (T1-14): the self-assessed GST is a cost too,
+    #    so expense = functional + tax and there is no input-credit leg;
+    #  - domestic: net out reclaimable embedded GST (blocked -> reclaim 0, so the
+    #    GST stays inside the expense).
+    if tax.reverse_charge:
+        expense_amount = functional + (
+            tax.tax_amount if not tax.is_reclaimable else _ZERO
+        )
+    else:
+        expense_amount = functional - reclaim
 
     lines = [
         _line(txn_id, accounts[expense_code], ledger, currency, debit=expense_amount),

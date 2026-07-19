@@ -228,6 +228,22 @@ def test_books_entity_filter(books_client: tuple[TestClient, str]) -> None:
     assert resp.status_code == 404
 
 
+def test_books_date_filter_scopes_period(
+    books_client: tuple[TestClient, str],
+) -> None:
+    """T1-17: a statement can be scoped to a period, not inception-to-date."""
+    client, key = books_client
+    # A future window contains none of the (now-dated) spends.
+    future = client.get("/books/pl?date_from=2099-01-01", headers=_headers(key)).json()
+    assert future["currencies"] == []
+    # A window ending in the past likewise.
+    past = client.get("/books/pl?date_to=2000-01-01", headers=_headers(key)).json()
+    assert past["currencies"] == []
+    # No filter -> the full period (both spends).
+    full = client.get("/books/pl", headers=_headers(key)).json()
+    assert Decimal(str(_totals(full)["total_expenses"])) == Decimal("400")
+
+
 def test_company_level_statements_are_per_currency(
     client: TestClient, db_session: Session
 ) -> None:
@@ -242,7 +258,7 @@ def test_company_level_statements_are_per_currency(
         full_name="LUCNT US Inc",
         currency="USD",
         accounting_std="US-GAAP",
-        tax_regime="US-GST",  # not IN/SG-GST -> no self-assessed tax
+        tax_regime="US-Sales-Tax",  # no self-assessed tax (T1-15)
         timezone="America/Los_Angeles",
     )
     db_session.add(us)

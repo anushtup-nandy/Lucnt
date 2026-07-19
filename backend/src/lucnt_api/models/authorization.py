@@ -80,6 +80,9 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     reason: Mapped[str] = mapped_column(Text)
     intent: Mapped[str | None] = mapped_column(String(255), default=None)
     project: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Caller-stated expense category (T1-19), carried to the transaction at
+    # capture; drives journal classification + blocked-ITC (T1-14).
+    category: Mapped[str | None] = mapped_column(String(50), default=None)
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
     status: Mapped[VerdictStatus] = mapped_column(

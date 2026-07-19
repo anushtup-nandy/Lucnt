@@ -65,6 +65,7 @@ def test_authorize_sends_the_resolved_request_and_returns_the_verdict(
             "reason": "test",
             "intent": None,
             "project": None,
+            "category": None,
             "model": None,
             "tokens": None,
         }

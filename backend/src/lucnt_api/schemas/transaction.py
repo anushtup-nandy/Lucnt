@@ -41,6 +41,10 @@ class SpendRequest(BaseModel):
     reason: str
     intent: str | None = None
     project: str | None = None
+    # Optional expense category (T1-19): a known category
+    # (software|ai_compute|travel|marketing|general) books to that account and
+    # drives blocked-ITC (T1-14); an unknown value falls back to vendor inference.
+    category: str | None = None
     model: str | None = None
     tokens: int | None = Field(default=None, ge=0)
 

@@ -68,7 +68,7 @@ def _make_entity(db_session: Session, company: Company) -> Entity:
         full_name="LUCNT US Inc",
         currency="USD",
         accounting_std="US-GAAP",
-        tax_regime="US-SALES",
+        tax_regime="US-Sales-Tax",
         timezone="America/New_York",
     )
     db_session.add(entity)

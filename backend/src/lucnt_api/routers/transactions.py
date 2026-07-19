@@ -10,6 +10,7 @@ the spend and books tax + double-entry journal (Phase 2).
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -19,7 +20,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lucnt_api.config import settings
-from lucnt_api.dependencies import get_current_company, get_db, require_live
+from lucnt_api.dependencies import (
+    AuthContext,
+    get_auth_context,
+    get_current_company,
+    get_db,
+    require_admin,
+    require_live,
+)
 from lucnt_api.models import (
     Agent,
     AgentStatus,
@@ -45,10 +53,12 @@ from lucnt_api.schemas.transaction import (
     Verdict,
 )
 from lucnt_api.schemas.transaction import Transaction as TransactionSchema
+from lucnt_api.services.audit import record as record_audit
 from lucnt_api.services.chart_of_accounts import ensure_default_accounts
 from lucnt_api.services.fx import FxRateUnavailableError, convert
 from lucnt_api.services.journal_generator import generate_journal
 from lucnt_api.services.policy_engine import SpendContext, evaluate_spend
+from lucnt_api.services.self_invoice import build_self_invoice
 from lucnt_api.services.spend_window import (
     committed_spend,
     now_in_entity_tz,
@@ -186,6 +196,7 @@ def _replay_capture(
         functional_amount=existing.local_amount,
         paid_currency=existing.paid_currency,
         entity_currency=entity.currency,
+        expense_category=existing.category,
     )
     accounts = ensure_default_accounts(db, company.id)
     journal_lines = generate_journal(existing, entity, tax, accounts)
@@ -244,6 +255,7 @@ def _persist_authorization(
         reason=request.reason,
         intent=request.intent,
         project=request.project,
+        category=request.category,
         model_used=request.model,
         tokens_consumed=request.tokens,
         status=verdict_status,
@@ -495,6 +507,7 @@ def capture(
         local_currency=entity.currency,
         project=authorization.project,
         intent=authorization.intent,
+        category=authorization.category,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
         status=TransactionStatus.COMPLETED,
@@ -518,8 +531,8 @@ def capture(
         update(Agent)
         .where(Agent.id == agent.id)
         .values(
-            spent_ytd=Agent.spent_ytd + transaction.paid_amount,
-            spent_today=Agent.spent_today + transaction.paid_amount,
+            spent_ytd=Agent.spent_ytd + transaction.local_amount,
+            spent_today=Agent.spent_today + transaction.local_amount,
         )
         .execution_options(synchronize_session=False)
     )
@@ -534,6 +547,7 @@ def capture(
         functional_amount=transaction.local_amount,
         paid_currency=transaction.paid_currency,
         entity_currency=entity.currency,
+        expense_category=transaction.category,
     )
     db.add(
         TaxRecord(
@@ -549,6 +563,10 @@ def capture(
             self_invoice_generated=tax.self_invoice_required,
         )
     )
+    # Reverse charge requires a buyer-issued self-invoice (r.46): produce the
+    # actual record so `self_invoice_generated` is truthful, not fabricated (T1-7).
+    if tax.self_invoice_required:
+        db.add(build_self_invoice(transaction, entity, tax))
     accounts = ensure_default_accounts(db, company.id)
     journal_lines = generate_journal(transaction, entity, tax, accounts)
     db.add_all(journal_lines)
@@ -556,6 +574,148 @@ def capture(
     # Build the response before commit (expire_on_commit would otherwise force a
     # reload per attribute); the same builder serves the idempotent replay path.
     result = _capture_response(transaction, tax, journal_lines)
+    db.commit()
+    return result
+
+
+@router.post("/{transaction_id}/reverse", response_model=TransactionSchema)
+def reverse_transaction(
+    transaction_id: uuid.UUID,
+    company: Company = Depends(require_admin),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> TransactionSchema:
+    """Reverse a committed transaction with a contra entry (T1-16 refund/credit note).
+
+    Books a new reversal transaction (positive amount, contra journal) that
+    negates the original and frees the agent's budget; the original is flagged
+    reversed. Admin-scoped and audited. Idempotent: reversing an already-reversed
+    transaction (or a reversal itself) is a 409.
+    """
+    original = db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.company_id == company.id,
+        )
+    ).scalar_one_or_none()
+    if original is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown transaction")
+    if original.reverses_transaction_id is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot reverse a reversal")
+    if original.is_reversed:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Transaction already reversed")
+
+    entity = db.get(Entity, original.entity_id)
+    if entity is None:  # FK-guaranteed; explicit guard, not an assert (T0-18)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "transaction references a missing entity",
+        )
+
+    original_lines = list(
+        db.execute(
+            select(JournalEntry).where(JournalEntry.transaction_id == original.id)
+        ).scalars()
+    )
+
+    now = datetime.now(timezone.utc)
+    reversal = Transaction(
+        company_id=company.id,
+        agent_id=original.agent_id,
+        entity_id=original.entity_id,
+        reverses_transaction_id=original.id,
+        source=original.source,
+        vendor=original.vendor,
+        item_description=f"Reversal of {original.id}",
+        paid_amount=original.paid_amount,
+        paid_currency=original.paid_currency,
+        exchange_rate=original.exchange_rate,
+        local_amount=original.local_amount,
+        local_currency=original.local_currency,
+        project=original.project,
+        intent=original.intent,
+        category=original.category,
+        model_used=original.model_used,
+        tokens_consumed=original.tokens_consumed,
+        status=TransactionStatus.COMPLETED,
+        approval_method="reversal",
+        reason_text=f"reversal of transaction {original.id}",
+        transaction_date=now,
+    )
+    db.add(reversal)
+    db.flush()
+
+    # Contra journal: swap debit<->credit on each original line. Balances by
+    # construction and nets this spend's ledger effect back to zero (T1-16).
+    contra_lines = [
+        JournalEntry(
+            transaction_id=reversal.id,
+            account_name=line.account_name,
+            account_code=line.account_code,
+            debit=line.credit,
+            credit=line.debit,
+            ledger=line.ledger,
+            currency=line.currency,
+        )
+        for line in original_lines
+    ]
+    db.add_all(contra_lines)
+
+    # Contra tax record (negated) so a GST return nets the reversal correctly.
+    tax = compute_tax(
+        tax_regime=entity.tax_regime,
+        functional_amount=reversal.local_amount,
+        paid_currency=reversal.paid_currency,
+        entity_currency=entity.currency,
+        expense_category=reversal.category,
+    )
+    contra_tax = replace(
+        tax,
+        tax_amount=-tax.tax_amount,
+        reclaim_amount=-tax.reclaim_amount,
+        self_invoice_required=False,
+        legal_reference=f"Reversal — {tax.legal_reference}",
+    )
+    db.add(
+        TaxRecord(
+            transaction_id=reversal.id,
+            tax_type=contra_tax.tax_type,
+            jurisdiction=contra_tax.jurisdiction,
+            rate=contra_tax.rate,
+            tax_amount=contra_tax.tax_amount,
+            is_reclaimable=contra_tax.is_reclaimable,
+            reclaim_amount=contra_tax.reclaim_amount,
+            currency=contra_tax.currency,
+            legal_reference=contra_tax.legal_reference,
+            self_invoice_generated=False,
+        )
+    )
+
+    original.is_reversed = True
+
+    # Free the agent's budget: the derived committed_spend nets the reversal, and
+    # the display counters are decremented to match (T1-16 / T0-2 atomic update).
+    db.execute(
+        update(Agent)
+        .where(Agent.id == original.agent_id)
+        .values(
+            spent_ytd=Agent.spent_ytd - reversal.local_amount,
+            spent_today=Agent.spent_today - reversal.local_amount,
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+    record_audit(
+        db,
+        ctx.api_key,
+        action="transaction.reverse",
+        entity_type="transaction",
+        entity_id=reversal.id,
+        before={"transaction_id": str(original.id), "is_reversed": False},
+        after={"reversal_id": str(reversal.id), "is_reversed": True},
+    )
+
+    result = _capture_response(reversal, contra_tax, contra_lines)
     db.commit()
     return result
 

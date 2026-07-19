@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lucnt_api.models import Account, AccountCategory
@@ -22,11 +23,27 @@ from lucnt_api.models import Account, AccountCategory
 WALLET_CODE = "1010"
 INPUT_TAX_CREDIT_CODE = "1400"
 GST_PAYABLE_CODE = "2200"
+# Equity accounts. Contributed Capital receives wallet-funding entries (T1-18);
+# Retained Earnings is a real account (T1-17) that the balance sheet's
+# undistributed-P&L line references instead of a fabricated code.
+CONTRIBUTED_CAPITAL_CODE = "3000"
+RETAINED_EARNINGS_CODE = "3900"
 EXPENSE_SOFTWARE_CODE = "6010"
 EXPENSE_AI_COMPUTE_CODE = "6020"
 EXPENSE_TRAVEL_CODE = "6030"
 EXPENSE_MARKETING_CODE = "6040"
 EXPENSE_GENERAL_CODE = "6090"
+
+# Caller-facing expense categories (T1-19) → account code. A caller may state the
+# category explicitly (a fact about the purchase); otherwise the journal generator
+# infers it from vendor/model signals. An unknown category falls back to inference.
+CATEGORY_TO_ACCOUNT: dict[str, str] = {
+    "software": EXPENSE_SOFTWARE_CODE,
+    "ai_compute": EXPENSE_AI_COMPUTE_CODE,
+    "travel": EXPENSE_TRAVEL_CODE,
+    "marketing": EXPENSE_MARKETING_CODE,
+    "general": EXPENSE_GENERAL_CODE,
+}
 
 
 @dataclass(frozen=True)
@@ -49,6 +66,10 @@ _DEFAULT_ACCOUNTS: tuple[_AccountSpec, ...] = (
         GST_PAYABLE_CODE, "GST Payable (Reverse Charge)", AccountCategory.LIABILITY
     ),
     _AccountSpec(
+        CONTRIBUTED_CAPITAL_CODE, "Contributed Capital", AccountCategory.EQUITY
+    ),
+    _AccountSpec(RETAINED_EARNINGS_CODE, "Retained Earnings", AccountCategory.EQUITY),
+    _AccountSpec(
         EXPENSE_SOFTWARE_CODE, "Software & Subscriptions", AccountCategory.EXPENSE
     ),
     _AccountSpec(EXPENSE_AI_COMPUTE_CODE, "AI & Compute", AccountCategory.EXPENSE),
@@ -69,6 +90,12 @@ def ensure_default_accounts(db: Session, company_id: uuid.UUID) -> dict[str, Acc
     capture). Flushes so newly created accounts have ids, but does not commit;
     the caller owns the transaction.
 
+    **Concurrency (T1-20).** Two first-ever captures can race to insert the same
+    account code. Each insert runs in its own SAVEPOINT: if a concurrent capture
+    won the `uq_accounts_company_code` unique constraint, the `IntegrityError`
+    rolls back only that savepoint (not the whole capture transaction) and the
+    committed row is adopted — so a capture never 500s *after* the vendor was paid.
+
     Returns:
         A mapping of ``account_code`` -> `Account` covering the full default set.
     """
@@ -79,7 +106,6 @@ def ensure_default_accounts(db: Session, company_id: uuid.UUID) -> dict[str, Acc
         ).scalars()
     }
 
-    created = False
     for spec in _DEFAULT_ACCOUNTS:
         if spec.code in existing:
             continue
@@ -90,10 +116,17 @@ def ensure_default_accounts(db: Session, company_id: uuid.UUID) -> dict[str, Acc
             category=spec.category,
             normal_balance=spec.category.normal_balance,
         )
-        db.add(account)
-        existing[spec.code] = account
-        created = True
-
-    if created:
-        db.flush()
+        try:
+            with db.begin_nested():
+                db.add(account)
+                db.flush()
+            existing[spec.code] = account
+        except IntegrityError:
+            # A concurrent capture created it first — adopt the committed row.
+            existing[spec.code] = db.execute(
+                select(Account).where(
+                    Account.company_id == company_id,
+                    Account.account_code == spec.code,
+                )
+            ).scalar_one()
     return existing

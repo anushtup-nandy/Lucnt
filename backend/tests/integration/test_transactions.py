@@ -22,6 +22,7 @@ from lucnt_api.models import (
     Entity,
     FxRate,
     JournalEntry,
+    SelfInvoice,
     TaxRecord,
 )
 from lucnt_api.security import generate_api_key, hash_api_key
@@ -565,6 +566,127 @@ def test_capture_rejects_non_sdk_source(
         headers=_auth_headers(key),
     )
     assert response.status_code == 400
+
+
+def test_reverse_charge_generates_self_invoice(
+    client: TestClient, db_session: Session
+) -> None:
+    """T1-7: an RCM capture produces a real self-invoice record (flag is truthful)."""
+    company, key = _make_company_with_key(db_session)
+    entity = _make_entity(db_session, company, code="sg", currency="SGD")
+    _make_agent(db_session, company, entity)
+    db_session.add(
+        FxRate(currency="SGD", usd_per_unit=Decimal("0.5"),
+               effective_from=date(2026, 1, 2), source="test")
+    )
+    db_session.flush()
+    verdict = client.post(
+        "/transactions/authorize",
+        json={"agent": "ops", "entity": "sg", "vendor": "openai", "amount": "100",
+              "currency": "USD", "reason": "rcm", "model": "gpt-5"},
+        headers=_auth_headers(key),
+    ).json()
+    body = client.post(
+        "/transactions/capture",
+        json={"authorization_id": verdict["authorization_id"], "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+    assert body["tax"]["self_invoice_generated"] is True
+    invoices = (
+        db_session.execute(
+            select(SelfInvoice).where(
+                SelfInvoice.transaction_id == uuid.UUID(body["id"])
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(invoices) == 1  # the flag is backed by a real record
+    assert invoices[0].tax_amount == Decimal("18.0000")  # 9% of SGD 200
+    assert invoices[0].supplier_name == "openai"
+    assert invoices[0].currency == "SGD"
+
+
+def test_domestic_spend_has_no_self_invoice(
+    client: TestClient, db_session: Session
+) -> None:
+    """A domestic (non-RCM) capture produces no self-invoice (T1-7)."""
+    company, key = _make_company_with_key(db_session)
+    entity = _make_entity(db_session, company, code="in", currency="INR")
+    _make_agent(db_session, company, entity)
+    verdict = client.post(
+        "/transactions/authorize",
+        json={"agent": "ops", "entity": "in", "vendor": "local", "amount": "118",
+              "currency": "INR", "reason": "domestic"},
+        headers=_auth_headers(key),
+    ).json()
+    body = client.post(
+        "/transactions/capture",
+        json={"authorization_id": verdict["authorization_id"], "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+    assert body["tax"]["self_invoice_generated"] is False
+    invoices = (
+        db_session.execute(
+            select(SelfInvoice).where(
+                SelfInvoice.transaction_id == uuid.UUID(body["id"])
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert invoices == []
+
+
+def test_reverse_books_contra_and_frees_budget(
+    client: TestClient, db_session: Session
+) -> None:
+    """T1-16: a reversal books a contra journal, flags the original, frees budget."""
+    company, key = _make_company_with_key(db_session)
+    agent = _make_agent(db_session, company, _make_entity(db_session, company))
+    verdict = client.post(
+        "/transactions/authorize",
+        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "100",
+              "currency": "SGD", "reason": "spend to reverse"},
+        headers=_auth_headers(key),
+    ).json()
+    tx = client.post(
+        "/transactions/capture",
+        json={"authorization_id": verdict["authorization_id"], "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+    db_session.refresh(agent)
+    assert agent.spent_ytd == Decimal("100.0000")
+
+    rev = client.post(f"/transactions/{tx['id']}/reverse", headers=_auth_headers(key))
+    assert rev.status_code == 200
+    body = rev.json()
+    # Contra journal: the wallet is debited (money back), and it balances.
+    wallet = next(ln for ln in body["journal"] if ln["account_code"] == "1010")
+    assert Decimal(wallet["debit"]) == Decimal("100")
+    total_debit = sum(Decimal(ln["debit"]) for ln in body["journal"])
+    total_credit = sum(Decimal(ln["credit"]) for ln in body["journal"])
+    assert total_debit == total_credit
+
+    db_session.refresh(agent)
+    assert agent.spent_ytd == Decimal("0.0000")  # budget freed
+
+    listing = client.get("/transactions", headers=_auth_headers(key)).json()
+    assert listing["total"] == 2  # original + reversal
+
+    # Reversing again is a 409 (idempotent guard).
+    again = client.post(f"/transactions/{tx['id']}/reverse", headers=_auth_headers(key))
+    assert again.status_code == 409
+
+
+def test_reverse_unknown_transaction_is_404(
+    client: TestClient, db_session: Session
+) -> None:
+    _, key = _make_company_with_key(db_session)
+    resp = client.post(
+        f"/transactions/{uuid.uuid4()}/reverse", headers=_auth_headers(key)
+    )
+    assert resp.status_code == 404
 
 
 def test_list_transactions_is_scoped_to_company(

@@ -16,10 +16,11 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import get_current_company, get_db
@@ -48,13 +49,38 @@ from lucnt_api.schemas.books import (
     TrialBalanceResponse,
     TrialBalanceRow,
 )
-from lucnt_api.services.chart_of_accounts import WALLET_CODE
+from lucnt_api.services.chart_of_accounts import RETAINED_EARNINGS_CODE, WALLET_CODE
 
 router = APIRouter(prefix="/books", tags=["books"])
 
 _ZERO = Decimal("0")
-_RETAINED_EARNINGS_CODE = "3900"
 _RETAINED_EARNINGS_NAME = "Retained Earnings"
+
+_FROM_DESC = "Include transactions on/after this date (YYYY-MM-DD)"
+_TO_DESC = "Include transactions on/before this date (YYYY-MM-DD, inclusive)"
+
+
+def _as_dt(day: date) -> datetime:
+    """Midnight (UTC) at the start of `day`, to compare against transaction_date."""
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
+def _date_conditions(
+    date_from: date | None, date_to: date | None
+) -> list[ColumnElement[bool]]:
+    """WHERE conditions restricting `transaction_date` to a period (T1-17).
+
+    So a statement is no longer inception-to-date (a year-3 P&L including year-1).
+    ``date_to`` is inclusive (strictly before the following midnight).
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if date_from is not None:
+        conditions.append(Transaction.transaction_date >= _as_dt(date_from))
+    if date_to is not None:
+        conditions.append(
+            Transaction.transaction_date < _as_dt(date_to) + timedelta(days=1)
+        )
+    return conditions
 
 
 @dataclass(frozen=True)
@@ -84,9 +110,13 @@ def _resolve_entity_id(
 
 
 def _aggregates(
-    db: Session, company: Company, entity_id: uuid.UUID | None
+    db: Session,
+    company: Company,
+    entity_id: uuid.UUID | None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> list[_Aggregate]:
-    """Sum debit/credit per (currency, account) over the company's journal."""
+    """Sum debit/credit per (currency, account) over the journal, period-scoped."""
     stmt = (
         select(
             JournalEntry.account_code,
@@ -113,6 +143,8 @@ def _aggregates(
     )
     if entity_id is not None:
         stmt = stmt.where(Transaction.entity_id == entity_id)
+    for condition in _date_conditions(date_from, date_to):
+        stmt = stmt.where(condition)
 
     return [
         _Aggregate(
@@ -184,6 +216,8 @@ def get_journals(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
+    date_from: date | None = Query(default=None, description=_FROM_DESC),
+    date_to: date | None = Query(default=None, description=_TO_DESC),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> JournalsResponse:
@@ -196,6 +230,8 @@ def get_journals(
     )
     if entity_id is not None:
         base = base.where(Transaction.entity_id == entity_id)
+    for condition in _date_conditions(date_from, date_to):
+        base = base.where(condition)
 
     total = db.execute(select(func.count()).select_from(base.subquery())).scalar_one()
     transactions = (
@@ -248,6 +284,8 @@ def get_general_ledger(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
+    date_from: date | None = Query(default=None, description=_FROM_DESC),
+    date_to: date | None = Query(default=None, description=_TO_DESC),
 ) -> GeneralLedgerResponse:
     """General ledger: every posted account/currency with postings and balance."""
     entity_id = _resolve_entity_id(db, company, entity)
@@ -269,6 +307,8 @@ def get_general_ledger(
     )
     if entity_id is not None:
         stmt = stmt.where(Transaction.entity_id == entity_id)
+    for condition in _date_conditions(date_from, date_to):
+        stmt = stmt.where(condition)
 
     # Key each section by (account_code, currency): the same account posted to in
     # two currencies is two sections, never one mixed-currency balance.
@@ -291,10 +331,12 @@ def get_trial_balance(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
+    date_from: date | None = Query(default=None, description=_FROM_DESC),
+    date_to: date | None = Query(default=None, description=_TO_DESC),
 ) -> TrialBalanceResponse:
     """Trial balance per currency; `balanced` iff every currency balances."""
     entity_id = _resolve_entity_id(db, company, entity)
-    aggregates = _aggregates(db, company, entity_id)
+    aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     rows = [
         TrialBalanceRow(
@@ -328,10 +370,12 @@ def get_profit_and_loss(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
+    date_from: date | None = Query(default=None, description=_FROM_DESC),
+    date_to: date | None = Query(default=None, description=_TO_DESC),
 ) -> ProfitAndLossResponse:
     """Profit & loss per currency: income (credit-normal) less expenses."""
     entity_id = _resolve_entity_id(db, company, entity)
-    aggregates = _aggregates(db, company, entity_id)
+    aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     income = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
@@ -368,10 +412,12 @@ def get_balance_sheet(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
+    date_from: date | None = Query(default=None, description=_FROM_DESC),
+    date_to: date | None = Query(default=None, description=_TO_DESC),
 ) -> BalanceSheetResponse:
     """Balance sheet per currency: assets = liabilities + equity (incl. RE)."""
     entity_id = _resolve_entity_id(db, company, entity)
-    aggregates = _aggregates(db, company, entity_id)
+    aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     assets = [
         BookLine(account_code=a.account_code, account_name=a.account_name,
@@ -399,7 +445,7 @@ def get_balance_sheet(
         retained = _net_profit(aggs)
         equity.append(
             BookLine(
-                account_code=_RETAINED_EARNINGS_CODE,
+                account_code=RETAINED_EARNINGS_CODE,
                 account_name=_RETAINED_EARNINGS_NAME,
                 currency=ccy,
                 amount=retained,
@@ -439,10 +485,12 @@ def get_cash_flow(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
+    date_from: date | None = Query(default=None, description=_FROM_DESC),
+    date_to: date | None = Query(default=None, description=_TO_DESC),
 ) -> CashFlowResponse:
     """Cash flow per currency: net movement on cash/wallet accounts (MVP: operating)."""
     entity_id = _resolve_entity_id(db, company, entity)
-    aggregates = _aggregates(db, company, entity_id)
+    aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     operating = [
         BookLine(account_code=a.account_code, account_name=a.account_name,

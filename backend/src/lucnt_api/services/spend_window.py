@@ -17,7 +17,7 @@ from datetime import datetime, timezone, tzinfo
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, case, func, select
 from sqlalchemy.orm import Session
 
 from lucnt_api.models import Authorization, Entity, Transaction, VerdictStatus
@@ -63,10 +63,15 @@ def committed_spend(db: Session, agent_id: uuid.UUID, since: datetime) -> Decima
     reset automatically at the period boundary — no stored running counter to
     drift or need a scheduled reset. Sums `local_amount` (the entity's functional
     currency, FX-converted at capture) so the budget invariant never adds mixed
-    currencies (T1-2).
+    currencies (T1-2). A reversal transaction (T1-16) subtracts rather than adds,
+    so a refund frees budget.
     """
+    signed_amount = case(
+        (Transaction.reverses_transaction_id.is_(None), Transaction.local_amount),
+        else_=-Transaction.local_amount,
+    )
     total = db.execute(
-        select(func.coalesce(func.sum(Transaction.local_amount), 0)).where(
+        select(func.coalesce(func.sum(signed_amount), 0)).where(
             Transaction.agent_id == agent_id,
             Transaction.transaction_date >= since,
         )

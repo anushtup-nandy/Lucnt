@@ -75,6 +75,13 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     authorization_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("authorizations.id"), default=None
     )
+    # Refunds/reversals (T1-16): a reversal is a real transaction (positive
+    # amount, contra journal) pointing at the original; the original is flagged
+    # ``is_reversed``. Netted out of committed spend so a refund frees budget.
+    reverses_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("transactions.id"), default=None
+    )
+    is_reversed: Mapped[bool] = mapped_column(default=False)
     source: Mapped[TransactionSource] = mapped_column(
         Enum(
             TransactionSource,
@@ -97,6 +104,8 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     project: Mapped[str | None] = mapped_column(String(255), default=None)
     task_type: Mapped[str | None] = mapped_column(String(100), default=None)
     intent: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Caller-stated expense category (T1-19) driving journal classification.
+    category: Mapped[str | None] = mapped_column(String(50), default=None)
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
     status: Mapped[TransactionStatus] = mapped_column(
