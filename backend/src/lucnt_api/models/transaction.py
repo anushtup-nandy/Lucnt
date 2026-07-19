@@ -106,6 +106,10 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     intent: Mapped[str | None] = mapped_column(String(255), default=None)
     # Caller-stated expense category (T1-19) driving journal classification.
     category: Mapped[str | None] = mapped_column(String(50), default=None)
+    # Tax slab + inclusive/exclusive (T1-10) — the rate slab resolved at capture
+    # and whether a domestic amount embedded GST or had it added on top.
+    tax_category: Mapped[str | None] = mapped_column(String(20), default=None)
+    tax_inclusive: Mapped[bool] = mapped_column(default=True)
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
     status: Mapped[TransactionStatus] = mapped_column(

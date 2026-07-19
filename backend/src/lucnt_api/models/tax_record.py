@@ -24,6 +24,11 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     transaction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transactions.id"))
     # e.g. "GST_RCM" (reverse charge), "GST" (domestic), "SALES_TAX", "NONE".
     tax_type: Mapped[str] = mapped_column(String(50))
+    # The GST head this row books (T1-9): "CGST"/"SGST"/"IGST" for India place-of-
+    # supply, "GST" for the unsplit/fallback path, "NONE" for US. A split domestic
+    # supply writes two rows (CGST + SGST); everything else writes one. Needed to
+    # produce GSTR-3B (intra-state CGST+SGST vs inter-state/import IGST).
+    tax_head: Mapped[str] = mapped_column(String(10), default="GST")
     jurisdiction: Mapped[str] = mapped_column(String(50))
     # NUMERIC, never FLOAT. rate is a fraction (0.18 = 18%).
     rate: Mapped[Decimal] = mapped_column(Numeric(9, 6), default=Decimal("0"))

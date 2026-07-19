@@ -55,6 +55,11 @@ class SpendRequest(BaseModel):
     # Optional expense category (T1-19): software|ai_compute|travel|marketing|general.
     # A known value books to that account + drives blocked-ITC; else vendor-inferred.
     category: str | None = None
+    # Tax slab + inclusive/exclusive (T1-10). `tax_category` picks the GST rate slab
+    # (e.g. "gst_5"; omitted -> standard rate); `tax_inclusive` says whether a
+    # domestic amount embeds GST (default) or has it added on top.
+    tax_category: str | None = None
+    tax_inclusive: bool = True
     model: str | None = None
     tokens: int | None = None
 

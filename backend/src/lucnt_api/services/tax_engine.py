@@ -23,7 +23,15 @@ entity's RCM on a USD figure understated GST by the whole FX factor. The
 domestic* (T1-3 refines this to place-of-supply in Sprint 2b); the *amount* the
 rate applies to is always functional.
 
-All money math is `Decimal`; tax is quantized to two places, ROUND_HALF_UP.
+**Effective-dated rate (T1-12).** The statutory ``rate`` is *injected* by the
+caller, resolved from the effective-dated `tax_rates` table by
+`services/tax_rates.py` at the money-path boundary (the capture/authorize
+router), keyed by the transaction date — so a rate change (SG GST 7%→8%→9%)
+never back-applies to a historical supply. This keeps the engine pure and
+SQLAlchemy-free; it applies whatever rate it is given.
+
+All money math is `Decimal`; tax is carried at the ledger's 4dp scale,
+ROUND_HALF_UP (T1-13).
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from decimal import ROUND_HALF_UP, Decimal
 _FOUR_PLACES = Decimal("0.0001")
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
+_TWO = Decimal("2")
 
 # The regimes the engine understands. Anything else is a misconfigured entity and
 # must fail loud (T1-8), never silently book zero tax for months.
@@ -63,8 +72,30 @@ class UnknownTaxRegimeError(Exception):
 
 
 @dataclass(frozen=True)
+class TaxComponent:
+    """One GST head of a treatment — persisted as its own `TaxRecord` (T1-9).
+
+    India intra-state splits one supply into CGST + SGST (two components);
+    inter-state/import is a single IGST component; SG/US/the fallback path is a
+    single unsplit ``GST``/``NONE`` component. ``Σ component.tax_amount`` equals
+    the treatment's summary ``tax_amount`` (the split is exact), so the journal and
+    GSTR-3B agree.
+    """
+
+    head: str  # CGST | SGST | IGST | GST | NONE
+    rate: Decimal
+    tax_amount: Decimal
+    reclaim_amount: Decimal
+
+
+@dataclass(frozen=True)
 class TaxTreatment:
-    """The tax verdict for one transaction — persisted as a `TaxRecord`."""
+    """The tax verdict for one transaction — persisted as one or more `TaxRecord`s.
+
+    The summary fields (``tax_type``/``rate``/``tax_amount``/``reclaim_amount`` …)
+    are the aggregate over ``components`` and are unchanged from the pre-split
+    contract; ``components`` carries the per-head breakdown (T1-9).
+    """
 
     tax_type: str  # GST_RCM | GST | SALES_TAX | NONE
     jurisdiction: str
@@ -78,14 +109,23 @@ class TaxTreatment:
     # The functional (entity) currency ``tax_amount``/``reclaim_amount`` are
     # denominated in — tax is always assessed in functional currency (T1-4).
     currency: str
+    # The cash that leaves the wallet in functional currency (T1-10). Equal to the
+    # paid amount for tax-inclusive and reverse-charge supplies; for a tax-exclusive
+    # domestic supply it is ``functional + tax`` (GST charged on top by the vendor).
+    gross_amount: Decimal
+    # Per-head breakdown (T1-9); at least one component, summing to the totals.
+    components: tuple[TaxComponent, ...]
 
 
 @dataclass(frozen=True)
 class _RegimeRule:
-    """Static config for one GST regime (reverse-charge on imports)."""
+    """Static metadata for one GST regime (jurisdiction + legal references).
+
+    The *rate* is not here — it is effective-dated and injected per supply
+    (T1-12); this holds only what is genuinely constant per regime.
+    """
 
     jurisdiction: str
-    rate: Decimal
     legal_reference_imported: str
     legal_reference_domestic: str
 
@@ -93,7 +133,6 @@ class _RegimeRule:
 _REGIMES: dict[str, _RegimeRule] = {
     "IN-GST": _RegimeRule(
         jurisdiction="India",
-        rate=Decimal("0.18"),
         legal_reference_imported=(
             "IGST Act 2017 s.5(3) — reverse charge on imported services; "
             "self-invoice per CGST Rules r.46"
@@ -104,7 +143,6 @@ _REGIMES: dict[str, _RegimeRule] = {
     ),
     "SG-GST": _RegimeRule(
         jurisdiction="Singapore",
-        rate=Decimal("0.09"),
         legal_reference_imported=(
             "GST Act (Cap. 117A) s.14 — reverse charge on imported services"
         ),
@@ -128,13 +166,68 @@ def _is_itc_blocked(tax_regime: str, expense_category: str | None) -> bool:
     return expense_category.strip().lower() in blocked
 
 
+def _head_mode(
+    *,
+    tax_regime: str,
+    imported: bool,
+    place_of_supply_known: bool,
+    vendor_state: str | None,
+    entity_state: str | None,
+) -> str:
+    """The GST head split for a supply: ``"GST"`` | ``"IGST"`` | ``"CGST_SGST"`` (T1-9).
+
+    Only India with a known place of supply splits. Everything else — SG, US, and
+    the currency-fallback path — uses the unsplit ``"GST"`` head that books to the
+    legacy 1400/2200 accounts (so an unenriched vendor is unchanged). Imports are
+    always inter-state (IGST); a known-state intra-state domestic supply is
+    CGST+SGST; a domestic supply whose state we can't pin stays unsplit ``"GST"``.
+    """
+    if not place_of_supply_known or tax_regime != "IN-GST":
+        return "GST"
+    if imported:
+        return "IGST"
+    if vendor_state is not None and entity_state is not None:
+        same_state = vendor_state.strip().upper() == entity_state.strip().upper()
+        return "CGST_SGST" if same_state else "IGST"
+    return "GST"
+
+
+def _components(
+    head_mode: str, rate: Decimal, tax_amount: Decimal, reclaim_amount: Decimal
+) -> tuple[TaxComponent, ...]:
+    """Split a treatment's totals into per-head components (T1-9).
+
+    CGST+SGST split the rate and amounts in half; the SGST leg takes the rounding
+    remainder so ``Σ component == total`` exactly. IGST/GST is a single component.
+    """
+    if head_mode == "CGST_SGST":
+        cgst_tax = _quantize(tax_amount / _TWO)
+        cgst_reclaim = _quantize(reclaim_amount / _TWO)
+        half_rate = rate / _TWO
+        return (
+            TaxComponent("CGST", half_rate, cgst_tax, cgst_reclaim),
+            TaxComponent(
+                "SGST", half_rate, tax_amount - cgst_tax, reclaim_amount - cgst_reclaim
+            ),
+        )
+    head = "IGST" if head_mode == "IGST" else "GST"
+    return (TaxComponent(head, rate, tax_amount, reclaim_amount),)
+
+
 def compute_tax(
     *,
     tax_regime: str,
     functional_amount: Decimal,
     paid_currency: str,
     entity_currency: str,
+    rate: Decimal,
     expense_category: str | None = None,
+    tax_inclusive: bool = True,
+    vendor_country: str | None = None,
+    vendor_state: str | None = None,
+    vendor_registered: bool = True,
+    entity_country: str | None = None,
+    entity_state: str | None = None,
 ) -> TaxTreatment:
     """Compute the tax treatment for a captured spend.
 
@@ -142,15 +235,32 @@ def compute_tax(
         tax_regime: The entity's regime (e.g. ``"IN-GST"``, ``"US-Sales-Tax"``).
         functional_amount: The transaction amount **in the entity's functional
             currency** (already FX-converted from the paid amount, T1-4).
-        paid_currency: ISO code of what was actually paid — used only to decide
-            import vs domestic.
+        paid_currency: ISO code of what was actually paid — used to decide import
+            vs domestic only when place of supply is unknown (the fallback).
         entity_currency: ISO code of the entity's functional currency.
+        rate: The statutory rate as a fraction (0.18 = 18%), effective-dated and
+            resolved by the caller from `services/tax_rates.py` (T1-12). Ignored
+            for the US regime (no self-assessed tax in the MVP).
         expense_category: Optional caller-stated category; drives blocked input
             tax credit (T1-14) — e.g. IN travel spend cannot reclaim ITC.
+        tax_inclusive: Whether a *domestic* amount includes GST (T1-10). ``True``
+            (default) extracts embedded GST; ``False`` treats the amount as
+            tax-exclusive and adds GST on top (``gross = amount + tax``). Ignored
+            for reverse charge (always assessed on the tax-exclusive amount).
+        vendor_country: The vendor's ISO country from the registry (T1-3). When
+            given (with ``entity_country``), import-vs-domestic and the CGST/SGST/
+            IGST head split are decided by *place of supply*, not currency. When
+            ``None`` (an unenriched vendor) the engine falls back to the currency
+            heuristic and a single unsplit ``GST`` head — today's behaviour.
+        vendor_state: The vendor's state (India), for intra- vs inter-state.
+        vendor_registered: Whether the vendor is GST-registered. A domestic
+            *unregistered* India supply is reverse-charge under CGST s.9(4).
+        entity_country: The recipient entity's ISO country.
+        entity_state: The recipient entity's state (India).
 
     Returns:
-        A `TaxTreatment`; ``tax_amount`` is 0 for US (no self-assessed tax in the
-        MVP). ``currency`` is always ``entity_currency``.
+        A `TaxTreatment` whose ``components`` carry the per-head split (T1-9);
+        ``tax_amount`` is 0 for US. ``currency`` is always ``entity_currency``.
 
     Raises:
         UnknownTaxRegimeError: ``tax_regime`` is not in `KNOWN_TAX_REGIMES` (T1-8).
@@ -162,7 +272,6 @@ def compute_tax(
         # last line of defence at capture.
         raise UnknownTaxRegimeError(tax_regime)
 
-    imported = paid_currency.upper() != entity_currency.upper()
     rule = _REGIMES.get(tax_regime)
 
     if rule is None:
@@ -183,48 +292,89 @@ def compute_tax(
             reverse_charge=False,
             self_invoice_required=False,
             currency=entity_currency,
+            gross_amount=functional_amount,
+            components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
         )
+
+    # Import vs domestic: place of supply when known (T1-3, the correct signal),
+    # else the currency heuristic (the fallback for an unenriched vendor).
+    if vendor_country is not None and entity_country is not None:
+        place_of_supply_known = True
+        imported = vendor_country.upper() != entity_country.upper()
+    else:
+        place_of_supply_known = False
+        imported = paid_currency.upper() != entity_currency.upper()
 
     blocked = _is_itc_blocked(tax_regime, expense_category)
+    head_mode = _head_mode(
+        tax_regime=tax_regime,
+        imported=imported,
+        place_of_supply_known=place_of_supply_known,
+        vendor_state=vendor_state,
+        entity_state=entity_state,
+    )
 
-    if imported:
-        # Reverse charge: tax self-assessed on top of the tax-exclusive amount,
-        # in the functional currency. When ITC is blocked (T1-14) the output GST
-        # is still owed but not reclaimable.
-        tax = _quantize(functional_amount * rule.rate)
-        return TaxTreatment(
-            tax_type="GST_RCM",
-            jurisdiction=rule.jurisdiction,
-            rate=rule.rate,
-            tax_amount=tax,
-            is_reclaimable=not blocked,
-            reclaim_amount=_ZERO if blocked else tax,
-            legal_reference=(
-                rule.legal_reference_imported + _BLOCKED_ITC_NOTE
-                if blocked
-                else rule.legal_reference_imported
-            ),
-            reverse_charge=True,
-            self_invoice_required=True,
-            currency=entity_currency,
+    # Reverse charge: imports always; and a *domestic unregistered* India supply
+    # under CGST s.9(4) (the registry's `is_registered` earns its keep here). Both
+    # self-assess on the tax-exclusive amount; a domestic registered supply instead
+    # has GST embedded in the tax-inclusive amount and is extracted.
+    domestic_rcm = (
+        place_of_supply_known
+        and not imported
+        and not vendor_registered
+        and tax_regime == "IN-GST"
+    )
+    reverse_charge = imported or domestic_rcm
+
+    if reverse_charge:
+        # Self-assessed on the tax-exclusive amount; the wallet only pays the vendor
+        # (the GST is a payable to the government, not cash to the vendor).
+        tax = _quantize(functional_amount * rate)
+        gross = functional_amount
+        legal_reference = (
+            rule.legal_reference_imported
+            if imported
+            else f"{rule.jurisdiction} reverse charge — unregistered supplier, "
+            "CGST s.9(4)"
         )
+        tax_type = "GST_RCM"
+        self_invoice_required = True
+    elif tax_inclusive:
+        # Domestic tax-inclusive: GST is embedded in the paid amount, extracted
+        # (T1-10). The wallet paid the gross-inclusive amount.
+        tax = _quantize(functional_amount * rate / (_ONE + rate))
+        gross = functional_amount
+        legal_reference = rule.legal_reference_domestic
+        tax_type = "GST"
+        self_invoice_required = False
+    else:
+        # Domestic tax-exclusive: the vendor charged GST on top of the stated
+        # amount (T1-10), so the buyer paid ``amount + tax`` — no phantom ITC
+        # extracted from a net figure (the exact T1-10 bug).
+        tax = _quantize(functional_amount * rate)
+        gross = functional_amount + tax
+        legal_reference = (
+            rule.legal_reference_domestic + " — amount tax-exclusive, GST added on top"
+        )
+        tax_type = "GST"
+        self_invoice_required = False
 
-    # Domestic: GST is embedded in the tax-inclusive (functional) amount; when
-    # ITC is blocked (T1-14) it stays inside the expense, not reclaimable.
-    tax = _quantize(functional_amount * rule.rate / (_ONE + rule.rate))
+    # When ITC is blocked (T1-14) the output GST is still owed but not reclaimable.
+    reclaim = _ZERO if blocked else tax
+    if blocked:
+        legal_reference += _BLOCKED_ITC_NOTE
+
     return TaxTreatment(
-        tax_type="GST",
+        tax_type=tax_type,
         jurisdiction=rule.jurisdiction,
-        rate=rule.rate,
+        rate=rate,
         tax_amount=tax,
         is_reclaimable=not blocked,
-        reclaim_amount=_ZERO if blocked else tax,
-        legal_reference=(
-            rule.legal_reference_domestic + _BLOCKED_ITC_NOTE
-            if blocked
-            else rule.legal_reference_domestic
-        ),
-        reverse_charge=False,
-        self_invoice_required=False,
+        reclaim_amount=reclaim,
+        legal_reference=legal_reference,
+        reverse_charge=reverse_charge,
+        self_invoice_required=self_invoice_required,
         currency=entity_currency,
+        gross_amount=gross,
+        components=_components(head_mode, rate, tax, reclaim),
     )

@@ -23,7 +23,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
-from lucnt_api.dependencies import get_current_company, get_db
+from lucnt_api.dependencies import (
+    AuthContext,
+    get_auth_context,
+    get_current_company,
+    get_db,
+    require_admin,
+)
 from lucnt_api.models import (
     Account,
     AccountCategory,
@@ -39,22 +45,40 @@ from lucnt_api.schemas.books import (
     CashFlowResponse,
     CashFlowTotals,
     CurrencyTotals,
+    FundingRequest,
     GeneralLedgerResponse,
     GLAccount,
     JournalGroup,
     JournalLineRead,
     JournalsResponse,
+    ManualJournalRequest,
+    PostedJournalResponse,
     ProfitAndLossResponse,
     ProfitAndLossTotals,
+    TaxSettlementHead,
+    TaxSettlementRequest,
+    TaxSettlementResponse,
     TrialBalanceResponse,
     TrialBalanceRow,
 )
-from lucnt_api.services.chart_of_accounts import RETAINED_EARNINGS_CODE, WALLET_CODE
+from lucnt_api.services.audit import record as record_audit
+from lucnt_api.services.chart_of_accounts import (
+    CONTRIBUTED_CAPITAL_CODE,
+    GST_PAYABLE_BY_HEAD,
+    GST_SETTLEMENT_PAYABLE_CODE,
+    ITC_BY_HEAD,
+    RETAINED_EARNINGS_CODE,
+    WALLET_CODE,
+    ensure_default_accounts,
+)
 
 router = APIRouter(prefix="/books", tags=["books"])
 
 _ZERO = Decimal("0")
 _RETAINED_EARNINGS_NAME = "Retained Earnings"
+# Category for a posted line whose account code resolves to no CoA account
+# (T1-21) — surfaced loudly rather than silently dropped by an inner join.
+_UNMAPPED = "unmapped"
 
 _FROM_DESC = "Include transactions on/after this date (YYYY-MM-DD)"
 _TO_DESC = "Include transactions on/before this date (YYYY-MM-DD, inclusive)"
@@ -65,14 +89,27 @@ def _as_dt(day: date) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
 
 
-def _date_conditions(
+def _posting_date_conditions(
     date_from: date | None, date_to: date | None
 ) -> list[ColumnElement[bool]]:
-    """WHERE conditions restricting `transaction_date` to a period (T1-17).
+    """Restrict a journal line's `posting_date` to a period (T1-17/T1-21).
 
-    So a statement is no longer inception-to-date (a year-3 P&L including year-1).
-    ``date_to`` is inclusive (strictly before the following midnight).
+    The statements periodise off the line's own ``posting_date``, so they are true
+    period statements independent of any transaction join and cover manual/funding/
+    settlement journals (which have no transaction). Both bounds are inclusive.
     """
+    conditions: list[ColumnElement[bool]] = []
+    if date_from is not None:
+        conditions.append(JournalEntry.posting_date >= date_from)
+    if date_to is not None:
+        conditions.append(JournalEntry.posting_date <= date_to)
+    return conditions
+
+
+def _txn_date_conditions(
+    date_from: date | None, date_to: date | None
+) -> list[ColumnElement[bool]]:
+    """Period conditions on `transaction_date` for the txn-grouped journal explorer."""
     conditions: list[ColumnElement[bool]] = []
     if date_from is not None:
         conditions.append(Transaction.transaction_date >= _as_dt(date_from))
@@ -109,6 +146,16 @@ def _resolve_entity_id(
     return entity.id
 
 
+def _require_entity(db: Session, company: Company, code: str) -> Entity:
+    """Resolve an entity code to its row, company-scoped (404 if unknown)."""
+    entity = db.execute(
+        select(Entity).where(Entity.company_id == company.id, Entity.code == code)
+    ).scalar_one_or_none()
+    if entity is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown entity: {code}")
+    return entity
+
+
 def _aggregates(
     db: Session,
     company: Company,
@@ -120,37 +167,41 @@ def _aggregates(
     stmt = (
         select(
             JournalEntry.account_code,
-            JournalEntry.account_name,
+            Account.account_name,
             Account.category,
             JournalEntry.currency,
             func.coalesce(func.sum(JournalEntry.debit), _ZERO).label("total_debit"),
             func.coalesce(func.sum(JournalEntry.credit), _ZERO).label("total_credit"),
         )
-        .join(Transaction, Transaction.id == JournalEntry.transaction_id)
-        .join(
+        .select_from(JournalEntry)
+        .outerjoin(
             Account,
-            (Account.company_id == Transaction.company_id)
+            (Account.company_id == JournalEntry.company_id)
             & (Account.account_code == JournalEntry.account_code),
         )
-        .where(Transaction.company_id == company.id)
+        .where(JournalEntry.company_id == company.id)
         .group_by(
             JournalEntry.account_code,
-            JournalEntry.account_name,
+            Account.account_name,
             Account.category,
             JournalEntry.currency,
         )
         .order_by(JournalEntry.currency, JournalEntry.account_code)
     )
     if entity_id is not None:
-        stmt = stmt.where(Transaction.entity_id == entity_id)
-    for condition in _date_conditions(date_from, date_to):
+        stmt = stmt.where(JournalEntry.entity_id == entity_id)
+    for condition in _posting_date_conditions(date_from, date_to):
         stmt = stmt.where(condition)
 
     return [
         _Aggregate(
             account_code=row.account_code,
-            account_name=row.account_name,
-            category=_category_str(row.category),
+            account_name=row.account_name or f"UNMAPPED {row.account_code}",
+            category=(
+                _category_str(row.category)
+                if row.category is not None
+                else _UNMAPPED
+            ),
             currency=row.currency,
             debit=row.total_debit,
             credit=row.total_credit,
@@ -230,7 +281,7 @@ def get_journals(
     )
     if entity_id is not None:
         base = base.where(Transaction.entity_id == entity_id)
-    for condition in _date_conditions(date_from, date_to):
+    for condition in _txn_date_conditions(date_from, date_to):
         base = base.where(condition)
 
     total = db.execute(select(func.count()).select_from(base.subquery())).scalar_one()
@@ -252,7 +303,10 @@ def get_journals(
             .scalars()
             .all()
         ):
-            lines_by_txn[line.transaction_id].append(line)
+            # transaction_id is nullable (manual journals), but this query filters
+            # on the fetched txn ids, so every row here has one — narrow for mypy.
+            if line.transaction_id is not None:
+                lines_by_txn[line.transaction_id].append(line)
 
     items = [
         JournalGroup(
@@ -292,13 +346,13 @@ def get_general_ledger(
 
     stmt = (
         select(JournalEntry, Account.category)
-        .join(Transaction, Transaction.id == JournalEntry.transaction_id)
-        .join(
+        .select_from(JournalEntry)
+        .outerjoin(
             Account,
-            (Account.company_id == Transaction.company_id)
+            (Account.company_id == JournalEntry.company_id)
             & (Account.account_code == JournalEntry.account_code),
         )
-        .where(Transaction.company_id == company.id)
+        .where(JournalEntry.company_id == company.id)
         .order_by(
             JournalEntry.currency,
             JournalEntry.account_code,
@@ -306,18 +360,21 @@ def get_general_ledger(
         )
     )
     if entity_id is not None:
-        stmt = stmt.where(Transaction.entity_id == entity_id)
-    for condition in _date_conditions(date_from, date_to):
+        stmt = stmt.where(JournalEntry.entity_id == entity_id)
+    for condition in _posting_date_conditions(date_from, date_to):
         stmt = stmt.where(condition)
 
     # Key each section by (account_code, currency): the same account posted to in
-    # two currencies is two sections, never one mixed-currency balance.
+    # two currencies is two sections, never one mixed-currency balance. A code with
+    # no CoA account (LEFT JOIN miss) is surfaced in a loud `unmapped` bucket.
     grouped: dict[tuple[str, str], list[JournalEntry]] = defaultdict(list)
     category_by_key: dict[tuple[str, str], str] = {}
     for line, category in db.execute(stmt):
         key = (line.account_code, line.currency)
         grouped[key].append(line)
-        category_by_key[key] = _category_str(category)
+        category_by_key[key] = (
+            _category_str(category) if category is not None else _UNMAPPED
+        )
 
     accounts = [
         _gl_account(code, category_by_key[(code, currency)], currency, lines)
@@ -509,3 +566,275 @@ def get_cash_flow(
         for ccy, aggs in sorted(_by_currency(aggregates).items())
     ]
     return CashFlowResponse(operating=operating, currencies=currencies)
+
+
+# --- Write endpoints: manual journals + funding (T1-18) ----------------------
+
+
+def _post_journal(
+    db: Session,
+    company: Company,
+    entity: Entity,
+    posting_date: date,
+    memo: str,
+    currency: str,
+    specs: list[tuple[str, Decimal, Decimal]],
+    accounts: dict[str, Account],
+) -> PostedJournalResponse:
+    """Build, balance-check and stage a set of self-sufficient journal lines.
+
+    Each spec is ``(account_code, debit, credit)``. The lines carry no
+    ``transaction_id`` (T1-18) and must reference real CoA accounts and balance
+    (Σ debit == Σ credit). Does not commit — the caller owns audit + commit.
+    """
+    entries: list[JournalEntry] = []
+    read_lines: list[JournalLineRead] = []
+    total_debit = _ZERO
+    total_credit = _ZERO
+    for code, debit, credit in specs:
+        account = accounts.get(code)
+        if account is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"unknown account code: {code}",
+            )
+        entries.append(
+            JournalEntry(
+                transaction_id=None,
+                company_id=company.id,
+                entity_id=entity.id,
+                posting_date=posting_date,
+                account_name=account.account_name,
+                account_code=code,
+                debit=debit,
+                credit=credit,
+                ledger=entity.code,
+                currency=currency,
+            )
+        )
+        read_lines.append(
+            JournalLineRead(
+                account_code=code,
+                account_name=account.account_name,
+                debit=debit,
+                credit=credit,
+                ledger=entity.code,
+                currency=currency,
+            )
+        )
+        total_debit += debit
+        total_credit += credit
+
+    if total_debit != total_credit:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"journal does not balance: debit {total_debit} != credit {total_credit}",
+        )
+
+    db.add_all(entries)
+    return PostedJournalResponse(
+        entity=entity.code,
+        posting_date=posting_date,
+        currency=currency,
+        memo=memo,
+        total_debit=total_debit,
+        total_credit=total_credit,
+        lines=read_lines,
+    )
+
+
+@router.post(
+    "/journal",
+    response_model=PostedJournalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_manual_journal(
+    request: ManualJournalRequest,
+    company: Company = Depends(require_admin),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> PostedJournalResponse:
+    """Post a balanced manual journal — an accrual, prepaid, or correction (T1-18).
+
+    Admin-scoped and audited. Booked in the entity's functional currency; the
+    lines must reference real CoA accounts and balance.
+    """
+    entity = _require_entity(db, company, request.entity)
+    accounts = ensure_default_accounts(db, company.id)
+    posting_date = request.posting_date or datetime.now(timezone.utc).date()
+    specs = [(ln.account_code, ln.debit, ln.credit) for ln in request.lines]
+    result = _post_journal(
+        db, company, entity, posting_date, request.memo, entity.currency,
+        specs, accounts,
+    )
+    record_audit(
+        db,
+        ctx.api_key,
+        action="books.manual_journal",
+        entity_type="journal",
+        before=None,
+        after={
+            "entity": entity.code,
+            "posting_date": posting_date.isoformat(),
+            "memo": request.memo,
+            "total_debit": str(result.total_debit),
+            "currency": entity.currency,
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post(
+    "/funding",
+    response_model=PostedJournalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_funding(
+    request: FundingRequest,
+    company: Company = Depends(require_admin),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> PostedJournalResponse:
+    """Fund an entity's wallet: Dr Wallet / Cr Contributed Capital (T1-18).
+
+    The funding/opening-balance entry the ledger previously lacked — without it
+    every balance sheet showed negative cash & equity from day one (the wallet was
+    only ever credited by spend). Admin-scoped, audited, functional currency.
+    """
+    entity = _require_entity(db, company, request.entity)
+    accounts = ensure_default_accounts(db, company.id)
+    posting_date = request.posting_date or datetime.now(timezone.utc).date()
+    specs = [
+        (WALLET_CODE, request.amount, _ZERO),
+        (CONTRIBUTED_CAPITAL_CODE, _ZERO, request.amount),
+    ]
+    result = _post_journal(
+        db, company, entity, posting_date, request.memo, entity.currency,
+        specs, accounts,
+    )
+    record_audit(
+        db,
+        ctx.api_key,
+        action="books.funding",
+        entity_type="journal",
+        before=None,
+        after={
+            "entity": entity.code,
+            "posting_date": posting_date.isoformat(),
+            "amount": str(request.amount),
+            "currency": entity.currency,
+        },
+    )
+    db.commit()
+    return result
+
+
+# Utilise input tax credit against output GST in this head order (IGST first, then
+# CGST/SGST, then the legacy unsplit head) — the legal set-off order.
+_GST_HEADS: tuple[str, ...] = ("IGST", "CGST", "SGST", "GST")
+
+
+@router.post(
+    "/tax-settlement",
+    response_model=TaxSettlementResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def settle_taxes(
+    request: TaxSettlementRequest,
+    company: Company = Depends(require_admin),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> TaxSettlementResponse:
+    """Book a return-cycle GST settlement, clearing Payable against ITC (T1-11).
+
+    Nets the period's accumulated output GST (the per-head Payable accounts) against
+    input tax credit (the per-head ITC accounts), books the residual as GST Payable
+    to Government, and carries forward any unutilised ITC — so the balance sheet no
+    longer shows an ever-growing liability + asset. Admin-scoped and audited.
+    """
+    entity = _require_entity(db, company, request.entity)
+    accounts = ensure_default_accounts(db, company.id)
+    posting_date = (
+        request.posting_date
+        or request.date_to
+        or datetime.now(timezone.utc).date()
+    )
+
+    aggregates = _aggregates(
+        db, company, entity.id, request.date_from, request.date_to
+    )
+    by_code = {a.account_code: a for a in aggregates if a.currency == entity.currency}
+
+    heads: list[TaxSettlementHead] = []
+    output: dict[str, Decimal] = {}
+    itc: dict[str, Decimal] = {}
+    for head in _GST_HEADS:
+        p = by_code.get(GST_PAYABLE_BY_HEAD[head])
+        i = by_code.get(ITC_BY_HEAD[head])
+        # Payable is credit-normal, ITC debit-normal.
+        output[head] = (p.credit - p.debit) if p is not None else _ZERO
+        itc[head] = (i.debit - i.credit) if i is not None else _ZERO
+        if output[head] != _ZERO or itc[head] != _ZERO:
+            heads.append(
+                TaxSettlementHead(
+                    head=head, output_tax=output[head], input_credit=itc[head]
+                )
+            )
+
+    total_output = sum(output.values(), _ZERO)
+    total_itc = sum(itc.values(), _ZERO)
+    utilised = min(total_output, total_itc)
+    net_payable = total_output - utilised
+    carried_forward = total_itc - utilised
+
+    # Dr each accumulated Payable to clear it; Cr ITC up to the utilised amount in
+    # set-off order; Cr the net to GST Payable to Government. Balances by
+    # construction: Σ Payable(Dr) == utilised ITC(Cr) + net payable(Cr).
+    specs: list[tuple[str, Decimal, Decimal]] = []
+    for head in _GST_HEADS:
+        if output[head] > _ZERO:
+            specs.append((GST_PAYABLE_BY_HEAD[head], output[head], _ZERO))
+    remaining = utilised
+    for head in _GST_HEADS:
+        if remaining <= _ZERO:
+            break
+        use = min(itc[head], remaining)
+        if use > _ZERO:
+            specs.append((ITC_BY_HEAD[head], _ZERO, use))
+            remaining -= use
+    if net_payable > _ZERO:
+        specs.append((GST_SETTLEMENT_PAYABLE_CODE, _ZERO, net_payable))
+
+    journal = None
+    if specs:
+        journal = _post_journal(
+            db, company, entity, posting_date, request.memo, entity.currency,
+            specs, accounts,
+        )
+        record_audit(
+            db,
+            ctx.api_key,
+            action="books.tax_settlement",
+            entity_type="journal",
+            before=None,
+            after={
+                "entity": entity.code,
+                "posting_date": posting_date.isoformat(),
+                "net_payable": str(net_payable),
+                "currency": entity.currency,
+            },
+        )
+        db.commit()
+
+    return TaxSettlementResponse(
+        entity=entity.code,
+        currency=entity.currency,
+        posting_date=posting_date,
+        total_output_tax=total_output,
+        total_input_credit=total_itc,
+        net_payable=net_payable,
+        credit_carried_forward=carried_forward,
+        heads=heads,
+        journal=journal,
+    )

@@ -21,6 +21,7 @@ from lucnt_api.models.reconciliation_exception import (
     ReconExceptionType,
 )
 from lucnt_api.models.self_invoice import SelfInvoice
+from lucnt_api.models.tax_rate import TaxRate
 from lucnt_api.models.tax_record import TaxRecord
 from lucnt_api.models.transaction import (
     Transaction,
@@ -28,6 +29,7 @@ from lucnt_api.models.transaction import (
     TransactionStatus,
 )
 from lucnt_api.models.user import User, UserRole
+from lucnt_api.models.vendor import Vendor
 from lucnt_api.models.workflow import Workflow, WorkflowStatus, workflow_agents
 
 __all__ = [
@@ -57,12 +59,14 @@ __all__ = [
     "ReconExceptionType",
     "ReconciliationException",
     "SelfInvoice",
+    "TaxRate",
     "TaxRecord",
     "Transaction",
     "TransactionSource",
     "TransactionStatus",
     "User",
     "UserRole",
+    "Vendor",
     "Workflow",
     "WorkflowStatus",
     "workflow_agents",

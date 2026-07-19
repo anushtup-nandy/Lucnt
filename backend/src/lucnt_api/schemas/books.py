@@ -17,10 +17,10 @@ is deferred (T1-6); the books never sum mixed currencies into one bogus total.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class JournalLineRead(BaseModel):
@@ -195,3 +195,116 @@ class CashFlowResponse(BaseModel):
 
     operating: list[BookLine]
     currencies: list[CashFlowTotals]
+
+
+# --- Write endpoints: manual journals + funding (T1-18) ----------------------
+
+
+class ManualJournalLineInput(BaseModel):
+    """One requested line of a manual journal: a one-sided posting to an account."""
+
+    model_config = ConfigDict(frozen=True)
+
+    account_code: str = Field(min_length=1, max_length=20)
+    debit: Decimal = Field(default=Decimal("0"), ge=0)
+    credit: Decimal = Field(default=Decimal("0"), ge=0)
+
+    @model_validator(mode="after")
+    def _exactly_one_side(self) -> ManualJournalLineInput:
+        """A line is one-sided: exactly one of debit/credit is non-zero (T0-7)."""
+        if (self.debit > 0) == (self.credit > 0):
+            raise ValueError(
+                "each line must have exactly one of debit/credit non-zero"
+            )
+        return self
+
+
+class ManualJournalRequest(BaseModel):
+    """`POST /books/journal` — a balanced manual journal (accrual, adjustment).
+
+    Admin-scoped and audited (T1-18). Booked in the entity's functional currency;
+    the lines must balance (Σ debit == Σ credit) and reference real CoA accounts.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    entity: str
+    memo: str = Field(min_length=1, max_length=500)
+    posting_date: date | None = None
+    lines: list[ManualJournalLineInput] = Field(min_length=2)
+
+
+class FundingRequest(BaseModel):
+    """`POST /books/funding` — a wallet funding / opening-balance top-up (T1-18).
+
+    Books Dr Wallet / Cr Contributed Capital in the entity's functional currency,
+    so a funded entity's balance sheet no longer shows negative cash & equity from
+    day one. Admin-scoped and audited.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    entity: str
+    amount: Decimal = Field(gt=0)
+    memo: str = Field(default="Wallet funding", min_length=1, max_length=500)
+    posting_date: date | None = None
+
+
+class PostedJournalResponse(BaseModel):
+    """The journal booked by a manual-journal / funding post."""
+
+    model_config = ConfigDict(frozen=True)
+
+    entity: str
+    posting_date: date
+    currency: str
+    memo: str
+    total_debit: Decimal
+    total_credit: Decimal
+    lines: list[JournalLineRead]
+
+
+# --- Return-cycle GST settlement (T1-11) -------------------------------------
+
+
+class TaxSettlementRequest(BaseModel):
+    """`POST /books/tax-settlement` — settle a return period's GST (admin)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    entity: str
+    date_from: date | None = None
+    date_to: date | None = None
+    memo: str = Field(default="GST return settlement", min_length=1, max_length=500)
+    posting_date: date | None = None
+
+
+class TaxSettlementHead(BaseModel):
+    """One GST head's output tax and input credit for the return period."""
+
+    model_config = ConfigDict(frozen=True)
+
+    head: str
+    output_tax: Decimal
+    input_credit: Decimal
+
+
+class TaxSettlementResponse(BaseModel):
+    """The computed GST position + the settlement journal booked (if any).
+
+    Clears the accumulated per-head GST Payable against Input Tax Credit so the
+    balance sheet no longer shows an ever-growing liability + asset (T1-11); the
+    net is booked as GST Payable to Government, and any excess ITC carries forward.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    entity: str
+    currency: str
+    posting_date: date
+    total_output_tax: Decimal
+    total_input_credit: Decimal
+    net_payable: Decimal
+    credit_carried_forward: Decimal
+    heads: list[TaxSettlementHead]
+    journal: PostedJournalResponse | None

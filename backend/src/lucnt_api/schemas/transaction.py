@@ -45,6 +45,11 @@ class SpendRequest(BaseModel):
     # (software|ai_compute|travel|marketing|general) books to that account and
     # drives blocked-ITC (T1-14); an unknown value falls back to vendor inference.
     category: str | None = None
+    # Tax slab + inclusive/exclusive (T1-10). `tax_category` picks the GST rate slab
+    # (e.g. "gst_5"|"gst_12"|"gst_28"; omitted ⇒ "standard"); `tax_inclusive` says
+    # whether a domestic amount embeds GST (default) or has it added on top.
+    tax_category: str | None = None
+    tax_inclusive: bool = True
     model: str | None = None
     tokens: int | None = Field(default=None, ge=0)
 
@@ -56,6 +61,12 @@ class SpendRequest(BaseModel):
         if not _ISO_4217_RE.fullmatch(code):
             raise ValueError("currency must be a 3-letter ISO-4217 code")
         return code
+
+    @field_validator("tax_category")
+    @classmethod
+    def _normalise_tax_category(cls, value: str | None) -> str | None:
+        """Lower-case/trim the slab key; membership is enforced by the rate table."""
+        return value.strip().lower() if value else None
 
 
 class Verdict(BaseModel):

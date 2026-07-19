@@ -67,6 +67,12 @@ from lucnt_api.services.spend_window import (
     reserved_spend,
 )
 from lucnt_api.services.tax_engine import TaxTreatment, compute_tax
+from lucnt_api.services.tax_rates import (
+    STANDARD_CATEGORY,
+    TaxRateUnavailableError,
+    resolve_rate,
+)
+from lucnt_api.services.vendors import resolve_or_create_vendor
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -122,6 +128,90 @@ def _verdict_from(authorization: Authorization) -> Verdict:
         code=authorization.verdict_code or "ok",
         reason=authorization.reason_text,
     )
+
+
+def _resolve_tax_rate(
+    db: Session, regime: str, when: datetime, tax_category: str | None
+) -> Decimal:
+    """Effective-dated statutory rate for a regime/slab on a date (T1-12/T1-10).
+
+    Resolved at the money-path boundary and injected into the pure tax engine,
+    keyed by the transaction date, so a rate change never back-applies to a
+    historical supply. ``tax_category`` selects the GST slab (defaults to the
+    standard rate). Fail-closed like FX: a missing rate stops the spend.
+    """
+    try:
+        return resolve_rate(
+            db,
+            regime=regime,
+            category=tax_category or STANDARD_CATEGORY,
+            on_date=when.date(),
+        )
+    except TaxRateUnavailableError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+
+def _compute_tax(
+    db: Session,
+    company: Company,
+    entity: Entity,
+    *,
+    functional_amount: Decimal,
+    paid_currency: str,
+    vendor_name: str,
+    category: str | None,
+    tax_category: str | None,
+    tax_inclusive: bool,
+    when: datetime,
+) -> TaxTreatment:
+    """Gather the tax engine's boundary inputs, then compute the treatment.
+
+    The money path resolves the effective-dated statutory rate for the slab
+    (T1-12/T1-10) and the vendor's place-of-supply attributes from the registry
+    (T1-3/T1-9), then calls the pure engine. An unenriched vendor has no country →
+    the engine falls back to the currency heuristic (today's behaviour).
+    """
+    vendor = resolve_or_create_vendor(db, company.id, vendor_name)
+    return compute_tax(
+        tax_regime=entity.tax_regime,
+        functional_amount=functional_amount,
+        paid_currency=paid_currency,
+        entity_currency=entity.currency,
+        rate=_resolve_tax_rate(db, entity.tax_regime, when, tax_category),
+        expense_category=category,
+        tax_inclusive=tax_inclusive,
+        vendor_country=vendor.country,
+        vendor_state=vendor.state,
+        vendor_registered=vendor.is_registered,
+        entity_country=entity.country,
+        entity_state=entity.gst_state,
+    )
+
+
+def _persist_tax_records(
+    db: Session, transaction_id: uuid.UUID, tax: TaxTreatment
+) -> None:
+    """Persist one `TaxRecord` per GST-head component (T1-9).
+
+    A single-head supply writes one row; an India intra-state supply writes two
+    (CGST + SGST). A contra (reversal) passes a treatment with negated components.
+    """
+    for comp in tax.components:
+        db.add(
+            TaxRecord(
+                transaction_id=transaction_id,
+                tax_type=tax.tax_type,
+                tax_head=comp.head,
+                jurisdiction=tax.jurisdiction,
+                rate=comp.rate,
+                tax_amount=comp.tax_amount,
+                is_reclaimable=tax.is_reclaimable,
+                reclaim_amount=comp.reclaim_amount,
+                currency=tax.currency,
+                legal_reference=tax.legal_reference,
+                self_invoice_generated=tax.self_invoice_required,
+            )
+        )
 
 
 def _capture_response(
@@ -191,12 +281,17 @@ def _replay_capture(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "transaction references a missing entity",
         )
-    tax = compute_tax(
-        tax_regime=entity.tax_regime,
+    tax = _compute_tax(
+        db,
+        company,
+        entity,
         functional_amount=existing.local_amount,
         paid_currency=existing.paid_currency,
-        entity_currency=entity.currency,
-        expense_category=existing.category,
+        vendor_name=existing.vendor,
+        category=existing.category,
+        tax_category=existing.tax_category,
+        tax_inclusive=existing.tax_inclusive,
+        when=existing.transaction_date,
     )
     accounts = ensure_default_accounts(db, company.id)
     journal_lines = generate_journal(existing, entity, tax, accounts)
@@ -256,6 +351,8 @@ def _persist_authorization(
         intent=request.intent,
         project=request.project,
         category=request.category,
+        tax_category=request.tax_category,
+        tax_inclusive=request.tax_inclusive,
         model_used=request.model,
         tokens_consumed=request.tokens,
         status=verdict_status,
@@ -508,6 +605,8 @@ def capture(
         project=authorization.project,
         intent=authorization.intent,
         category=authorization.category,
+        tax_category=authorization.tax_category,
+        tax_inclusive=authorization.tax_inclusive,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
         status=TransactionStatus.COMPLETED,
@@ -542,27 +641,19 @@ def capture(
     # row (lane-agnostic — CLAUDE.local.md). The card/invoice rails book
     # through this exact path once they land. Tax is assessed on the functional
     # amount (T1-4); the journal is booked in functional currency (T1-1).
-    tax = compute_tax(
-        tax_regime=entity.tax_regime,
+    tax = _compute_tax(
+        db,
+        company,
+        entity,
         functional_amount=transaction.local_amount,
         paid_currency=transaction.paid_currency,
-        entity_currency=entity.currency,
-        expense_category=transaction.category,
+        vendor_name=transaction.vendor,
+        category=transaction.category,
+        tax_category=transaction.tax_category,
+        tax_inclusive=transaction.tax_inclusive,
+        when=capture_date,
     )
-    db.add(
-        TaxRecord(
-            transaction_id=transaction.id,
-            tax_type=tax.tax_type,
-            jurisdiction=tax.jurisdiction,
-            rate=tax.rate,
-            tax_amount=tax.tax_amount,
-            is_reclaimable=tax.is_reclaimable,
-            reclaim_amount=tax.reclaim_amount,
-            currency=tax.currency,
-            legal_reference=tax.legal_reference,
-            self_invoice_generated=tax.self_invoice_required,
-        )
-    )
+    _persist_tax_records(db, transaction.id, tax)
     # Reverse charge requires a buyer-issued self-invoice (r.46): produce the
     # actual record so `self_invoice_generated` is truthful, not fabricated (T1-7).
     if tax.self_invoice_required:
@@ -635,6 +726,8 @@ def reverse_transaction(
         project=original.project,
         intent=original.intent,
         category=original.category,
+        tax_category=original.tax_category,
+        tax_inclusive=original.tax_inclusive,
         model_used=original.model_used,
         tokens_consumed=original.tokens_consumed,
         status=TransactionStatus.COMPLETED,
@@ -650,6 +743,9 @@ def reverse_transaction(
     contra_lines = [
         JournalEntry(
             transaction_id=reversal.id,
+            company_id=reversal.company_id,
+            entity_id=reversal.entity_id,
+            posting_date=now.date(),
             account_name=line.account_name,
             account_code=line.account_code,
             debit=line.credit,
@@ -661,13 +757,25 @@ def reverse_transaction(
     ]
     db.add_all(contra_lines)
 
-    # Contra tax record (negated) so a GST return nets the reversal correctly.
-    tax = compute_tax(
-        tax_regime=entity.tax_regime,
+    # Contra tax records (negated) so a GST return nets the reversal correctly.
+    # Resolve the rate + place of supply at the *original* supply date so the contra
+    # exactly negates the booked tax even if the statutory rate/registry has since
+    # changed (T1-12); one negated row per head component (T1-9).
+    tax = _compute_tax(
+        db,
+        company,
+        entity,
         functional_amount=reversal.local_amount,
         paid_currency=reversal.paid_currency,
-        entity_currency=entity.currency,
-        expense_category=reversal.category,
+        vendor_name=reversal.vendor,
+        category=reversal.category,
+        tax_category=reversal.tax_category,
+        tax_inclusive=reversal.tax_inclusive,
+        when=original.transaction_date,
+    )
+    contra_components = tuple(
+        replace(c, tax_amount=-c.tax_amount, reclaim_amount=-c.reclaim_amount)
+        for c in tax.components
     )
     contra_tax = replace(
         tax,
@@ -675,21 +783,9 @@ def reverse_transaction(
         reclaim_amount=-tax.reclaim_amount,
         self_invoice_required=False,
         legal_reference=f"Reversal — {tax.legal_reference}",
+        components=contra_components,
     )
-    db.add(
-        TaxRecord(
-            transaction_id=reversal.id,
-            tax_type=contra_tax.tax_type,
-            jurisdiction=contra_tax.jurisdiction,
-            rate=contra_tax.rate,
-            tax_amount=contra_tax.tax_amount,
-            is_reclaimable=contra_tax.is_reclaimable,
-            reclaim_amount=contra_tax.reclaim_amount,
-            currency=contra_tax.currency,
-            legal_reference=contra_tax.legal_reference,
-            self_invoice_generated=False,
-        )
-    )
+    _persist_tax_records(db, reversal.id, contra_tax)
 
     original.is_reversed = True
 

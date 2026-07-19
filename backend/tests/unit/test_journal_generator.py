@@ -2,12 +2,14 @@
 
 Models are instantiated in memory (never added to a session), so these assert
 the accounting logic in isolation. The key invariant under test: every
-generated journal balances (Σ debit == Σ credit).
+generated journal balances (Σ debit == Σ credit). The tax ``rate`` is injected
+into `compute_tax` (T1-12); these tests state it explicitly.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -30,6 +32,10 @@ from lucnt_api.services.chart_of_accounts import (
 )
 from lucnt_api.services.journal_generator import generate_journal
 from lucnt_api.services.tax_engine import compute_tax
+
+_IN_RATE = Decimal("0.18")
+_SG_RATE = Decimal("0.09")
+_ZERO = Decimal("0")
 
 _ALL_CODES = (
     WALLET_CODE,
@@ -79,6 +85,7 @@ def _txn(
         category=category,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
+        transaction_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
 
@@ -107,6 +114,7 @@ def test_imported_reverse_charge_journal() -> None:
         functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
+        rate=_IN_RATE,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -128,6 +136,7 @@ def test_domestic_gst_journal_nets_expense() -> None:
         functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
+        rate=_IN_RATE,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -148,6 +157,7 @@ def test_us_no_tax_journal_is_two_lines() -> None:
         functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
+        rate=_ZERO,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -183,6 +193,7 @@ def test_expense_account_selection(
         functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
+        rate=_ZERO,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     assert _debit(lines, expected_code) == Decimal("10")
@@ -198,6 +209,7 @@ def test_caller_category_overrides_vendor_inference() -> None:
     tax = compute_tax(
         tax_regime="US-Sales-Tax", functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        rate=_ZERO,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     assert _debit(lines, EXPENSE_TRAVEL_CODE) == Decimal("10")
@@ -218,6 +230,7 @@ def test_whole_token_vendor_matching(vendor: str, expected_code: str) -> None:
     tax = compute_tax(
         tax_regime="US-Sales-Tax", functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        rate=_ZERO,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     assert _debit(lines, expected_code) == Decimal("10")
@@ -233,6 +246,7 @@ def test_blocked_itc_rcm_books_tax_into_expense() -> None:
     tax = compute_tax(
         tax_regime="IN-GST", functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        rate=_IN_RATE,
         expense_category="travel",
     )
     lines = generate_journal(txn, entity, tax, _accounts())
@@ -253,6 +267,7 @@ def test_ledger_is_entity_code() -> None:
         functional_amount=txn.local_amount,
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
+        rate=_SG_RATE,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     assert all(line.ledger == "sg" for line in lines)

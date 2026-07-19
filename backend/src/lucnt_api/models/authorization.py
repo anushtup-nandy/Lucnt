@@ -83,6 +83,9 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # Caller-stated expense category (T1-19), carried to the transaction at
     # capture; drives journal classification + blocked-ITC (T1-14).
     category: Mapped[str | None] = mapped_column(String(50), default=None)
+    # Tax slab + inclusive/exclusive (T1-10), carried to the transaction at capture.
+    tax_category: Mapped[str | None] = mapped_column(String(20), default=None)
+    tax_inclusive: Mapped[bool] = mapped_column(default=True)
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
     status: Mapped[VerdictStatus] = mapped_column(

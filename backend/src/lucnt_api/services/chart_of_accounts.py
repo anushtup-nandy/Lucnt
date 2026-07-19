@@ -23,6 +23,33 @@ from lucnt_api.models import Account, AccountCategory
 WALLET_CODE = "1010"
 INPUT_TAX_CREDIT_CODE = "1400"
 GST_PAYABLE_CODE = "2200"
+# GST heads split by place of supply (T1-9). India intra-state books CGST+SGST,
+# inter-state/import books IGST; each head has its own ITC (asset) and payable
+# (liability) account so GSTR-3B can be produced. The unsplit "GST" head keeps the
+# legacy 1400/2200 accounts (SG, US, and the currency-fallback path).
+CGST_ITC_CODE = "1410"
+SGST_ITC_CODE = "1420"
+IGST_ITC_CODE = "1430"
+CGST_PAYABLE_CODE = "2210"
+SGST_PAYABLE_CODE = "2220"
+IGST_PAYABLE_CODE = "2230"
+# The net GST owed to the government after a return-cycle settlement (T1-11): the
+# period's output GST less utilised input tax credit, cleared by a cash payment.
+GST_SETTLEMENT_PAYABLE_CODE = "2300"
+
+# Map a tax head → its ITC (input credit, asset) and payable (liability) account.
+ITC_BY_HEAD: dict[str, str] = {
+    "GST": INPUT_TAX_CREDIT_CODE,
+    "CGST": CGST_ITC_CODE,
+    "SGST": SGST_ITC_CODE,
+    "IGST": IGST_ITC_CODE,
+}
+GST_PAYABLE_BY_HEAD: dict[str, str] = {
+    "GST": GST_PAYABLE_CODE,
+    "CGST": CGST_PAYABLE_CODE,
+    "SGST": SGST_PAYABLE_CODE,
+    "IGST": IGST_PAYABLE_CODE,
+}
 # Equity accounts. Contributed Capital receives wallet-funding entries (T1-18);
 # Retained Earnings is a real account (T1-17) that the balance sheet's
 # undistributed-P&L line references instead of a fabricated code.
@@ -62,8 +89,19 @@ _DEFAULT_ACCOUNTS: tuple[_AccountSpec, ...] = (
         "Input Tax Credit (GST Receivable)",
         AccountCategory.ASSET,
     ),
+    _AccountSpec(CGST_ITC_CODE, "Input Tax Credit — CGST", AccountCategory.ASSET),
+    _AccountSpec(SGST_ITC_CODE, "Input Tax Credit — SGST", AccountCategory.ASSET),
+    _AccountSpec(IGST_ITC_CODE, "Input Tax Credit — IGST", AccountCategory.ASSET),
     _AccountSpec(
         GST_PAYABLE_CODE, "GST Payable (Reverse Charge)", AccountCategory.LIABILITY
+    ),
+    _AccountSpec(CGST_PAYABLE_CODE, "GST Payable — CGST", AccountCategory.LIABILITY),
+    _AccountSpec(SGST_PAYABLE_CODE, "GST Payable — SGST", AccountCategory.LIABILITY),
+    _AccountSpec(IGST_PAYABLE_CODE, "GST Payable — IGST", AccountCategory.LIABILITY),
+    _AccountSpec(
+        GST_SETTLEMENT_PAYABLE_CODE,
+        "GST Payable to Government (Net)",
+        AccountCategory.LIABILITY,
     ),
     _AccountSpec(
         CONTRIBUTED_CAPITAL_CODE, "Contributed Capital", AccountCategory.EQUITY
