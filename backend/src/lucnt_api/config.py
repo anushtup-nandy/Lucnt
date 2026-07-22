@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # a true cost beyond this tolerance must be re-authorized, not silently
     # settled. 1.25 = allow up to 125% of the estimate.
     settlement_buffer: Decimal = Decimal("1.25")
+    # India s.195 withholding on payments to non-residents (TE-3). PROVISIONAL —
+    # confirm with a CA before a pilot: the DTAA treaty rate (with a valid TRC +
+    # Form 10F) vs the domestic default (incl. surcharge/cess), and the ₹5-lakh
+    # Form-15CB threshold above which a CA certificate is required. Rates move with
+    # notifications and treaties; keep them config, not code.
+    withholding_treaty_rate: Decimal = Decimal("0.15")
+    withholding_domestic_rate: Decimal = Decimal("0.20")
+    withholding_15cb_threshold: Decimal = Decimal("500000")
 
 
 # pydantic-settings fills required fields from the environment at runtime.

@@ -33,6 +33,7 @@ from lucnt_api.models import (
     ReconciliationException,
     ReconExceptionStatus,
     ReconExceptionType,
+    TaxRate,
     TaxRecord,
     Transaction,
 )
@@ -219,6 +220,33 @@ def test_vendor_crud_create_enrich_and_conflicts(
     assert forbidden.status_code == 403
 
 
+def test_vendor_withholding_docs_crud(
+    client: TestClient, db_session: Session
+) -> None:
+    """TRC / Form 10F onboarding fields round-trip through create + patch (TE-3)."""
+    company, _, key = _make_in_company(db_session)
+    created = client.post(
+        "/vendors",
+        json={
+            "name": "OpenAI", "country": "US",
+            "trc_on_file": True, "trc_expiry": "2027-03-31",
+            "form_10f_on_file": True,
+        },
+        headers=_headers(key),
+    ).json()
+    assert created["trc_on_file"] is True
+    assert created["trc_expiry"] == "2027-03-31"
+    assert created["form_10f_on_file"] is True
+
+    patched = client.patch(
+        f"/vendors/{created['id']}",
+        json={"form_10f_on_file": False},
+        headers=_headers(key),
+    ).json()
+    assert patched["form_10f_on_file"] is False
+    assert patched["trc_on_file"] is True  # untouched by the partial update
+
+
 def test_intra_state_domestic_splits_cgst_sgst(
     client: TestClient, db_session: Session
 ) -> None:
@@ -245,6 +273,31 @@ def test_intra_state_domestic_splits_cgst_sgst(
     assert _debit(db_session, tx_id, "1410") == Decimal("9.0000")
     assert _debit(db_session, tx_id, "1420") == Decimal("9.0000")
     assert _debit(db_session, tx_id, "1400") == Decimal("0")  # legacy unused
+
+
+def test_tax_record_stamps_applied_rule(
+    client: TestClient, db_session: Session
+) -> None:
+    """Each tax record links to the tax_rates row that produced it (TE-6)."""
+    company, _, key = _make_in_company(db_session)
+    client.post(
+        "/vendors",
+        json={
+            "name": "Zoho", "country": "IN", "state": "KA",
+            "gst_registered_in": ["IN"],
+        },
+        headers=_headers(key),
+    )
+    body = _spend(client, key, vendor="Zoho", amount="118", currency="INR")
+    rows = _tax_rows(db_session, str(body["id"]))
+    assert rows  # CGST + SGST
+    assert all(r.applied_rule_id is not None for r in rows)
+    assert all(r.applied_rule_source == "seed" for r in rows)
+    # The linked rule is the IN-GST standard 18% rate row.
+    rule = db_session.get(TaxRate, rows[0].applied_rule_id)
+    assert rule is not None
+    assert rule.regime == "IN-GST"
+    assert rule.rate == Decimal("0.18")
 
 
 def test_import_books_igst_reverse_charge(
@@ -295,6 +348,48 @@ def test_oidar_vendor_registered_in_india_is_forward_charge(
     assert rows[0].tax_amount == Decimal("1800.0000")
     assert _debit(db_session, tx_id, "1430") == Decimal("1800.0000")  # ITC IGST
     assert _credit(db_session, tx_id, "2230") == Decimal("0")  # no payable (forward)
+
+
+def test_imported_goods_route_to_customs_not_rcm(
+    client: TestClient, db_session: Session
+) -> None:
+    """A cross-border goods spend routes to customs + a review flag, not RCM (TE-4)."""
+    company, _, key = _make_in_company(db_session)
+    client.post(
+        "/vendors",
+        json={"name": "HardwareCo", "country": "US", "gst_registered_in": []},
+        headers=_headers(key),
+    )
+    body = _spend(
+        client, key, vendor="HardwareCo", amount="100", currency="USD",
+        supply_type="goods",
+    )
+    tx_id = str(body["id"])
+    assert body["tax"]["tax_type"] == "CUSTOMS"
+    assert body["tax"]["reverse_charge"] is False  # not services RCM
+    assert body["tax"]["self_invoice_generated"] is False
+    assert Decimal(body["tax"]["tax_amount"]) == Decimal("0")
+    exc = _exceptions_for(db_session, tx_id)
+    assert len(exc) == 1
+    assert exc[0].evidence_json["reason"] == "goods_customs_review"
+
+
+def test_domestic_goods_use_normal_gst(
+    client: TestClient, db_session: Session
+) -> None:
+    """Domestic goods (same country) are taxed as normal GST, not customs (TE-4)."""
+    company, _, key = _make_in_company(db_session)
+    client.post(
+        "/vendors",
+        json={"name": "LocalHW", "country": "IN", "gst_registered_in": ["IN"]},
+        headers=_headers(key),
+    )
+    body = _spend(
+        client, key, vendor="LocalHW", amount="118", currency="INR",
+        supply_type="goods",
+    )
+    assert body["tax"]["tax_type"] == "GST"  # domestic GST, not CUSTOMS
+    assert _exceptions_for(db_session, str(body["id"])) == []
 
 
 def test_case_a_foreign_vendor_billing_inr_is_rcm(

@@ -36,6 +36,10 @@ IGST_PAYABLE_CODE = "2230"
 # The net GST owed to the government after a return-cycle settlement (T1-11): the
 # period's output GST less utilised input tax credit, cleared by a cash payment.
 GST_SETTLEMENT_PAYABLE_CODE = "2300"
+# US self-assessed use tax owed to a state (TE-2): a no-nexus B2B buyer accrues use
+# tax on a taxable-state purchase the vendor didn't charge. Never reclaimable (US
+# sales/use tax is a cost, not a VAT input credit), so it has a payable but no ITC.
+US_USE_TAX_PAYABLE_CODE = "2400"
 
 # Map a tax head → its ITC (input credit, asset) and payable (liability) account.
 ITC_BY_HEAD: dict[str, str] = {
@@ -49,6 +53,8 @@ GST_PAYABLE_BY_HEAD: dict[str, str] = {
     "CGST": CGST_PAYABLE_CODE,
     "SGST": SGST_PAYABLE_CODE,
     "IGST": IGST_PAYABLE_CODE,
+    # US self-assessed use tax (TE-2): a payable head with no ITC counterpart.
+    "US_USE_TAX": US_USE_TAX_PAYABLE_CODE,
 }
 # Equity accounts. Contributed Capital receives wallet-funding entries (T1-18);
 # Retained Earnings is a real account (T1-17) that the balance sheet's
@@ -102,6 +108,9 @@ _DEFAULT_ACCOUNTS: tuple[_AccountSpec, ...] = (
         GST_SETTLEMENT_PAYABLE_CODE,
         "GST Payable to Government (Net)",
         AccountCategory.LIABILITY,
+    ),
+    _AccountSpec(
+        US_USE_TAX_PAYABLE_CODE, "US Use Tax Payable", AccountCategory.LIABILITY
     ),
     _AccountSpec(
         CONTRIBUTED_CAPITAL_CODE, "Contributed Capital", AccountCategory.EQUITY

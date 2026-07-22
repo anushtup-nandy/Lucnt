@@ -110,6 +110,9 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # and whether a domestic amount embedded GST or had it added on top.
     tax_category: Mapped[str | None] = mapped_column(String(20), default=None)
     tax_inclusive: Mapped[bool] = mapped_column(default=True)
+    # Service vs goods (TE-4): a cross-border goods supply routes to customs, never
+    # the services reverse-charge path.
+    supply_type: Mapped[str] = mapped_column(String(10), default="service")
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
     status: Mapped[TransactionStatus] = mapped_column(

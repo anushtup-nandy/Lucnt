@@ -115,6 +115,9 @@ def create_vendor(
         state=request.state,
         gstin=request.gstin,
         gst_registered_in=request.gst_registered_in,
+        trc_on_file=request.trc_on_file,
+        trc_expiry=request.trc_expiry,
+        form_10f_on_file=request.form_10f_on_file,
     )
     db.add(vendor)
     db.flush()

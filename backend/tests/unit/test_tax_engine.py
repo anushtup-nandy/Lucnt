@@ -72,8 +72,8 @@ def test_domestic_gst_is_extracted_from_inclusive_amount() -> None:
     assert t.is_reclaimable is True
 
 
-def test_us_sales_tax_self_assesses_nothing() -> None:
-    """US regime books no self-assessed tax in the MVP (rate injected but ignored)."""
+def test_us_unconfigured_state_is_exception() -> None:
+    """US with no state rule → 0 tax + confidence=exception (routes to recon, TE-2)."""
     t = compute_tax(
         tax_regime="US-Sales-Tax",
         functional_amount=Decimal("100"),
@@ -86,6 +86,73 @@ def test_us_sales_tax_self_assesses_nothing() -> None:
     assert t.is_reclaimable is False
     assert t.reverse_charge is False
     assert t.currency == "USD"
+    assert t.confidence == "exception"  # unconfigured → flagged, not a silent 0
+
+
+def test_us_taxable_state_self_assesses_use_tax() -> None:
+    """A taxable US state (rule standard) self-accrues use tax at the rate (TE-2)."""
+    t = compute_tax(
+        tax_regime="US-Sales-Tax", functional_amount=Decimal("100"),
+        paid_currency="USD", entity_currency="USD", rate=Decimal("0.05"),
+        us_rule_type="standard", us_jurisdiction="US-TX",
+    )
+    assert t.tax_type == "SALES_TAX"
+    assert t.tax_amount == Decimal("5.0000")  # 100 * 5%
+    assert t.reverse_charge is True  # self-assessed payable (use tax)
+    assert t.is_reclaimable is False  # US tax is a cost, not a VAT credit
+    assert t.reclaim_amount == _ZERO
+    assert t.self_invoice_required is False
+    assert [c.head for c in t.components] == ["US_USE_TAX"]
+    assert t.confidence == "auto"
+
+
+def test_us_exempt_state_is_zero() -> None:
+    """An exempt US state books no tax (TE-2)."""
+    t = compute_tax(
+        tax_regime="US-Sales-Tax", functional_amount=Decimal("100"),
+        paid_currency="USD", entity_currency="USD", rate=_ZERO,
+        us_rule_type="exempt", us_jurisdiction="US-CA",
+    )
+    assert t.tax_amount == _ZERO
+    assert t.reverse_charge is False
+    assert t.confidence == "auto"
+
+
+def test_us_disputed_state_routes_to_exception() -> None:
+    """A disputed US state (VT) is never auto-applied — routed to recon (TE-2)."""
+    t = compute_tax(
+        tax_regime="US-Sales-Tax", functional_amount=Decimal("100"),
+        paid_currency="USD", entity_currency="USD", rate=Decimal("0.06"),
+        us_rule_type="disputed", us_jurisdiction="US-VT",
+    )
+    assert t.tax_amount == _ZERO  # the 6% rate is NOT applied
+    assert t.confidence == "exception"
+    assert "disputed" in t.legal_reference
+
+
+def test_imported_goods_route_to_customs_not_rcm() -> None:
+    """A cross-border goods supply → customs, never services reverse charge (TE-4)."""
+    t = compute_tax(
+        tax_regime="IN-GST", functional_amount=Decimal("100"),
+        paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
+        vendor_country="US", entity_country="IN", vendor_registered_in=(),
+        supply_type="goods",
+    )
+    assert t.tax_type == "CUSTOMS"
+    assert t.reverse_charge is False  # not services RCM
+    assert t.tax_amount == _ZERO
+    assert t.confidence == "exception"  # routed to manual customs handling
+
+
+def test_domestic_goods_taxed_normally() -> None:
+    """Domestic goods (same country) fall through to the normal treatment (TE-4)."""
+    t = compute_tax(
+        tax_regime="IN-GST", functional_amount=Decimal("118"),
+        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
+        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        supply_type="goods",
+    )
+    assert t.tax_type == "GST"  # domestic GST, not customs
 
 
 def test_india_blocked_itc_for_travel() -> None:
@@ -131,6 +198,26 @@ def test_non_blocked_category_still_reclaims() -> None:
     )
     assert t.is_reclaimable is True
     assert t.reclaim_amount == Decimal("18.0000")
+
+
+def test_full_s17_5_set_blocks_itc_beyond_travel() -> None:
+    """The full s.17(5) set blocks ITC — hotel, motor vehicles, F&B, etc. (TE-5)."""
+    for category in (
+        "hotel",
+        "motor_vehicles",
+        "food_beverage",
+        "employee_benefits",
+        "works_contract",
+    ):
+        t = compute_tax(
+            tax_regime="IN-GST", functional_amount=Decimal("100"),
+            paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
+            vendor_country="US", entity_country="IN", vendor_registered_in=(),
+            expense_category=category,
+        )
+        assert t.is_reclaimable is False, category  # GST owed but not reclaimable
+        assert t.reclaim_amount == _ZERO, category
+        assert "s.17(5)" in t.legal_reference
 
 
 def test_unknown_regime_raises() -> None:

@@ -24,8 +24,9 @@ registry seeds M3 invoice matching and recon vendor grouping later.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +62,13 @@ class Vendor(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     gst_registered_in: Mapped[list[str]] = mapped_column(
         ARRAY(String(2)), default=list, server_default="{}"
     )
+    # Withholding-tax documentation (TE-3) for India s.195 remittances to a foreign
+    # vendor. A Tax Residency Certificate + Form 10F on file (and unexpired) let the
+    # payer apply the lower DTAA treaty rate; absent them the higher domestic rate
+    # applies. Collected at vendor onboarding so the rate is known before remittance.
+    trc_on_file: Mapped[bool] = mapped_column(default=False)
+    trc_expiry: Mapped[date | None] = mapped_column(Date, default=None)
+    form_10f_on_file: Mapped[bool] = mapped_column(default=False)
 
     @property
     def is_registered(self) -> bool:

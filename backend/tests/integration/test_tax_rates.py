@@ -14,6 +14,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
+from lucnt_api.models import TaxRate
 from lucnt_api.services.tax_rates import TaxRateUnavailableError, resolve_rate
 
 
@@ -26,6 +27,36 @@ def test_us_rate_is_zero_not_missing(db_session: Session) -> None:
     """US resolves to 0 (seeded), so the money path never fails closed on US."""
     rate = resolve_rate(db_session, regime="US-Sales-Tax", on_date=date(2026, 6, 1))
     assert rate == Decimal("0")
+
+
+def test_effective_to_closes_a_rate(db_session: Session) -> None:
+    """A closed rate (effective_to set) is not applied on/after its close date (TE-6).
+
+    Append-only discipline: a rate change closes the old row and inserts a new one;
+    the resolver picks the one whose effective window contains the supply date.
+    """
+    db_session.add_all(
+        [
+            TaxRate(
+                regime="XX-TEST", category="standard", rate=Decimal("0.10"),
+                effective_from=date(2020, 1, 1), effective_to=date(2024, 1, 1),
+                source="test",
+            ),
+            TaxRate(
+                regime="XX-TEST", category="standard", rate=Decimal("0.20"),
+                effective_from=date(2024, 1, 1), source="test",
+            ),
+        ]
+    )
+    db_session.flush()
+    # Inside the closed row's window → the old rate.
+    assert resolve_rate(
+        db_session, regime="XX-TEST", on_date=date(2023, 6, 1)
+    ) == Decimal("0.10")
+    # On/after the close date → the closed row is skipped, the new one applies.
+    assert resolve_rate(
+        db_session, regime="XX-TEST", on_date=date(2024, 6, 1)
+    ) == Decimal("0.20")
 
 
 def test_singapore_gst_effective_dating(db_session: Session) -> None:

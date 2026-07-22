@@ -169,6 +169,9 @@ def _get_or_create_entities(db: Session, company: Company) -> dict[str, Entity]:
                 # its 2-letter code upper-cased (sg->SG, in->IN, us->US). Without it
                 # every spend classifies UNCLASSIFIED — tax can't be decided.
                 country=code.upper(),
+                # US buyer state for sales/use-tax lookup (TE-2). Delaware has no
+                # state sales tax, so a US spend books cleanly (no use-tax accrual).
+                us_state="DE" if code == "us" else None,
                 timezone=tz,
             )
             db.add(entity)

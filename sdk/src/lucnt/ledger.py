@@ -11,6 +11,7 @@ API/LLM subset only).
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
 from lucnt.client import Transport
 from lucnt.config import get_config
@@ -94,6 +95,7 @@ def authorize(
     category: str | None = None,
     tax_category: str | None = None,
     tax_inclusive: bool = True,
+    supply_type: Literal["service", "goods"] = "service",
     model: str | None = None,
     tokens: int | None = None,
     strict: bool = False,
@@ -126,6 +128,7 @@ def authorize(
         category=category,
         tax_category=tax_category,
         tax_inclusive=tax_inclusive,
+        supply_type=supply_type,
         model=model,
         tokens=tokens,
     )
@@ -194,6 +197,7 @@ def spend(
     category: str | None = None,
     tax_category: str | None = None,
     tax_inclusive: bool = True,
+    supply_type: Literal["service", "goods"] = "service",
     model: str | None = None,
     tokens: int | None = None,
     invoice_url: str | None = None,
@@ -221,6 +225,7 @@ def spend(
         category=category,
         tax_category=tax_category,
         tax_inclusive=tax_inclusive,
+        supply_type=supply_type,
         model=model,
         tokens=tokens,
         strict=strict,

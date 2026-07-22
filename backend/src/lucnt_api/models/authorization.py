@@ -86,6 +86,9 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # Tax slab + inclusive/exclusive (T1-10), carried to the transaction at capture.
     tax_category: Mapped[str | None] = mapped_column(String(20), default=None)
     tax_inclusive: Mapped[bool] = mapped_column(default=True)
+    # Whether the supply is a service or goods (TE-4), carried to the transaction at
+    # capture. A cross-border *goods* supply routes to customs, not services RCM.
+    supply_type: Mapped[str] = mapped_column(String(10), default="service")
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
     status: Mapped[VerdictStatus] = mapped_column(

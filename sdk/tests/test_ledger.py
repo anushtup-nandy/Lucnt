@@ -68,6 +68,7 @@ def test_authorize_sends_the_resolved_request_and_returns_the_verdict(
             "category": None,
             "tax_category": None,
             "tax_inclusive": True,
+            "supply_type": "service",
             "model": None,
             "tokens": None,
         }

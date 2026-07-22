@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -53,6 +54,10 @@ class VendorRead(BaseModel):
     # derived convenience (true iff registered anywhere).
     gst_registered_in: list[str]
     is_registered: bool
+    # Withholding-tax documentation (TE-3).
+    trc_on_file: bool
+    trc_expiry: date | None
+    form_10f_on_file: bool
 
 
 class VendorListResponse(BaseModel):
@@ -77,6 +82,11 @@ class VendorCreate(BaseModel):
     # everywhere; an India entry makes an India supply forward charge, its absence
     # reverse charge.
     gst_registered_in: list[str] = Field(default_factory=list)
+    # Withholding-tax documentation (TE-3): whether a TRC / Form 10F is on file and
+    # the TRC's expiry, collected at onboarding to fix the s.195 withholding rate.
+    trc_on_file: bool = False
+    trc_expiry: date | None = None
+    form_10f_on_file: bool = False
 
     @field_validator("country")
     @classmethod
@@ -111,6 +121,10 @@ class VendorUpdate(BaseModel):
     # Replaces the whole registration list when present (TE-1); pass ``[]`` to mark
     # a vendor unregistered everywhere.
     gst_registered_in: list[str] | None = None
+    # Withholding-tax documentation (TE-3); only fields present are updated.
+    trc_on_file: bool | None = None
+    trc_expiry: date | None = None
+    form_10f_on_file: bool | None = None
 
     @field_validator("country")
     @classmethod

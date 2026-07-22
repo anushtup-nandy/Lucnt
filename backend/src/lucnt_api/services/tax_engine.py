@@ -59,10 +59,27 @@ _TWO = Decimal("2")
 # must fail loud (T1-8), never silently book zero tax for months.
 KNOWN_TAX_REGIMES: frozenset[str] = frozenset({"IN-GST", "SG-GST", "US-Sales-Tax"})
 
-# ITC is blocked for these expense categories under CGST s.17(5) (T1-14): the GST
-# becomes a cost, not a reclaimable credit. Keyed by regime (India only for MVP).
+# ITC is blocked for these expense categories under CGST s.17(5) (T1-14 / TE-5):
+# the GST becomes a cost, not a reclaimable credit. This is the full s.17(5) set
+# (Appendix B): motor vehicles, food & beverage, employee benefits, works contracts
+# for immovable property, plus travel/hotel. Keyed by regime (India only for MVP).
+#
+# TE-5 note: the doc suggested a `blocked_credit` column on `tax_rates`, but that
+# table keys by *rate slab* (standard/gst_5…), a different dimension from the
+# *expense category* that decides blocked ITC — conflating them would be wrong. The
+# set is kept here as reviewed reference data; a rule-driven store, if wanted later,
+# belongs in its own (regime, expense_category) reference, not `tax_rates`.
 _BLOCKED_ITC_CATEGORIES: dict[str, frozenset[str]] = {
-    "IN-GST": frozenset({"travel"}),
+    "IN-GST": frozenset(
+        {
+            "travel",
+            "hotel",
+            "motor_vehicles",
+            "food_beverage",
+            "employee_benefits",
+            "works_contract",
+        }
+    ),
 }
 _BLOCKED_ITC_NOTE = " — input tax credit blocked under CGST s.17(5)"
 
@@ -227,6 +244,119 @@ def _components(
     return (TaxComponent(head, rate, tax_amount, reclaim_amount),)
 
 
+def _customs_treatment(
+    functional_amount: Decimal, entity_currency: str
+) -> TaxTreatment:
+    """Cross-border goods import → customs, not services reverse charge (TE-4).
+
+    Customs duty + border IGST / import GST is outside the MVP's automated scope, so
+    the spend is booked conservatively (no auto-tax, whole amount expensed) and
+    routed to the recon exception queue (``confidence="exception"``) for manual
+    customs handling — never the services RCM path.
+    """
+    return TaxTreatment(
+        tax_type="CUSTOMS",
+        jurisdiction="Customs (imported goods)",
+        rate=_ZERO,
+        tax_amount=_ZERO,
+        is_reclaimable=False,
+        reclaim_amount=_ZERO,
+        legal_reference=(
+            "imported goods — customs duty / border tax applies; manual handling "
+            "(PRODUCTION_PLAN TE-4, customs path not automated)"
+        ),
+        reverse_charge=False,
+        self_invoice_required=False,
+        currency=entity_currency,
+        gross_amount=functional_amount,
+        components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
+        confidence="exception",
+    )
+
+
+def _us_treatment(
+    *,
+    functional_amount: Decimal,
+    entity_currency: str,
+    rate: Decimal,
+    us_rule_type: str | None,
+    us_jurisdiction: str | None,
+) -> TaxTreatment:
+    """US sales/use tax for the buyer's state (TE-2).
+
+    - ``None`` (state unconfigured) or ``"disputed"`` → a conservative
+      ``confidence="exception"`` treatment (no tax asserted, whole amount
+      expensed); the money path routes it to the recon exception queue rather than
+      guessing.
+    - ``"exempt"`` / ``"no_tax"`` → zero tax, a plain expense.
+    - ``"standard"`` / ``"use_tax"`` → self-assessed **use tax** at ``rate``: a
+      payable to the state, never reclaimable (US tax is a cost, not a VAT input
+      credit). Books like reverse charge — the wallet pays the vendor the net
+      amount and a Use Tax Payable leg carries the tax.
+    """
+    state = us_jurisdiction or "US"
+
+    if us_rule_type is None or us_rule_type == "disputed":
+        reason = (
+            f"US {state}: sales-tax status disputed — confirm before applying"
+            if us_rule_type == "disputed"
+            else f"US {state}: no sales/use-tax rule configured for this state"
+        )
+        return TaxTreatment(
+            tax_type="SALES_TAX",
+            jurisdiction=state,
+            rate=_ZERO,
+            tax_amount=_ZERO,
+            is_reclaimable=False,
+            reclaim_amount=_ZERO,
+            legal_reference=f"{reason} (PRODUCTION_PLAN TE-2)",
+            reverse_charge=False,
+            self_invoice_required=False,
+            currency=entity_currency,
+            gross_amount=functional_amount,
+            components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
+            confidence="exception",
+        )
+
+    if us_rule_type in ("exempt", "no_tax"):
+        label = "exempt from" if us_rule_type == "exempt" else "not subject to"
+        return TaxTreatment(
+            tax_type="SALES_TAX",
+            jurisdiction=state,
+            rate=_ZERO,
+            tax_amount=_ZERO,
+            is_reclaimable=False,
+            reclaim_amount=_ZERO,
+            legal_reference=f"US {state}: SaaS {label} state sales tax (TE-2)",
+            reverse_charge=False,
+            self_invoice_required=False,
+            currency=entity_currency,
+            gross_amount=functional_amount,
+            components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
+        )
+
+    # standard / use_tax → self-assessed use tax for a no-nexus B2B buyer. Not
+    # reclaimable; booked like reverse charge with a Use Tax Payable leg.
+    tax = _quantize(functional_amount * rate)
+    return TaxTreatment(
+        tax_type="SALES_TAX",
+        jurisdiction=state,
+        rate=rate,
+        tax_amount=tax,
+        is_reclaimable=False,
+        reclaim_amount=_ZERO,
+        legal_reference=(
+            f"US {state}: self-assessed use tax at {rate} on a no-nexus B2B "
+            "purchase (TE-2 — confirm rate/nexus with a CPA)"
+        ),
+        reverse_charge=True,
+        self_invoice_required=False,
+        currency=entity_currency,
+        gross_amount=functional_amount,
+        components=(TaxComponent("US_USE_TAX", rate, tax, _ZERO),),
+    )
+
+
 def compute_tax(
     *,
     tax_regime: str,
@@ -241,6 +371,9 @@ def compute_tax(
     vendor_registered_in: tuple[str, ...] | None = None,
     entity_country: str | None = None,
     entity_state: str | None = None,
+    us_rule_type: str | None = None,
+    us_jurisdiction: str | None = None,
+    supply_type: str = "service",
 ) -> TaxTreatment:
     """Compute the tax treatment for a captured spend.
 
@@ -252,8 +385,8 @@ def compute_tax(
             vs domestic only when place of supply is unknown (the fallback).
         entity_currency: ISO code of the entity's functional currency.
         rate: The statutory rate as a fraction (0.18 = 18%), effective-dated and
-            resolved by the caller from `services/tax_rates.py` (T1-12). Ignored
-            for the US regime (no self-assessed tax in the MVP).
+            resolved by the caller from `services/tax_rates.py` (T1-12). For the US
+            regime it is the buyer state's sales/use-tax rate (TE-2).
         expense_category: Optional caller-stated category; drives blocked input
             tax credit (T1-14) — e.g. IN travel spend cannot reclaim ITC.
         tax_inclusive: Whether a *domestic* amount includes GST (T1-10). ``True``
@@ -273,10 +406,19 @@ def compute_tax(
             reverse charge under CGST s.9(4). ``None``/empty ⇒ registered nowhere.
         entity_country: The recipient entity's ISO country.
         entity_state: The recipient entity's state (India).
+        us_rule_type: For the US regime (TE-2), the buyer state's resolved rule —
+            ``standard``/``use_tax`` (self-accrue use tax at ``rate``),
+            ``exempt``/``no_tax`` (zero), ``disputed`` (route to the exception
+            queue), or ``None`` (state unconfigured → also an exception).
+        us_jurisdiction: The resolved US jurisdiction (``"US-TX"``) for the
+            legal reference; ``None`` when the state is unconfigured.
+        supply_type: ``"service"`` (default) or ``"goods"`` (TE-4). A cross-border
+            *goods* supply routes to the customs path, never services reverse
+            charge; domestic goods fall through to the normal treatment.
 
     Returns:
-        A `TaxTreatment` whose ``components`` carry the per-head split (T1-9);
-        ``tax_amount`` is 0 for US. ``currency`` is always ``entity_currency``.
+        A `TaxTreatment` whose ``components`` carry the per-head split (T1-9).
+        ``currency`` is always ``entity_currency``.
 
     Raises:
         UnknownTaxRegimeError: ``tax_regime`` is not in `KNOWN_TAX_REGIMES` (T1-8).
@@ -288,28 +430,30 @@ def compute_tax(
         # last line of defence at capture.
         raise UnknownTaxRegimeError(tax_regime)
 
+    # Imported goods (customs duty + border tax) are a different mechanism from
+    # imported services (reverse charge), so a cross-border *goods* supply never
+    # routes through the services path (TE-4). Domestic goods (same country) fall
+    # through to the normal domestic treatment; a goods supply whose place of supply
+    # is unknown falls through to UNCLASSIFIED below.
+    if (
+        supply_type == "goods"
+        and vendor_country is not None
+        and entity_country is not None
+        and vendor_country.strip().upper() != entity_country.strip().upper()
+    ):
+        return _customs_treatment(functional_amount, entity_currency)
+
     rule = _REGIMES.get(tax_regime)
 
     if rule is None:
-        # US sales tax: no federal VAT, and state sales/use-tax nexus is not
-        # evaluated in the MVP, so no tax is self-assessed (T1-15 — a labeled
-        # gap surfaced per-transaction, not a silent zero).
-        return TaxTreatment(
-            tax_type="SALES_TAX",
-            jurisdiction="United States",
-            rate=_ZERO,
-            tax_amount=_ZERO,
-            is_reclaimable=False,
-            reclaim_amount=_ZERO,
-            legal_reference=(
-                "US: no federal VAT; state sales/use-tax nexus not evaluated "
-                "(MVP gap — PRODUCTION_PLAN T1-15)"
-            ),
-            reverse_charge=False,
-            self_invoice_required=False,
-            currency=entity_currency,
-            gross_amount=functional_amount,
-            components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
+        # US sales/use tax, decided by the buyer state's rule (TE-2) — no longer a
+        # blanket zero.
+        return _us_treatment(
+            functional_amount=functional_amount,
+            entity_currency=entity_currency,
+            rate=rate,
+            us_rule_type=us_rule_type,
+            us_jurisdiction=us_jurisdiction,
         )
 
     # Place of supply must come from the registry — never currency (TE-1). Without

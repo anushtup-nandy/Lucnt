@@ -43,3 +43,11 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     currency: Mapped[str] = mapped_column(String(3))
     legal_reference: Mapped[str] = mapped_column(Text)
     self_invoice_generated: Mapped[bool] = mapped_column(default=False)
+    # The exact `tax_rates` row that produced this treatment + a snapshot of its
+    # provenance (TE-6): an auditor can trace "why this rate" without reverse-
+    # engineering the tables. Null for paths that apply no rate (UNCLASSIFIED,
+    # CUSTOMS, US-unconfigured).
+    applied_rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tax_rates.id"), default=None
+    )
+    applied_rule_source: Mapped[str | None] = mapped_column(String(50), default=None)

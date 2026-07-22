@@ -30,6 +30,7 @@ from lucnt_api.models.transaction import (
 )
 from lucnt_api.models.user import User, UserRole
 from lucnt_api.models.vendor import Vendor
+from lucnt_api.models.withholding_record import WithholdingRecord
 from lucnt_api.models.workflow import Workflow, WorkflowStatus, workflow_agents
 
 __all__ = [
@@ -61,6 +62,7 @@ __all__ = [
     "SelfInvoice",
     "TaxRate",
     "TaxRecord",
+    "WithholdingRecord",
     "Transaction",
     "TransactionSource",
     "TransactionStatus",

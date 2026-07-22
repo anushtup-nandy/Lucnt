@@ -35,6 +35,11 @@ class Entity(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # Nullable: back-filled from `tax_regime`; `gst_state` set per-entity later.
     country: Mapped[str | None] = mapped_column(String(2), default=None)
     gst_state: Mapped[str | None] = mapped_column(String(10), default=None)
+    # The buyer's US state (2-letter, e.g. "TX") for US sales/use-tax lookup by
+    # `US-{state}` jurisdiction (TE-2). Distinct from `gst_state` (India CGST/SGST
+    # split); an entity is in one country, so at most one is set. Nullable: a US
+    # entity without it routes to the recon exception queue rather than a silent 0.
+    us_state: Mapped[str | None] = mapped_column(String(2), default=None)
     # NUMERIC, never FLOAT -- FX rate is money math (sdk/PLAN.md: Decimal not float).
     to_usd_rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), default=Decimal("1.0"))
     timezone: Mapped[str] = mapped_column(String(50))

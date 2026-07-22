@@ -50,6 +50,10 @@ class SpendRequest(BaseModel):
     # whether a domestic amount embeds GST (default) or has it added on top.
     tax_category: str | None = None
     tax_inclusive: bool = True
+    # Whether the purchase is a service or goods (TE-4). A cross-border *goods*
+    # spend routes to a customs path, never the services reverse charge; defaults to
+    # ``service`` (agent spend is ~all services), so existing callers are unaffected.
+    supply_type: Literal["service", "goods"] = "service"
     model: str | None = None
     tokens: int | None = Field(default=None, ge=0)
 

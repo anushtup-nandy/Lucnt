@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -39,11 +39,14 @@ from lucnt_api.models import (
     PolicyScopeType,
     ReconciliationException,
     ReconExceptionType,
+    TaxRate,
     TaxRecord,
     Transaction,
     TransactionSource,
     TransactionStatus,
+    Vendor,
     VerdictStatus,
+    WithholdingRecord,
 )
 from lucnt_api.schemas.transaction import (
     CaptureRequest,
@@ -71,12 +74,27 @@ from lucnt_api.services.spend_window import (
 from lucnt_api.services.tax_engine import TaxTreatment, compute_tax
 from lucnt_api.services.tax_rates import (
     STANDARD_CATEGORY,
+    US_REGIME,
     TaxRateUnavailableError,
-    resolve_rate,
+    resolve_rate_row,
+    resolve_us_rule,
 )
-from lucnt_api.services.vendors import resolve_or_create_vendor
+from lucnt_api.services.vendors import (
+    normalize_vendor_name,
+    resolve_or_create_vendor,
+)
+from lucnt_api.services.withholding import WithholdingOutcome, determine_withholding
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+# Verdict severity for combining the withholding gate with the policy verdict
+# (TE-3), most-restrictive-wins — mirrors the policy engine's own ordering.
+_VERDICT_SEVERITY: dict[VerdictStatus, int] = {
+    VerdictStatus.APPROVED: 0,
+    VerdictStatus.REVIEW: 1,
+    VerdictStatus.HUMAN_HOLD: 2,
+    VerdictStatus.BLOCKED: 3,
+}
 
 
 def _resolve_agent(
@@ -132,18 +150,19 @@ def _verdict_from(authorization: Authorization) -> Verdict:
     )
 
 
-def _resolve_tax_rate(
+def _resolve_tax_rate_row(
     db: Session, regime: str, when: datetime, tax_category: str | None
-) -> Decimal:
-    """Effective-dated statutory rate for a regime/slab on a date (T1-12/T1-10).
+) -> TaxRate:
+    """Effective-dated statutory rate *row* for a regime/slab on a date (T1-12/TE-6).
 
     Resolved at the money-path boundary and injected into the pure tax engine,
     keyed by the transaction date, so a rate change never back-applies to a
-    historical supply. ``tax_category`` selects the GST slab (defaults to the
-    standard rate). Fail-closed like FX: a missing rate stops the spend.
+    historical supply. The whole row is returned so the applied rule id + source can
+    be stamped on the tax records (TE-6). Fail-closed like FX: a missing rate stops
+    the spend.
     """
     try:
-        return resolve_rate(
+        return resolve_rate_row(
             db,
             regime=regime,
             category=tax_category or STANDARD_CATEGORY,
@@ -164,22 +183,60 @@ def _compute_tax(
     category: str | None,
     tax_category: str | None,
     tax_inclusive: bool,
+    supply_type: str,
     when: datetime,
-) -> TaxTreatment:
-    """Gather the tax engine's boundary inputs, then compute the treatment.
+) -> tuple[TaxTreatment, uuid.UUID | None, str | None]:
+    """Gather the engine's boundary inputs; return the treatment + applied rule (TE-6).
 
-    The money path resolves the effective-dated statutory rate for the slab
-    (T1-12/T1-10) and the vendor's place-of-supply attributes from the registry
-    (T1-3/T1-9), then calls the pure engine. An unenriched vendor has no country →
-    the engine falls back to the currency heuristic (today's behaviour).
+    Resolves the effective-dated rate + the vendor's place-of-supply attributes and
+    calls the pure engine. For India/Singapore the rate is the regime-level slab
+    (T1-12/T1-10); for the US it is the buyer state's sales/use-tax rule (TE-2),
+    resolved by `us_state` — an unconfigured state routes to the exception queue.
+    An unenriched vendor (no country) books `UNCLASSIFIED` and is flagged (TE-1b).
+
+    Also returns the ``(applied_rule_id, applied_rule_source)`` of the `tax_rates`
+    row that supplied the rate — stamped on the tax records for the audit trail
+    (TE-6); both ``None`` when no rate was applied (US-unconfigured / no row).
     """
     vendor = resolve_or_create_vendor(db, company.id, vendor_name)
-    return compute_tax(
+
+    us_rule_type: str | None = None
+    us_jurisdiction: str | None = None
+    applied_rule_id: uuid.UUID | None = None
+    applied_rule_source: str | None = None
+    if entity.tax_regime == US_REGIME:
+        rule = (
+            resolve_us_rule(
+                db,
+                us_state=entity.us_state,
+                on_date=when.date(),
+                category=tax_category or STANDARD_CATEGORY,
+            )
+            if entity.us_state
+            else None
+        )
+        if rule is not None:
+            us_rule_type = rule.rule_type
+            us_jurisdiction = rule.jurisdiction
+            rate = rule.rate
+            applied_rule_id = rule.rule_id
+            applied_rule_source = rule.source
+        else:
+            # State unconfigured or no rule row → the engine routes to the recon
+            # exception queue rather than booking a silent zero (TE-2).
+            rate = Decimal("0")
+    else:
+        row = _resolve_tax_rate_row(db, entity.tax_regime, when, tax_category)
+        rate = Decimal(row.rate)
+        applied_rule_id = row.id
+        applied_rule_source = row.source
+
+    tax = compute_tax(
         tax_regime=entity.tax_regime,
         functional_amount=functional_amount,
         paid_currency=paid_currency,
         entity_currency=entity.currency,
-        rate=_resolve_tax_rate(db, entity.tax_regime, when, tax_category),
+        rate=rate,
         expense_category=category,
         tax_inclusive=tax_inclusive,
         vendor_country=vendor.country,
@@ -187,16 +244,61 @@ def _compute_tax(
         vendor_registered_in=tuple(vendor.gst_registered_in),
         entity_country=entity.country,
         entity_state=entity.gst_state,
+        us_rule_type=us_rule_type,
+        us_jurisdiction=us_jurisdiction,
+        supply_type=supply_type,
+    )
+    return tax, applied_rule_id, applied_rule_source
+
+
+def _withholding_outcome(
+    db: Session,
+    company: Company,
+    entity: Entity,
+    vendor_name: str,
+    functional_amount: Decimal,
+    on_date: date,
+) -> WithholdingOutcome:
+    """Compute the India s.195 withholding outcome for a payment (TE-3).
+
+    Read-only vendor lookup (never creates a row at authorize) + the pure engine
+    with the config rates/threshold. An unknown/unenriched vendor has no country, so
+    withholding does not apply (that vendor is caught by the capture-time
+    UNCLASSIFIED flag instead). Reused by the authorize gate and the capture record.
+    """
+    normalized = normalize_vendor_name(vendor_name)
+    vendor = db.execute(
+        select(Vendor).where(
+            Vendor.company_id == company.id, Vendor.normalized_name == normalized
+        )
+    ).scalar_one_or_none()
+    return determine_withholding(
+        buyer_country=entity.country,
+        vendor_country=vendor.country if vendor else None,
+        functional_amount=functional_amount,
+        on_date=on_date,
+        trc_on_file=vendor.trc_on_file if vendor else False,
+        trc_expiry=vendor.trc_expiry if vendor else None,
+        form_10f_on_file=vendor.form_10f_on_file if vendor else False,
+        treaty_rate=settings.withholding_treaty_rate,
+        domestic_rate=settings.withholding_domestic_rate,
+        cb_threshold=settings.withholding_15cb_threshold,
     )
 
 
 def _persist_tax_records(
-    db: Session, transaction_id: uuid.UUID, tax: TaxTreatment
+    db: Session,
+    transaction_id: uuid.UUID,
+    tax: TaxTreatment,
+    applied_rule_id: uuid.UUID | None = None,
+    applied_rule_source: str | None = None,
 ) -> None:
     """Persist one `TaxRecord` per GST-head component (T1-9).
 
     A single-head supply writes one row; an India intra-state supply writes two
     (CGST + SGST). A contra (reversal) passes a treatment with negated components.
+    Every row is stamped with the `tax_rates` row that produced the rate + its
+    source, for the audit trail (TE-6).
     """
     for comp in tax.components:
         db.add(
@@ -212,21 +314,48 @@ def _persist_tax_records(
                 currency=tax.currency,
                 legal_reference=tax.legal_reference,
                 self_invoice_generated=tax.self_invoice_required,
+                applied_rule_id=applied_rule_id,
+                applied_rule_source=applied_rule_source,
             )
         )
 
 
 def _flag_unclassified_tax(
-    db: Session, company: Company, transaction: Transaction
+    db: Session, company: Company, transaction: Transaction, tax: TaxTreatment
 ) -> None:
-    """Open a recon exception when tax could not be classified (TE-1b).
+    """Open a recon exception when tax could not be classified (TE-1b / TE-2).
 
-    A spend to a vendor with no place-of-supply data is booked conservatively (no
-    ITC, no self-invoice, whole amount expensed) and flagged here so a finance
-    admin enriches the vendor. Non-recoverable, so ``amount_at_stake`` is 0 (it
-    does not inflate the inbox's ``$ at stake``). One row per (transaction, type)
-    by ``uq_recon_txn_type`` — each unclassified spend is a distinct gap.
+    Two `confidence="exception"` paths land here: an unenriched vendor with no
+    place-of-supply data (TE-1b), and a US spend whose state is disputed or
+    unconfigured (TE-2). Both book conservatively (no tax asserted) and are flagged
+    for a human rather than guessed. Non-recoverable, so ``amount_at_stake`` is 0
+    (it does not inflate the inbox's ``$ at stake``). One row per (transaction,
+    type) by ``uq_recon_txn_type`` — each unclassified spend is a distinct gap.
     """
+    if tax.tax_type == "UNCLASSIFIED":
+        reason = "place_of_supply_unknown"
+        detail = (
+            "vendor has no country/registration on file; tax booked conservatively "
+            "(no ITC, no self-invoice) pending enrichment"
+        )
+        fix_notes = (
+            f"Enrich vendor {transaction.vendor!r} (country + GST registration) "
+            "via PATCH /vendors/{id}, then reconcile this spend's tax."
+        )
+    elif tax.tax_type == "CUSTOMS":
+        reason = "goods_customs_review"
+        detail = tax.legal_reference
+        fix_notes = (
+            f"Imported goods — handle customs duty / border tax manually: "
+            f"{tax.legal_reference}"
+        )
+    else:
+        reason = "us_tax_review"
+        detail = tax.legal_reference
+        fix_notes = (
+            f"Confirm the US sales/use-tax treatment for this spend: "
+            f"{tax.legal_reference}"
+        )
     db.add(
         ReconciliationException(
             company_id=company.id,
@@ -234,17 +363,11 @@ def _flag_unclassified_tax(
             exception_type=ReconExceptionType.TAX_UNCLASSIFIED,
             amount_at_stake=Decimal("0"),
             evidence_json={
-                "reason": "place_of_supply_unknown",
+                "reason": reason,
                 "vendor": transaction.vendor,
-                "detail": (
-                    "vendor has no country/registration on file; tax booked "
-                    "conservatively (no ITC, no self-invoice) pending enrichment"
-                ),
+                "detail": detail,
             },
-            fix_notes=(
-                f"Enrich vendor {transaction.vendor!r} (country + GST registration) "
-                "via PATCH /vendors/{id}, then reconcile this spend's tax."
-            ),
+            fix_notes=fix_notes,
         )
     )
 
@@ -316,7 +439,7 @@ def _replay_capture(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "transaction references a missing entity",
         )
-    tax = _compute_tax(
+    tax, _, _ = _compute_tax(
         db,
         company,
         entity,
@@ -326,6 +449,7 @@ def _replay_capture(
         category=existing.category,
         tax_category=existing.tax_category,
         tax_inclusive=existing.tax_inclusive,
+        supply_type=existing.supply_type,
         when=existing.transaction_date,
     )
     accounts = ensure_default_accounts(db, company.id)
@@ -388,6 +512,7 @@ def _persist_authorization(
         category=request.category,
         tax_category=request.tax_category,
         tax_inclusive=request.tax_inclusive,
+        supply_type=request.supply_type,
         model_used=request.model,
         tokens_consumed=request.tokens,
         status=verdict_status,
@@ -520,15 +645,37 @@ def authorize(
         iter(decision.blocking_policy_ids or decision.fired_policy_ids), None
     )
 
+    # TE-3: the India s.195 withholding gate — a remittance to a non-resident vendor
+    # missing the treaty documentation (TRC/Form 10F) above the 15CB threshold is
+    # held for documentation *before money moves*, combined most-restrictively with
+    # the policy verdict. This is the one tax path that blocks a payment after
+    # policy passes (a bank won't process the remittance without a 15CA/15CB).
+    final_status: VerdictStatus = decision.status
+    final_code: str = decision.code.value
+    final_reason: str | None = decision.reason
+    if entity.country == "IN":
+        wh = _withholding_outcome(
+            db, company, entity, request.vendor, functional_amount, now.date()
+        )
+        if (
+            wh.applies
+            and wh.blocked
+            and _VERDICT_SEVERITY[VerdictStatus.HUMAN_HOLD]
+            > _VERDICT_SEVERITY[final_status]
+        ):
+            final_status = VerdictStatus.HUMAN_HOLD
+            final_code = "withholding_docs_required"
+            final_reason = wh.reason
+
     return _persist_authorization(
         db,
         company,
         agent,
         entity,
         request,
-        verdict_status=decision.status,
-        code=decision.code.value,
-        reason=decision.reason,
+        verdict_status=final_status,
+        code=final_code,
+        reason=final_reason,
         policy_id=policy_id,
         idempotency_key=idempotency_key,
         exchange_rate=exchange_rate,
@@ -642,6 +789,7 @@ def capture(
         category=authorization.category,
         tax_category=authorization.tax_category,
         tax_inclusive=authorization.tax_inclusive,
+        supply_type=authorization.supply_type,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
         status=TransactionStatus.COMPLETED,
@@ -676,7 +824,7 @@ def capture(
     # row (lane-agnostic — CLAUDE.local.md). The card/invoice rails book
     # through this exact path once they land. Tax is assessed on the functional
     # amount (T1-4); the journal is booked in functional currency (T1-1).
-    tax = _compute_tax(
+    tax, applied_rule_id, applied_rule_source = _compute_tax(
         db,
         company,
         entity,
@@ -686,17 +834,39 @@ def capture(
         category=transaction.category,
         tax_category=transaction.tax_category,
         tax_inclusive=transaction.tax_inclusive,
+        supply_type=transaction.supply_type,
         when=capture_date,
     )
-    _persist_tax_records(db, transaction.id, tax)
+    _persist_tax_records(
+        db, transaction.id, tax, applied_rule_id, applied_rule_source
+    )
     # Reverse charge requires a buyer-issued self-invoice (r.46): produce the
     # actual record so `self_invoice_generated` is truthful, not fabricated (T1-7).
     if tax.self_invoice_required:
         db.add(build_self_invoice(transaction, entity, tax))
-    # Unenriched vendor: tax was booked conservatively (TE-1b) — flag for review so
-    # finance enriches the vendor rather than the engine silently guessing.
+    # Conservative-default paths (TE-1b unenriched vendor, TE-2 US disputed/
+    # unconfigured state) flag for review rather than letting the engine guess.
     if tax.confidence == "exception":
-        _flag_unclassified_tax(db, company, transaction)
+        _flag_unclassified_tax(db, company, transaction, tax)
+    # TE-3: record the India s.195 withholding obligation for a non-resident
+    # remittance — the compliance record beside GST (GL leg + 15CA/15CB generation
+    # deferred, TE-3). Any withholding *block* already gated this at authorize; a
+    # capture means it was cleared to proceed, so the record is never blocked.
+    withholding = _withholding_outcome(
+        db, company, entity, transaction.vendor,
+        transaction.local_amount, capture_date.date(),
+    )
+    if withholding.applies:
+        db.add(
+            WithholdingRecord(
+                transaction_id=transaction.id,
+                rate_bps=int(withholding.rate * 10000),
+                amount=withholding.amount,
+                currency=entity.currency,
+                treaty_rate_applied=withholding.treaty_rate_applied,
+                legal_reference=withholding.reason,
+            )
+        )
     accounts = ensure_default_accounts(db, company.id)
     journal_lines = generate_journal(transaction, entity, tax, accounts)
     db.add_all(journal_lines)
@@ -767,6 +937,7 @@ def reverse_transaction(
         category=original.category,
         tax_category=original.tax_category,
         tax_inclusive=original.tax_inclusive,
+        supply_type=original.supply_type,
         model_used=original.model_used,
         tokens_consumed=original.tokens_consumed,
         status=TransactionStatus.COMPLETED,
@@ -800,7 +971,7 @@ def reverse_transaction(
     # Resolve the rate + place of supply at the *original* supply date so the contra
     # exactly negates the booked tax even if the statutory rate/registry has since
     # changed (T1-12); one negated row per head component (T1-9).
-    tax = _compute_tax(
+    tax, applied_rule_id, applied_rule_source = _compute_tax(
         db,
         company,
         entity,
@@ -810,6 +981,7 @@ def reverse_transaction(
         category=reversal.category,
         tax_category=reversal.tax_category,
         tax_inclusive=reversal.tax_inclusive,
+        supply_type=reversal.supply_type,
         when=original.transaction_date,
     )
     contra_components = tuple(
@@ -824,7 +996,9 @@ def reverse_transaction(
         legal_reference=f"Reversal — {tax.legal_reference}",
         components=contra_components,
     )
-    _persist_tax_records(db, reversal.id, contra_tax)
+    _persist_tax_records(
+        db, reversal.id, contra_tax, applied_rule_id, applied_rule_source
+    )
 
     original.is_reversed = True
 
