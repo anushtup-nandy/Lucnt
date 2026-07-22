@@ -16,6 +16,29 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _ISO_3166_ALPHA2 = re.compile(r"[A-Z]{2}")
 
 
+def _normalise_country_code(value: str | None) -> str | None:
+    """Upper-case and validate a single ISO-3166 alpha-2 code (two letters)."""
+    if value is None:
+        return None
+    code = value.strip().upper()
+    if not _ISO_3166_ALPHA2.fullmatch(code):
+        raise ValueError("country must be a 2-letter ISO-3166 alpha-2 code")
+    return code
+
+
+def _normalise_country_list(value: list[str] | None) -> list[str] | None:
+    """Upper-case/validate each ISO-3166 alpha-2 code, de-duplicated (TE-1)."""
+    if value is None:
+        return None
+    seen: dict[str, None] = {}
+    for item in value:
+        code = item.strip().upper()
+        if not _ISO_3166_ALPHA2.fullmatch(code):
+            raise ValueError("gst_registered_in entries must be ISO-3166 alpha-2 codes")
+        seen[code] = None
+    return list(seen)
+
+
 class VendorRead(BaseModel):
     """A vendor registry row."""
 
@@ -26,6 +49,9 @@ class VendorRead(BaseModel):
     country: str | None
     state: str | None
     gstin: str | None
+    # The countries the vendor is GST-registered in (TE-1); `is_registered` is a
+    # derived convenience (true iff registered anywhere).
+    gst_registered_in: list[str]
     is_registered: bool
 
 
@@ -47,18 +73,22 @@ class VendorCreate(BaseModel):
     country: str | None = Field(default=None, max_length=2)
     state: str | None = Field(default=None, max_length=10)
     gstin: str | None = Field(default=None, max_length=20)
-    is_registered: bool = False
+    # The countries the vendor is GST-registered in (TE-1). Empty ⇒ unregistered
+    # everywhere; an India entry makes an India supply forward charge, its absence
+    # reverse charge.
+    gst_registered_in: list[str] = Field(default_factory=list)
 
     @field_validator("country")
     @classmethod
     def _normalise_country(cls, value: str | None) -> str | None:
         """Upper-case and validate the ISO-3166 alpha-2 shape (two letters)."""
-        if value is None:
-            return None
-        code = value.strip().upper()
-        if not _ISO_3166_ALPHA2.fullmatch(code):
-            raise ValueError("country must be a 2-letter ISO-3166 alpha-2 code")
-        return code
+        return _normalise_country_code(value)
+
+    @field_validator("gst_registered_in")
+    @classmethod
+    def _normalise_registered(cls, value: list[str]) -> list[str]:
+        """Upper-case/validate each registration country code."""
+        return _normalise_country_list(value) or []
 
     @field_validator("state")
     @classmethod
@@ -78,17 +108,19 @@ class VendorUpdate(BaseModel):
     country: str | None = Field(default=None, max_length=2)
     state: str | None = Field(default=None, max_length=10)
     gstin: str | None = Field(default=None, max_length=20)
-    is_registered: bool | None = None
+    # Replaces the whole registration list when present (TE-1); pass ``[]`` to mark
+    # a vendor unregistered everywhere.
+    gst_registered_in: list[str] | None = None
 
     @field_validator("country")
     @classmethod
     def _normalise_country(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        code = value.strip().upper()
-        if not _ISO_3166_ALPHA2.fullmatch(code):
-            raise ValueError("country must be a 2-letter ISO-3166 alpha-2 code")
-        return code
+        return _normalise_country_code(value)
+
+    @field_validator("gst_registered_in")
+    @classmethod
+    def _normalise_registered(cls, value: list[str] | None) -> list[str] | None:
+        return _normalise_country_list(value)
 
     @field_validator("state")
     @classmethod

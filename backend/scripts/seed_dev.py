@@ -31,9 +31,11 @@ from lucnt_api.models import (
     Policy,
     PolicyRuleType,
     PolicyScopeType,
+    Vendor,
 )
 from lucnt_api.security import generate_api_key, hash_api_key
 from lucnt_api.services.chart_of_accounts import ensure_default_accounts
+from lucnt_api.services.vendors import normalize_vendor_name
 
 _COMPANY_SLUG = "acme-dev"
 
@@ -118,6 +120,24 @@ _AGENTS = [
 ]
 
 
+# (name, country, gst_registered_in) — the vendors `example_agent.py` spends to,
+# enriched so place of supply (not currency) decides tax (TE-1). Names match the
+# example's vendor strings exactly (normalized lower/trim) so the capture path's
+# resolve-or-create finds these rows instead of auto-creating unenriched ones —
+# without this the demo's imported spends classify UNCLASSIFIED and its reverse-
+# charge assertion fails. `openai`/`anthropic`/etc. are foreign (US), unregistered
+# in the buyer's country -> IGST reverse charge; `singapore_airlines` is a domestic
+# SG supply -> forward-charge GST. `coinbase` is policy-blocked before capture, so
+# it never needs a row.
+_VENDORS: list[tuple[str, str, list[str]]] = [
+    ("singapore_airlines", "SG", ["SG"]),  # domestic SG -> forward-charge GST
+    ("openai", "US", []),                  # foreign, unregistered -> RCM (IGST)
+    ("anthropic", "US", []),               # foreign -> RCM (the metered call)
+    ("dataprovider", "US", []),            # foreign -> RCM
+    ("flakyapi", "US", []),                # foreign -> RCM
+]
+
+
 def _get_or_create_company(db: Session) -> Company:
     company = db.execute(
         select(Company).where(Company.slug == _COMPANY_SLUG)
@@ -145,6 +165,10 @@ def _get_or_create_entities(db: Session, company: Company) -> dict[str, Entity]:
                 currency=currency,
                 accounting_std=std,
                 tax_regime=regime,
+                # Place of supply of the recipient (TE-1): the entity's country is
+                # its 2-letter code upper-cased (sg->SG, in->IN, us->US). Without it
+                # every spend classifies UNCLASSIFIED — tax can't be decided.
+                country=code.upper(),
                 timezone=tz,
             )
             db.add(entity)
@@ -176,6 +200,30 @@ def _get_or_create_agents(
                 monthly_budget=seed.monthly_budget,
                 confidence_pct=seed.confidence_pct,
                 is_live=seed.is_live,
+            )
+        )
+    db.flush()
+
+
+def _get_or_create_vendors(db: Session, company: Company) -> None:
+    """Seed the demo vendors with their place of supply (TE-1)."""
+    for name, country, registered in _VENDORS:
+        normalized = normalize_vendor_name(name)
+        existing = db.execute(
+            select(Vendor).where(
+                Vendor.company_id == company.id,
+                Vendor.normalized_name == normalized,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            continue
+        db.add(
+            Vendor(
+                company_id=company.id,
+                name=name,
+                normalized_name=normalized,
+                country=country,
+                gst_registered_in=registered,
             )
         )
     db.flush()
@@ -242,6 +290,7 @@ def main() -> None:
         company = _get_or_create_company(db)
         entities = _get_or_create_entities(db, company)
         _get_or_create_agents(db, company, entities)
+        _get_or_create_vendors(db, company)
         _get_or_create_policies(db, company)
         # Default Chart of Accounts so the Books layer has accounts to post to
         # (capture self-heals this too, but seed it explicitly for a clean start).
@@ -255,6 +304,7 @@ def main() -> None:
     print(f"Company: {company_name} ({company_slug})")
     print(f"Entities: {', '.join(sorted(entities))}")
     print(f"Agents: {', '.join(seed.slug for seed in _AGENTS)}")
+    print(f"Vendors: {', '.join(name for name, *_ in _VENDORS)}")
     print(f"Policies: {', '.join(name for name, *_ in _POLICIES)}")
     print()
     print(f"LUCNT_API_KEY={plaintext}")

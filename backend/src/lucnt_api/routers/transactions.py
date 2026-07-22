@@ -37,6 +37,8 @@ from lucnt_api.models import (
     JournalEntry,
     Policy,
     PolicyScopeType,
+    ReconciliationException,
+    ReconExceptionType,
     TaxRecord,
     Transaction,
     TransactionSource,
@@ -182,7 +184,7 @@ def _compute_tax(
         tax_inclusive=tax_inclusive,
         vendor_country=vendor.country,
         vendor_state=vendor.state,
-        vendor_registered=vendor.is_registered,
+        vendor_registered_in=tuple(vendor.gst_registered_in),
         entity_country=entity.country,
         entity_state=entity.gst_state,
     )
@@ -212,6 +214,39 @@ def _persist_tax_records(
                 self_invoice_generated=tax.self_invoice_required,
             )
         )
+
+
+def _flag_unclassified_tax(
+    db: Session, company: Company, transaction: Transaction
+) -> None:
+    """Open a recon exception when tax could not be classified (TE-1b).
+
+    A spend to a vendor with no place-of-supply data is booked conservatively (no
+    ITC, no self-invoice, whole amount expensed) and flagged here so a finance
+    admin enriches the vendor. Non-recoverable, so ``amount_at_stake`` is 0 (it
+    does not inflate the inbox's ``$ at stake``). One row per (transaction, type)
+    by ``uq_recon_txn_type`` — each unclassified spend is a distinct gap.
+    """
+    db.add(
+        ReconciliationException(
+            company_id=company.id,
+            transaction_id=transaction.id,
+            exception_type=ReconExceptionType.TAX_UNCLASSIFIED,
+            amount_at_stake=Decimal("0"),
+            evidence_json={
+                "reason": "place_of_supply_unknown",
+                "vendor": transaction.vendor,
+                "detail": (
+                    "vendor has no country/registration on file; tax booked "
+                    "conservatively (no ITC, no self-invoice) pending enrichment"
+                ),
+            },
+            fix_notes=(
+                f"Enrich vendor {transaction.vendor!r} (country + GST registration) "
+                "via PATCH /vendors/{id}, then reconcile this spend's tax."
+            ),
+        )
+    )
 
 
 def _capture_response(
@@ -658,6 +693,10 @@ def capture(
     # actual record so `self_invoice_generated` is truthful, not fabricated (T1-7).
     if tax.self_invoice_required:
         db.add(build_self_invoice(transaction, entity, tax))
+    # Unenriched vendor: tax was booked conservatively (TE-1b) — flag for review so
+    # finance enriches the vendor rather than the engine silently guessing.
+    if tax.confidence == "exception":
+        _flag_unclassified_tax(db, company, transaction)
     accounts = ensure_default_accounts(db, company.id)
     journal_lines = generate_journal(transaction, entity, tax, accounts)
     db.add_all(journal_lines)

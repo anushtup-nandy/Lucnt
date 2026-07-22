@@ -24,6 +24,7 @@ from lucnt_api.models import (
     JournalEntry,
     SelfInvoice,
     TaxRecord,
+    Vendor,
 )
 from lucnt_api.security import generate_api_key, hash_api_key
 
@@ -66,11 +67,33 @@ def _make_entity(
         currency=currency,
         accounting_std="SFRS",
         tax_regime=f"{code.upper()}-GST",
+        country=code.upper(),  # place of supply of the recipient (TE-1)
         timezone="Asia/Singapore",
     )
     db_session.add(entity)
     db_session.flush()
     return entity
+
+
+def _make_vendor(
+    db_session: Session,
+    company: Company,
+    name: str,
+    *,
+    country: str,
+    gst_registered_in: list[str] | None = None,
+) -> Vendor:
+    """Pre-enrich a vendor so a spend classifies by place of supply (TE-1)."""
+    vendor = Vendor(
+        company_id=company.id,
+        name=name,
+        normalized_name=name.strip().lower(),
+        country=country,
+        gst_registered_in=gst_registered_in or [],
+    )
+    db_session.add(vendor)
+    db_session.flush()
+    return vendor
 
 
 def _make_agent(
@@ -291,6 +314,8 @@ def test_capture_books_reverse_charge_journal_and_tax(
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="sg", currency="SGD")
     _make_agent(db_session, company, entity)
+    # A foreign vendor not registered in SG -> imported reverse charge (TE-1).
+    _make_vendor(db_session, company, "openai", country="US")
     # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
     # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
     db_session.add(
@@ -368,6 +393,10 @@ def test_capture_books_domestic_gst(
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="in", currency="INR")
     _make_agent(db_session, company, entity)
+    # A domestic vendor registered in IN -> forward-charge GST (TE-1).
+    _make_vendor(
+        db_session, company, "local_saas", country="IN", gst_registered_in=["IN"]
+    )
 
     verdict = client.post(
         "/transactions/authorize",
@@ -575,6 +604,7 @@ def test_reverse_charge_generates_self_invoice(
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="sg", currency="SGD")
     _make_agent(db_session, company, entity)
+    _make_vendor(db_session, company, "openai", country="US")  # foreign -> RCM (TE-1)
     db_session.add(
         FxRate(currency="SGD", usd_per_unit=Decimal("0.5"),
                effective_from=date(2026, 1, 2), source="test")

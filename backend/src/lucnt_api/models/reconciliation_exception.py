@@ -41,13 +41,16 @@ class ReconExceptionType(str, enum.Enum):
     `DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the
     ledger by `services/detectors.py`; `FAILED_DELIVERY` is agent-reported (the
     SDK `mark_failed_delivery()` hook) because it cannot be inferred from spend
-    data alone.
+    data alone. `TAX_UNCLASSIFIED` is *capture-emitted* (TE-1b): a spend hit a
+    vendor with no place-of-supply data, so tax was booked conservatively and the
+    vendor needs enriching before the treatment can be finalised.
     """
 
     DUPLICATE = "duplicate"
     OVERCHARGE = "overcharge"
     UNUSED_SUBSCRIPTION = "unused_subscription"
     FAILED_DELIVERY = "failed_delivery"
+    TAX_UNCLASSIFIED = "tax_unclassified"
 
 
 class ReconExceptionStatus(str, enum.Enum):

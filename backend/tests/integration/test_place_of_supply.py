@@ -30,6 +30,9 @@ from lucnt_api.models import (
     Entity,
     FxRate,
     JournalEntry,
+    ReconciliationException,
+    ReconExceptionStatus,
+    ReconExceptionType,
     TaxRecord,
     Transaction,
 )
@@ -181,11 +184,16 @@ def test_vendor_crud_create_enrich_and_conflicts(
     company, _, key = _make_in_company(db_session)
     created = client.post(
         "/vendors",
-        json={"name": "Zoho", "country": "in", "state": "ka", "is_registered": True},
+        json={
+            "name": "Zoho", "country": "in", "state": "ka",
+            "gst_registered_in": ["in"],
+        },
         headers=_headers(key),
     )
     assert created.status_code == 201
     assert created.json()["country"] == "IN"  # normalised upper-case
+    assert created.json()["gst_registered_in"] == ["IN"]
+    assert created.json()["is_registered"] is True  # derived from the list
 
     # A duplicate (normalized) name is a 409 — enrich via PATCH instead.
     dup = client.post("/vendors", json={"name": "zoho"}, headers=_headers(key))
@@ -194,12 +202,13 @@ def test_vendor_crud_create_enrich_and_conflicts(
     vendor_id = created.json()["id"]
     patched = client.patch(
         f"/vendors/{vendor_id}",
-        json={"state": "MH", "is_registered": False},
+        json={"state": "MH", "gst_registered_in": []},
         headers=_headers(key),
     )
     assert patched.status_code == 200
     assert patched.json()["state"] == "MH"
     assert patched.json()["is_registered"] is False
+    assert patched.json()["gst_registered_in"] == []
     assert patched.json()["country"] == "IN"  # untouched by the partial update
 
     # A runtime key cannot mutate the registry (T0-12).
@@ -217,7 +226,10 @@ def test_intra_state_domestic_splits_cgst_sgst(
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
-        json={"name": "Zoho", "country": "IN", "state": "KA", "is_registered": True},
+        json={
+            "name": "Zoho", "country": "IN", "state": "KA",
+            "gst_registered_in": ["IN"],
+        },
         headers=_headers(key),
     )
     body = _spend(client, key, vendor="Zoho", amount="118", currency="INR")
@@ -242,7 +254,7 @@ def test_import_books_igst_reverse_charge(
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
-        json={"name": "OpenAI", "country": "US", "is_registered": True},
+        json={"name": "OpenAI", "country": "US", "gst_registered_in": ["US"]},
         headers=_headers(key),
     )
     # USD 100 -> INR 10000 @ the clean rate; IGST 18% on top = 1800.
@@ -257,17 +269,165 @@ def test_import_books_igst_reverse_charge(
     assert _credit(db_session, tx_id, "2230") == Decimal("1800.0000")  # payable IGST
 
 
-def test_unenriched_vendor_falls_back_to_single_gst(
+def test_oidar_vendor_registered_in_india_is_forward_charge(
     client: TestClient, db_session: Session
 ) -> None:
-    """An unenriched vendor keeps the currency-heuristic single-GST path (compat)."""
+    """A foreign vendor GST-registered in India books forward-charge IGST (TE-1).
+
+    Registration in the buyer's country, not home country, decides: an ITC IGST
+    leg (1430) is booked, but *no* payable (2230) and no self-invoice — the OIDAR
+    supplier charged the tax forward. Home country (US) and currency (USD) both
+    say "import", yet the India registration makes it domestic forward charge.
+    """
     company, _, key = _make_in_company(db_session)
-    # Domestic INR spend to a never-enriched vendor -> one unsplit GST record.
+    client.post(
+        "/vendors",
+        json={"name": "OpenAI", "country": "US", "gst_registered_in": ["IN"]},
+        headers=_headers(key),
+    )
+    body = _spend(client, key, vendor="OpenAI", amount="118", currency="USD")
+    tx_id = str(body["id"])
+
+    rows = _tax_rows(db_session, tx_id)
+    assert [r.tax_head for r in rows] == ["IGST"]
+    assert rows[0].self_invoice_generated is False  # forward charge, no self-invoice
+    # USD 118 -> INR 11800; IGST extracted from the inclusive amount = 1800.
+    assert rows[0].tax_amount == Decimal("1800.0000")
+    assert _debit(db_session, tx_id, "1430") == Decimal("1800.0000")  # ITC IGST
+    assert _credit(db_session, tx_id, "2230") == Decimal("0")  # no payable (forward)
+
+
+def test_case_a_foreign_vendor_billing_inr_is_rcm(
+    client: TestClient, db_session: Session
+) -> None:
+    """TE-1 Case A: a foreign vendor billing in INR is still imported RCM (money path).
+
+    The exact P0 the currency heuristic got wrong — INR billing said "domestic",
+    silently dropping the RCM liability. Place of supply (US vendor, not registered
+    in IN) correctly books IGST reverse charge with a self-invoice.
+    """
+    company, _, key = _make_in_company(db_session)
+    client.post(
+        "/vendors",
+        json={"name": "ForeignCorp", "country": "US", "gst_registered_in": []},
+        headers=_headers(key),
+    )
+    # Billed in the buyer's own currency — the old heuristic's false-negative case.
+    body = _spend(client, key, vendor="ForeignCorp", amount="118", currency="INR")
+    tx_id = str(body["id"])
+    assert body["tax"]["tax_type"] == "GST_RCM"
+    assert body["tax"]["reverse_charge"] is True
+    assert body["tax"]["self_invoice_generated"] is True
+    rows = _tax_rows(db_session, tx_id)
+    assert [r.tax_head for r in rows] == ["IGST"]
+    assert rows[0].tax_amount == Decimal("21.2400")  # 118 * 0.18 on top
+
+
+def test_unenriched_vendor_is_unclassified_and_flagged(
+    client: TestClient, db_session: Session
+) -> None:
+    """An unenriched vendor is booked conservatively and flagged for review (TE-1b).
+
+    No ITC leg, no self-invoice, the whole amount expensed, tax_type UNCLASSIFIED —
+    and a `tax_unclassified` recon exception opened, never a silent currency guess.
+    """
+    company, _, key = _make_in_company(db_session)
     body = _spend(client, key, vendor="LocalCorp", amount="118", currency="INR")
     tx_id = str(body["id"])
+
+    assert body["tax"]["tax_type"] == "UNCLASSIFIED"
+    assert body["tax"]["self_invoice_generated"] is False
     rows = _tax_rows(db_session, tx_id)
-    assert [r.tax_head for r in rows] == ["GST"]
-    assert _debit(db_session, tx_id, "1400") == Decimal("18.0000")  # legacy ITC
+    assert [r.tax_head for r in rows] == ["NONE"]
+    assert rows[0].tax_amount == Decimal("0")
+    assert _debit(db_session, tx_id, "1400") == Decimal("0")  # no phantom ITC
+    assert _credit(db_session, tx_id, "1010") == Decimal("118.0000")  # whole amount out
+
+    # The money path opened a recon exception for the unclassified vendor.
+    exc = db_session.execute(
+        select(ReconciliationException).where(
+            ReconciliationException.transaction_id == uuid.UUID(tx_id)
+        )
+    ).scalar_one()
+    assert exc.exception_type == ReconExceptionType.TAX_UNCLASSIFIED
+    assert exc.status == ReconExceptionStatus.OPEN
+    assert exc.amount_at_stake == Decimal("0")  # a config gap, not a recovery
+
+
+def _exceptions_for(db: Session, tx_id: str) -> list[ReconciliationException]:
+    return list(
+        db.execute(
+            select(ReconciliationException).where(
+                ReconciliationException.transaction_id == uuid.UUID(tx_id)
+            )
+        ).scalars()
+    )
+
+
+def test_enrichment_reflags_divergent_history_without_rewriting(
+    client: TestClient, db_session: Session
+) -> None:
+    """Correcting a vendor flags its mis-booked past spends; history stays put (TE-1c).
+
+    A spend is booked domestic GST against a vendor recorded as India-registered.
+    The vendor is later corrected to a foreign, unregistered supplier (it always
+    owed reverse charge). The historical spend is flagged for review — but its
+    booked journal/tax records are never rewritten.
+    """
+    company, _, key = _make_in_company(db_session)
+    created = client.post(
+        "/vendors",
+        json={
+            "name": "Acme", "country": "IN", "state": "KA",
+            "gst_registered_in": ["IN"],
+        },
+        headers=_headers(key),
+    ).json()
+    body = _spend(client, key, vendor="Acme", amount="118", currency="INR")
+    tx_id = str(body["id"])
+    assert body["tax"]["tax_type"] == "GST"  # booked domestic
+    assert _exceptions_for(db_session, tx_id) == []  # nothing flagged yet
+
+    # Correct the vendor: it is actually a foreign, unregistered supplier (RCM).
+    client.patch(
+        f"/vendors/{created['id']}",
+        json={"country": "US", "gst_registered_in": []},
+        headers=_headers(key),
+    )
+
+    exc = _exceptions_for(db_session, tx_id)
+    assert len(exc) == 1
+    assert exc[0].exception_type == ReconExceptionType.TAX_UNCLASSIFIED
+    assert exc[0].evidence_json["reason"] == "vendor_reclassified"
+    assert exc[0].evidence_json["booked_tax_type"] == "GST"
+    assert exc[0].evidence_json["recomputed_tax_type"] == "GST_RCM"
+
+    # History is immutable: the booked tax records are still the domestic GST split.
+    rows = _tax_rows(db_session, tx_id)
+    assert {r.tax_head for r in rows} == {"CGST", "SGST"}
+    assert all(r.tax_type == "GST" for r in rows)
+
+
+def test_enrichment_does_not_duplicate_an_existing_flag(
+    client: TestClient, db_session: Session
+) -> None:
+    """Enriching an unclassified vendor keeps its one flag — no duplicate (TE-1c)."""
+    company, _, key = _make_in_company(db_session)
+    body = _spend(client, key, vendor="Mystery", amount="118", currency="INR")
+    tx_id = str(body["id"])
+    assert body["tax"]["tax_type"] == "UNCLASSIFIED"
+    assert len(_exceptions_for(db_session, tx_id)) == 1  # flagged at capture
+
+    vendors = client.get("/vendors", headers=_headers(key)).json()
+    vid = next(v["id"] for v in vendors["items"] if v["name"] == "Mystery")
+    client.patch(
+        f"/vendors/{vid}",
+        json={"country": "US", "gst_registered_in": []},
+        headers=_headers(key),
+    )
+
+    # The capture-time flag already covers this transaction — still exactly one.
+    assert len(_exceptions_for(db_session, tx_id)) == 1
 
 
 def test_tax_exclusive_books_gst_on_top(
@@ -275,6 +435,11 @@ def test_tax_exclusive_books_gst_on_top(
 ) -> None:
     """A tax-exclusive domestic spend books GST on top: wallet = amount + tax."""
     company, _, key = _make_in_company(db_session)
+    client.post(
+        "/vendors",
+        json={"name": "LocalCorp", "country": "IN", "gst_registered_in": ["IN"]},
+        headers=_headers(key),
+    )
     body = _spend(
         client, key, vendor="LocalCorp", amount="100", currency="INR",
         tax_inclusive=False,
@@ -292,6 +457,11 @@ def test_rate_slab_taxes_at_that_rate(
 ) -> None:
     """A `tax_category` slab books at that GST rate, not the 18% default (T1-10)."""
     company, _, key = _make_in_company(db_session)
+    client.post(
+        "/vendors",
+        json={"name": "LocalCorp", "country": "IN", "gst_registered_in": ["IN"]},
+        headers=_headers(key),
+    )
     body = _spend(
         client, key, vendor="LocalCorp", amount="105", currency="INR",
         tax_category="gst_5",
@@ -332,7 +502,10 @@ def test_reversal_negates_each_head_component(
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
-        json={"name": "Zoho", "country": "IN", "state": "KA", "is_registered": True},
+        json={
+            "name": "Zoho", "country": "IN", "state": "KA",
+            "gst_registered_in": ["IN"],
+        },
         headers=_headers(key),
     )
     body = _spend(client, key, vendor="Zoho", amount="118", currency="INR")
@@ -368,7 +541,7 @@ def test_tax_settlement_nets_output_against_itc(
     for name in ("OpenAI", "Expedia"):
         client.post(
             "/vendors",
-            json={"name": name, "country": "US", "is_registered": True},
+            json={"name": name, "country": "US", "gst_registered_in": ["US"]},
             headers=_headers(key),
         )
     # Import IGST 1800 reclaimable + import IGST 1800 blocked (travel, no ITC).

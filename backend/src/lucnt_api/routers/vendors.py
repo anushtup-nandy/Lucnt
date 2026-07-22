@@ -30,9 +30,14 @@ from lucnt_api.schemas.vendor import (
     VendorUpdate,
 )
 from lucnt_api.services.audit import record as record_audit
+from lucnt_api.services.tax_reclass import reflag_divergent_history
 from lucnt_api.services.vendors import normalize_vendor_name
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
+
+# Fields whose change can alter a spend's tax regime — a change to any of them
+# re-checks the vendor's booked history for divergence (TE-1c).
+_PLACE_OF_SUPPLY_FIELDS = frozenset({"country", "state", "gst_registered_in"})
 
 
 def _require_vendor(db: Session, company: Company, vendor_id: uuid.UUID) -> Vendor:
@@ -109,7 +114,7 @@ def create_vendor(
         country=request.country,
         state=request.state,
         gstin=request.gstin,
-        is_registered=request.is_registered,
+        gst_registered_in=request.gst_registered_in,
     )
     db.add(vendor)
     db.flush()
@@ -124,7 +129,7 @@ def create_vendor(
             "name": vendor.name,
             "country": vendor.country,
             "state": vendor.state,
-            "is_registered": vendor.is_registered,
+            "gst_registered_in": vendor.gst_registered_in,
         },
     )
     db.commit()
@@ -148,10 +153,16 @@ def update_vendor(
     before = {
         "country": vendor.country,
         "state": vendor.state,
-        "is_registered": vendor.is_registered,
+        "gst_registered_in": list(vendor.gst_registered_in),
     }
-    for field, value in request.model_dump(exclude_unset=True).items():
+    updated = request.model_dump(exclude_unset=True)
+    for field, value in updated.items():
         setattr(vendor, field, value)
+    db.flush()
+    # TE-1c: if place of supply changed, re-check the vendor's already-booked spends
+    # and flag any whose regime now diverges — never rewriting history.
+    if _PLACE_OF_SUPPLY_FIELDS & updated.keys():
+        reflag_divergent_history(db, company.id, vendor)
     record_audit(
         db,
         ctx.api_key,
@@ -162,7 +173,7 @@ def update_vendor(
         after={
             "country": vendor.country,
             "state": vendor.state,
-            "is_registered": vendor.is_registered,
+            "gst_registered_in": list(vendor.gst_registered_in),
         },
     )
     db.commit()

@@ -105,8 +105,13 @@ def _assert_balances(lines: list) -> None:
     assert total_debit == total_credit
 
 
-def test_imported_reverse_charge_journal() -> None:
-    """RCM: expense=paid, wallet credited paid, ITC debit == GST payable credit."""
+def test_reverse_charge_journal() -> None:
+    """RCM (unsplit GST head): expense=paid, wallet=paid, ITC debit == payable credit.
+
+    Driven by a domestic-unregistered supply (CGST s.9(4), no state info → unsplit
+    ``GST`` head) so it books to the legacy ITC/payable accounts. The per-head IGST/
+    CGST/SGST split journal is covered by tests/integration/test_place_of_supply.py.
+    """
     entity = Entity(code="in", currency="INR")
     txn = _txn(paid_amount=Decimal("100"), paid_currency="USD", model_used="gpt-5")
     tax = compute_tax(
@@ -115,6 +120,7 @@ def test_imported_reverse_charge_journal() -> None:
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
         rate=_IN_RATE,
+        vendor_country="IN", entity_country="IN", vendor_registered_in=(),
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -137,6 +143,7 @@ def test_domestic_gst_journal_nets_expense() -> None:
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
         rate=_IN_RATE,
+        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -248,6 +255,7 @@ def test_blocked_itc_rcm_books_tax_into_expense() -> None:
         paid_currency=txn.paid_currency, entity_currency=entity.currency,
         rate=_IN_RATE,
         expense_category="travel",
+        vendor_country="IN", entity_country="IN", vendor_registered_in=(),
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     _assert_balances(lines)

@@ -43,11 +43,12 @@ def resolve_or_create_vendor(db: Session, company_id: uuid.UUID, name: str) -> V
     if existing is not None:
         return existing
 
+    # Unenriched: no country and registered nowhere (gst_registered_in defaults to
+    # []). The tax engine routes such a vendor conservatively and flags it (TE-1b).
     vendor = Vendor(
         company_id=company_id,
         name=name,
         normalized_name=normalized,
-        is_registered=False,
     )
     try:
         with db.begin_nested():

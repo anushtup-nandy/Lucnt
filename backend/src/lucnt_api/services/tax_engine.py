@@ -18,10 +18,18 @@ MVP scope — India GST, Singapore GST, US sales tax:
 **Currency (PRODUCTION_PLAN T1-4).** Tax is computed on ``functional_amount`` —
 the paid amount already converted to the entity's functional currency by
 `services/fx.py` at capture — never on the raw foreign amount. Computing an INR
-entity's RCM on a USD figure understated GST by the whole FX factor. The
-``paid_currency`` vs ``entity_currency`` comparison still decides *import vs
-domestic* (T1-3 refines this to place-of-supply in Sprint 2b); the *amount* the
-rate applies to is always functional.
+entity's RCM on a USD figure understated GST by the whole FX factor. Currency
+plays **no** role in deciding import vs domestic (TE-1): that is the vendor
+registry's place of supply. The *amount* the rate applies to is always functional.
+
+**Place of supply (TE-1).** Import-vs-domestic and the reverse-charge decision key
+off the vendor's ``country`` and ``vendor_registered_in`` (the countries it is
+GST-registered in) — never its invoice currency, which was wrong in both
+directions. The legal reverse-charge test is registration *in the buyer's
+country*. When the vendor is unenriched (no ``country``), the engine does not
+guess: it returns a conservative ``"UNCLASSIFIED"`` treatment with
+``confidence="exception"`` (no ITC, no self-invoice, whole amount expensed) and
+the money path opens a recon exception (TE-1b).
 
 **Effective-dated rate (T1-12).** The statutory ``rate`` is *injected* by the
 caller, resolved from the effective-dated `tax_rates` table by
@@ -115,6 +123,11 @@ class TaxTreatment:
     gross_amount: Decimal
     # Per-head breakdown (T1-9); at least one component, summing to the totals.
     components: tuple[TaxComponent, ...]
+    # ``"auto"`` when the treatment was determined with confidence; ``"exception"``
+    # when place of supply could not be established (an unenriched vendor, TE-1b) —
+    # the money path books it conservatively and opens a recon exception for
+    # review, never a silent currency guess.
+    confidence: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -225,7 +238,7 @@ def compute_tax(
     tax_inclusive: bool = True,
     vendor_country: str | None = None,
     vendor_state: str | None = None,
-    vendor_registered: bool = True,
+    vendor_registered_in: tuple[str, ...] | None = None,
     entity_country: str | None = None,
     entity_state: str | None = None,
 ) -> TaxTreatment:
@@ -253,8 +266,11 @@ def compute_tax(
             ``None`` (an unenriched vendor) the engine falls back to the currency
             heuristic and a single unsplit ``GST`` head — today's behaviour.
         vendor_state: The vendor's state (India), for intra- vs inter-state.
-        vendor_registered: Whether the vendor is GST-registered. A domestic
-            *unregistered* India supply is reverse-charge under CGST s.9(4).
+        vendor_registered_in: The ISO countries the vendor is GST-registered in
+            (TE-1). The reverse-charge test is registration *in the buyer's
+            country*: a foreign vendor registered there (OIDAR) charges forward
+            IGST (not RCM); a domestic India vendor absent from this list is
+            reverse charge under CGST s.9(4). ``None``/empty ⇒ registered nowhere.
         entity_country: The recipient entity's ISO country.
         entity_state: The recipient entity's state (India).
 
@@ -296,35 +312,62 @@ def compute_tax(
             components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
         )
 
-    # Import vs domestic: place of supply when known (T1-3, the correct signal),
-    # else the currency heuristic (the fallback for an unenriched vendor).
-    if vendor_country is not None and entity_country is not None:
-        place_of_supply_known = True
-        imported = vendor_country.upper() != entity_country.upper()
-    else:
-        place_of_supply_known = False
-        imported = paid_currency.upper() != entity_currency.upper()
+    # Place of supply must come from the registry — never currency (TE-1). Without
+    # the vendor's country we cannot tell import from domestic; rather than guess
+    # (wrong in both directions), book a conservative no-phantom treatment and flag
+    # for review (TE-1b): claim no ITC, assess no reverse charge, issue no
+    # self-invoice, expense the whole amount. The money path opens a recon
+    # exception on ``confidence == "exception"`` so finance enriches the vendor.
+    if vendor_country is None or entity_country is None:
+        return TaxTreatment(
+            tax_type="UNCLASSIFIED",
+            jurisdiction=rule.jurisdiction,
+            rate=_ZERO,
+            tax_amount=_ZERO,
+            is_reclaimable=False,
+            reclaim_amount=_ZERO,
+            legal_reference=(
+                f"{rule.jurisdiction}: place of supply unknown — vendor unenriched; "
+                "tax deferred pending classification (PRODUCTION_PLAN TE-1)"
+            ),
+            reverse_charge=False,
+            self_invoice_required=False,
+            currency=entity_currency,
+            gross_amount=functional_amount,
+            components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
+            confidence="exception",
+        )
+
+    # Import-vs-domestic and who-bears-the-tax are two independent axes, both from
+    # the registry — never currency (TE-1):
+    #   * ``imported``: is the supplier offshore relative to the buyer — drives the
+    #     IGST vs CGST/SGST head split and the import legal reference.
+    #   * ``registered_in_buyer_country``: is the vendor GST-registered *in the
+    #     buyer's country* — the legal reverse-charge test.
+    buyer = entity_country.strip().upper()
+    imported = vendor_country.strip().upper() != buyer
+    registered = {c.strip().upper() for c in (vendor_registered_in or ())}
+    registered_in_buyer_country = buyer in registered
 
     blocked = _is_itc_blocked(tax_regime, expense_category)
     head_mode = _head_mode(
         tax_regime=tax_regime,
         imported=imported,
-        place_of_supply_known=place_of_supply_known,
+        place_of_supply_known=True,
         vendor_state=vendor_state,
         entity_state=entity_state,
     )
 
-    # Reverse charge: imports always; and a *domestic unregistered* India supply
-    # under CGST s.9(4) (the registry's `is_registered` earns its keep here). Both
-    # self-assess on the tax-exclusive amount; a domestic registered supply instead
-    # has GST embedded in the tax-inclusive amount and is extracted.
-    domestic_rcm = (
-        place_of_supply_known
-        and not imported
-        and not vendor_registered
-        and tax_regime == "IN-GST"
+    # Reverse charge (the buyer self-assesses) when the vendor does *not* charge
+    # forward GST in the buyer's country — but only for a cross-border supply or an
+    # India domestic-unregistered supply (CGST s.9(4)). A registered foreign vendor
+    # (OIDAR) charges forward IGST → not RCM. A non-India domestic supply (e.g.
+    # Singapore) stays forward charge regardless of registration. Both RCM legs
+    # self-assess on the tax-exclusive amount; a forward-charge supply has GST
+    # embedded in (or added on top of) the amount and is extracted below.
+    reverse_charge = (not registered_in_buyer_country) and (
+        imported or tax_regime == "IN-GST"
     )
-    reverse_charge = imported or domestic_rcm
 
     if reverse_charge:
         # Self-assessed on the tax-exclusive amount; the wallet only pays the vendor

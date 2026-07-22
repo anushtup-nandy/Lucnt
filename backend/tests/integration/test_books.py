@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from lucnt_api.database import get_db
 from lucnt_api.main import app
-from lucnt_api.models import Agent, ApiKey, ApiKeyMode, Company, Entity, FxRate
+from lucnt_api.models import Agent, ApiKey, ApiKeyMode, Company, Entity, FxRate, Vendor
 from lucnt_api.security import generate_api_key, hash_api_key
 
 
@@ -58,11 +58,33 @@ def _make_entity(db_session: Session, company: Company) -> Entity:
         currency="SGD",
         accounting_std="SFRS",
         tax_regime="SG-GST",
+        country="SG",  # place of supply of the recipient (TE-1)
         timezone="Asia/Singapore",
     )
     db_session.add(entity)
     db_session.flush()
     return entity
+
+
+def _make_vendor(
+    db_session: Session,
+    company: Company,
+    name: str,
+    *,
+    country: str,
+    gst_registered_in: list[str] | None = None,
+) -> None:
+    """Pre-enrich a vendor so a spend classifies by place of supply (TE-1)."""
+    db_session.add(
+        Vendor(
+            company_id=company.id,
+            name=name,
+            normalized_name=name.strip().lower(),
+            country=country,
+            gst_registered_in=gst_registered_in or [],
+        )
+    )
+    db_session.flush()
 
 
 def _make_agent(db_session: Session, company: Company, entity: Entity) -> Agent:
@@ -129,6 +151,12 @@ def books_client(client: TestClient, db_session: Session) -> tuple[TestClient, s
     """A company with two captured spends: an imported RCM and a domestic GST one."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
+    # Place of supply (TE-1): openai is a foreign vendor not registered in SG ->
+    # imported reverse charge; localcorp is domestic SG-registered -> forward GST.
+    _make_vendor(db_session, company, "openai", country="US")
+    _make_vendor(
+        db_session, company, "localcorp", country="SG", gst_registered_in=["SG"]
+    )
     # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
     # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
     db_session.add(
