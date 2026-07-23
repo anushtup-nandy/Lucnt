@@ -36,6 +36,15 @@ _MIN_FINGERPRINT_SAMPLES = 3  # min home-currency spends to establish a baseline
 _RECENT_WINDOW = 10  # trailing spends the anomaly score scans
 _TOP_VENDORS = 3
 ANOMALY_Z_THRESHOLD = Decimal("2.5")  # z at/above which a spend reads "anomalous"
+# Cap the reported z. Leave-one-out scoring (T2-4) divides by the spread of the
+# *other* points; a perfectly flat baseline has zero spread, so a differing
+# candidate would be infinitely anomalous. Cap it to a large-but-finite score so
+# the outlier still fires (unlike the old population-σ score, which mathematically
+# capped a lone outlier at √(n-1) and so could not fire below 8 samples).
+_MAX_Z = Decimal("10")
+# Floor the run-rate divisor so an early-month projection is not wild: on day 1 a
+# single renewal must not extrapolate to ~30x the budget (T2-9).
+_MIN_PROJECTION_DAYS = 7
 _UNATTRIBUTED = "(unattributed)"
 _MONEY = Decimal("0.0001")  # ledger precision, Numeric(18, 4)
 _SCORE = Decimal("0.0001")
@@ -93,6 +102,10 @@ class FingerprintFeatures:
     active_hours: dict[int, int]  # hour-of-day -> count (all records)
     daily_velocity: Decimal  # avg records/day across the observed span
     anomaly_score: Decimal  # max recent z-score (0 when not computable)
+    # The *full* set of vendors the agent has transacted with (not just the top
+    # few) — the honest "known vendor" set for `score_anomaly` (T2-8). Defaulted so
+    # historical/test constructions that predate the field still build.
+    known_vendors: frozenset[str] = frozenset()
 
     def as_feature_vector(self) -> dict[str, object]:
         """JSON-serializable feature vector for `fingerprints.feature_vector`."""
@@ -121,6 +134,7 @@ class FingerprintFeatures:
             "active_hours": {str(h): c for h, c in sorted(self.active_hours.items())},
             "daily_velocity": str(self.daily_velocity),
             "anomaly_score": str(self.anomaly_score),
+            "known_vendors": sorted(self.known_vendors),
         }
 
 
@@ -223,28 +237,43 @@ def _home_currency(records: Sequence[SpendRecord]) -> str:
     return max(counts, key=lambda c: (counts[c], totals[c]))
 
 
-def compute_fingerprint(records: Sequence[SpendRecord]) -> FingerprintFeatures:
+def compute_fingerprint(
+    records: Sequence[SpendRecord],
+    *,
+    home_currency: str | None = None,
+    now: datetime | None = None,
+) -> FingerprintFeatures:
     """Learn one agent's spend fingerprint from its transaction history.
 
     Amount statistics and the anomaly score use only the agent's home-currency
     spends (mixing currencies is meaningless); vendor, hour, and velocity
     features use every record. With fewer than ``_MIN_FINGERPRINT_SAMPLES``
     home-currency spends, ``enough_data`` is False and stats/score are omitted.
+
+    ``home_currency``: pin the home currency (the entity's functional currency)
+    rather than deriving the modal one, so it is stable month to month and never
+    silently flips on a currency-count tie (T2-6). Falls back to the modal
+    currency when not given.
+
+    ``now``: age the daily velocity to the present, so a dormant agent's velocity
+    decays instead of reading present-tense off its last-active span (T2-16).
     """
     if not records:
         return FingerprintFeatures(
             enough_data=False,
-            home_currency=None,
+            home_currency=home_currency,
             total_records=0,
             amount_stats=None,
             top_vendors=[],
             active_hours={},
             daily_velocity=Decimal("0"),
             anomaly_score=Decimal("0"),
+            known_vendors=frozenset(),
         )
 
-    home = _home_currency(records)
+    home = home_currency if home_currency is not None else _home_currency(records)
     total = len(records)
+    known_vendors = frozenset(r.vendor for r in records)
 
     # Vendor shares (by count) over all records.
     vendor_counts = Counter(r.vendor for r in records)
@@ -257,12 +286,15 @@ def compute_fingerprint(records: Sequence[SpendRecord]) -> FingerprintFeatures:
         for vendor, count in vendor_counts.most_common(_TOP_VENDORS)
     ]
 
-    # Active hours + daily velocity over all records.
+    # Active hours + daily velocity over all records. The velocity span runs from
+    # the first spend to `now` (if given) rather than to the last spend, so a
+    # long-dormant agent reads a low current velocity, not its historical burst.
     active_hours: dict[int, int] = dict(
         Counter(r.transaction_date.hour for r in records)
     )
     dates = [r.transaction_date for r in records]
-    span_days = max((max(dates) - min(dates)).days + 1, 1)
+    span_end = now if now is not None else max(dates)
+    span_days = max((span_end - min(dates)).days + 1, 1)
     daily_velocity = _q_score(Decimal(total) / Decimal(span_days))
 
     # Amount stats + anomaly score over home-currency records only.
@@ -281,10 +313,11 @@ def compute_fingerprint(records: Sequence[SpendRecord]) -> FingerprintFeatures:
             active_hours=active_hours,
             daily_velocity=daily_velocity,
             anomaly_score=Decimal("0"),
+            known_vendors=known_vendors,
         )
 
     stats = amount_stats(home_amounts, home)
-    anomaly = _recent_anomaly_score(home_amounts, stats)
+    anomaly = _recent_anomaly_score(home_amounts)
     return FingerprintFeatures(
         enough_data=True,
         home_currency=home,
@@ -294,18 +327,40 @@ def compute_fingerprint(records: Sequence[SpendRecord]) -> FingerprintFeatures:
         active_hours=active_hours,
         daily_velocity=daily_velocity,
         anomaly_score=anomaly,
+        known_vendors=known_vendors,
     )
 
 
-def _recent_anomaly_score(
-    ordered_amounts: Sequence[Decimal], stats: AmountStats
-) -> Decimal:
-    """Max z-score among the trailing ``_RECENT_WINDOW`` spends (0 if flat)."""
-    if stats.stddev <= 0:
-        return Decimal("0")
-    recent = ordered_amounts[-_RECENT_WINDOW:]
-    zs = [abs(a - stats.mean) / stats.stddev for a in recent]
-    return _q_score(max(zs))
+def _leave_one_out_z(amounts: Sequence[Decimal], idx: int) -> Decimal | None:
+    """z-score of ``amounts[idx]`` against the mean/σ of every *other* amount.
+
+    Leave-one-out (T2-4): the scored point is excluded from its own baseline, so a
+    lone outlier cannot mute itself by dragging the mean/σ toward it (the bug that
+    capped a lone outlier at √(n-1) and hid it below 8 samples). Returns None when
+    there is no baseline; a differing candidate against a *flat* baseline (zero
+    spread) is maximally anomalous, capped at ``_MAX_Z``.
+    """
+    others = [a for i, a in enumerate(amounts) if i != idx]
+    if len(others) < 2:
+        return None
+    mean = _mean(others)
+    sd = _stddev(others, mean)
+    candidate = amounts[idx]
+    if sd == 0:
+        return Decimal("0") if candidate == mean else _MAX_Z
+    return min(abs(candidate - mean) / sd, _MAX_Z)
+
+
+def _recent_anomaly_score(ordered_amounts: Sequence[Decimal]) -> Decimal:
+    """Max leave-one-out z among the trailing ``_RECENT_WINDOW`` spends (0 if none)."""
+    n = len(ordered_amounts)
+    start = max(0, n - _RECENT_WINDOW)
+    zs = [
+        z
+        for i in range(start, n)
+        if (z := _leave_one_out_z(ordered_amounts, i)) is not None
+    ]
+    return _q_score(max(zs)) if zs else Decimal("0")
 
 
 def score_anomaly(
@@ -320,9 +375,14 @@ def score_anomaly(
     Returns a z-score only when the fingerprint has a same-currency baseline with
     non-zero spread; otherwise ``z_score`` is None. ``is_anomalous`` fires on a
     z at/above threshold **or** a never-before-seen vendor.
+
+    "Never-before-seen" is judged against the agent's **full** vendor history
+    (`features.known_vendors`), not just its top few — flagging every vendor
+    outside the top 3 as anomalous was wrong (T2-8). This function is correct but
+    **not yet wired** into a call site; wiring it into `authorize()` (with a
+    share-floor to avoid alerting on established-but-diverse spenders) is P6.
     """
-    known_vendors = {v.vendor for v in features.top_vendors}
-    unknown_vendor = vendor not in known_vendors
+    unknown_vendor = vendor not in features.known_vendors
     stats = features.amount_stats
     if stats is None or currency != features.home_currency or stats.stddev <= 0:
         return AnomalyScore(
@@ -390,13 +450,22 @@ def project_spend(
 ) -> SpendProjection:
     """Project month-end spend from the current run-rate and compare to the budget.
 
-    Linear run-rate: ``mtd / day_of_month * days_in_month``. ``on_track`` is False
-    only when a positive budget is set and the projection exceeds it.
+    Linear run-rate over a **floored** elapsed-day count:
+    ``mtd / max(day_of_month, _MIN_PROJECTION_DAYS) * days_in_month``. The floor
+    dampens the early-month explosion where a single day-1 renewal would otherwise
+    extrapolate to ~30x itself and cry "overrun" every month (T2-9). The projection
+    is never below the money already spent this month. ``now`` is expected in the
+    entity's local timezone so month boundaries flip at local midnight, not 05:30
+    for IST. ``on_track`` is False only when a positive budget is set and the
+    projection exceeds it.
     """
     day_of_month = now.day
     days_in_month = calendar.monthrange(now.year, now.month)[1]
-    run_rate = month_to_date / Decimal(day_of_month)
-    projected = _q_money(run_rate * Decimal(days_in_month))
+    effective_days = max(day_of_month, _MIN_PROJECTION_DAYS)
+    run_rate = month_to_date / Decimal(effective_days)
+    projected = max(
+        _q_money(month_to_date), _q_money(run_rate * Decimal(days_in_month))
+    )
     if monthly_budget > 0:
         overrun = projected - monthly_budget
         on_track = overrun <= 0

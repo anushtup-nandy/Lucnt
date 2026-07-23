@@ -34,6 +34,8 @@ class InsightResponse(BaseModel):
     action_payload: dict[str, Any]
     is_applied: bool
     applied_at: datetime | None
+    is_dismissed: bool
+    dismissed_at: datetime | None
     created_at: datetime
 
 

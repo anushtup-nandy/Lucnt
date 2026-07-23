@@ -26,6 +26,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Numeric,
+    String,
     Text,
     UniqueConstraint,
 )
@@ -108,6 +109,15 @@ class ReconciliationException(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     amount_at_stake: Mapped[Decimal] = mapped_column(
         Numeric(18, 4), default=Decimal("0")
     )
+    # The currency of `amount_at_stake` (the transaction's paid currency). The
+    # inbox header aggregates "$ at stake" per currency, never summing across them
+    # (PRODUCTION_PLAN T2-2). Nullable only for rows predating the column.
+    currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    # Stable recurring-identity key (type:agent:vendor:amount:currency) for the
+    # ledger-detector types, so a dismissed recurring exception is not re-flagged on
+    # next month's transaction row (T2-7). NULL for per-transaction types
+    # (failed_delivery, tax_unclassified).
+    dedup_key: Mapped[str | None] = mapped_column(Text, default=None)
     fix_notes: Mapped[str | None] = mapped_column(Text, default=None)
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

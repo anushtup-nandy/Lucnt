@@ -43,7 +43,7 @@ from lucnt_api.schemas.recon import (
     ScanResponse,
 )
 from lucnt_api.services.audit import record as record_audit
-from lucnt_api.services.detectors import TxnView, run_detectors
+from lucnt_api.services.detectors import TxnView, recurring_identity, run_detectors
 from lucnt_api.services.recovery_agent import plan_recovery
 
 router = APIRouter(prefix="/recon", tags=["reconciliation"])
@@ -62,6 +62,7 @@ def _to_response(exc: ReconciliationException) -> ReconExceptionResponse:
         status=exc.status.value,
         evidence=exc.evidence_json,
         amount_at_stake=exc.amount_at_stake,
+        currency=exc.currency,
         fix_notes=exc.fix_notes,
         resolved_at=exc.resolved_at,
         created_at=exc.created_at,
@@ -69,16 +70,24 @@ def _to_response(exc: ReconciliationException) -> ReconExceptionResponse:
     )
 
 
-def _active_summary(db: Session, company: Company) -> tuple[Decimal, int]:
-    """($ at stake, open count) across all active exceptions — the inbox header."""
-    at_stake = db.execute(
+def _active_summary(db: Session, company: Company) -> tuple[dict[str, Decimal], int]:
+    """(per-currency $ at stake, open count) across active exceptions — the header.
+
+    "$ at stake" is summed **per currency**, never across (T2-2). A row with no
+    currency (predating the column) is bucketed under an empty-string key.
+    """
+    rows = db.execute(
         select(
-            func.coalesce(func.sum(ReconciliationException.amount_at_stake), 0)
-        ).where(
+            ReconciliationException.currency,
+            func.coalesce(func.sum(ReconciliationException.amount_at_stake), 0),
+        )
+        .where(
             ReconciliationException.company_id == company.id,
             ReconciliationException.status.in_(_ACTIVE_STATUSES),
         )
-    ).scalar_one()
+        .group_by(ReconciliationException.currency)
+    ).all()
+    at_stake = {(currency or ""): Decimal(total) for currency, total in rows}
     open_count = db.execute(
         select(func.count())
         .select_from(ReconciliationException)
@@ -87,7 +96,7 @@ def _active_summary(db: Session, company: Company) -> tuple[Decimal, int]:
             ReconciliationException.status == ReconExceptionStatus.OPEN,
         )
     ).scalar_one()
-    return Decimal(at_stake), int(open_count)
+    return at_stake, int(open_count)
 
 
 @router.get("", response_model=ReconListResponse)
@@ -103,7 +112,12 @@ def list_exceptions(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> ReconListResponse:
-    """List reconciliation exceptions, highest `$ at stake` first."""
+    """List reconciliation exceptions, grouped by currency, highest stake first.
+
+    Ordering is (currency, `$ at stake` desc): without an FX conversion, ranking
+    amounts *across* currencies is meaningless (₹5,000 is not > $100 — T2-2), so
+    the list groups by currency and ranks within each.
+    """
     stmt = select(ReconciliationException).where(
         ReconciliationException.company_id == company.id
     )
@@ -116,6 +130,7 @@ def list_exceptions(
     rows = (
         db.execute(
             stmt.order_by(
+                ReconciliationException.currency,
                 ReconciliationException.amount_at_stake.desc(),
                 ReconciliationException.created_at.desc(),
             )
@@ -129,7 +144,7 @@ def list_exceptions(
     return ReconListResponse(
         items=[_to_response(row) for row in rows],
         total=total,
-        total_at_stake=at_stake,  # Pydantic coerces to Decimal
+        total_at_stake=at_stake,
         open_count=open_count,
     )
 
@@ -141,9 +156,14 @@ def scan(
 ) -> ScanResponse:
     """Run the detector suite over the company ledger; book new exceptions.
 
-    Idempotent: a transaction that already carries an exception of a given type
-    (in any status, terminal included) is skipped, so re-running a scan never
-    re-flags an immutable ledger fact (the unique constraint is the backstop).
+    Idempotent on two axes:
+    - **(txn, type)** — an already-flagged transaction (any status) is not
+      re-flagged; the detected ledger fact is immutable (the unique constraint is
+      the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from
+      500-ing the whole pass — T2-15).
+    - **recurring identity (`dedup_key`)** — a dismissed/resolved recurring charge
+      (a subscription, a repeated overcharge) is not re-raised on next month's new
+      transaction row (T2-7).
     """
     txns = list(
         db.execute(select(Transaction).where(Transaction.company_id == company.id))
@@ -163,43 +183,53 @@ def scan(
     ]
     view_by_id = {v.id: v for v in views}
 
-    # Any existing exception (in any status) blocks re-flagging its (txn, type):
-    # the detected ledger fact is immutable, so a resolved/dismissed one must not
-    # reappear on a later scan.
-    existing: set[tuple[uuid.UUID, ReconExceptionType]] = {
-        (row[0], row[1])
-        for row in db.execute(
-            select(
-                ReconciliationException.transaction_id,
-                ReconciliationException.exception_type,
-            ).where(ReconciliationException.company_id == company.id)
-        ).all()
-    }
+    # Existing (txn, type) pairs and recurring-identity dedup_keys (any status).
+    existing_pairs: set[tuple[uuid.UUID, ReconExceptionType]] = set()
+    existing_dedup: set[str] = set()
+    for txn_id, etype, dedup in db.execute(
+        select(
+            ReconciliationException.transaction_id,
+            ReconciliationException.exception_type,
+            ReconciliationException.dedup_key,
+        ).where(ReconciliationException.company_id == company.id)
+    ).all():
+        existing_pairs.add((txn_id, etype))
+        if dedup is not None:
+            existing_dedup.add(dedup)
 
     created = 0
     by_type: dict[str, int] = {}
-    seen: set[tuple[uuid.UUID, ReconExceptionType]] = set()
     for hit in run_detectors(views):
-        key = (hit.transaction_id, hit.exception_type)
-        if key in existing or key in seen:
-            continue
-        seen.add(key)
+        pair = (hit.transaction_id, hit.exception_type)
         view = view_by_id[hit.transaction_id]
+        dedup_key = f"{hit.exception_type.value}:{recurring_identity(view)}"
+        if pair in existing_pairs or dedup_key in existing_dedup:
+            continue
         plan = plan_recovery(
             hit.exception_type,
             vendor=view.vendor,
             amount_at_stake=hit.amount_at_stake,
             currency=view.paid_currency,
         )
-        db.add(
-            ReconciliationException(
-                company_id=company.id,
-                transaction_id=hit.transaction_id,
-                exception_type=hit.exception_type,
-                evidence_json={**hit.evidence, "recovery_plan": plan.as_dict()},
-                amount_at_stake=hit.amount_at_stake,
-            )
+        exc = ReconciliationException(
+            company_id=company.id,
+            transaction_id=hit.transaction_id,
+            exception_type=hit.exception_type,
+            evidence_json={**hit.evidence, "recovery_plan": plan.as_dict()},
+            amount_at_stake=hit.amount_at_stake,
+            currency=view.paid_currency,
+            dedup_key=dedup_key,
         )
+        try:
+            # SAVEPOINT: a concurrent scan may have booked the same (txn, type)
+            # between our SELECT and INSERT; roll back just this row, not the pass.
+            with db.begin_nested():
+                db.add(exc)
+                db.flush()
+        except IntegrityError:
+            continue
+        existing_pairs.add(pair)
+        existing_dedup.add(dedup_key)
         created += 1
         by_type[hit.exception_type.value] = by_type.get(hit.exception_type.value, 0) + 1
 
@@ -235,6 +265,16 @@ def report_failed_delivery(
     if existing is not None:
         return _to_response(existing)
 
+    # Schema enforces >= 0; the amount at stake also cannot exceed what was paid
+    # (an agent can't claim back more than the transaction — T2-14).
+    if (
+        payload.amount_at_stake is not None
+        and payload.amount_at_stake > txn.paid_amount
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "amount_at_stake exceeds the transaction's paid amount",
+        )
     stake = (
         payload.amount_at_stake
         if payload.amount_at_stake is not None
@@ -256,6 +296,7 @@ def report_failed_delivery(
             "recovery_plan": plan.as_dict(),
         },
         amount_at_stake=stake,
+        currency=txn.paid_currency,
     )
     db.add(exc)
     try:

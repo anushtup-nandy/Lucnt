@@ -131,6 +131,7 @@ def reflag_divergent_history(
                 transaction_id=txn.id,
                 exception_type=ReconExceptionType.TAX_UNCLASSIFIED,
                 amount_at_stake=_ZERO,
+                currency=txn.paid_currency,
                 evidence_json={
                     "reason": "vendor_reclassified",
                     "vendor": txn.vendor,

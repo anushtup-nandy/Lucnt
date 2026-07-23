@@ -34,6 +34,8 @@ def _to_response(insight: Insight) -> InsightResponse:
         action_payload=insight.action_payload,
         is_applied=insight.is_applied,
         applied_at=insight.applied_at,
+        is_dismissed=insight.is_dismissed,
+        dismissed_at=insight.dismissed_at,
         created_at=insight.created_at,
     )
 
@@ -48,15 +50,24 @@ def list_insights(
     include_applied: bool = Query(
         default=False, description="Include already-applied insights"
     ),
+    include_dismissed: bool = Query(
+        default=False, description="Include dismissed insights"
+    ),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> InsightsListResponse:
-    """List the company's insights, newest first, with an unapplied headline count."""
+    """List the company's insights, newest first, with an unapplied headline count.
+
+    Dismissed insights are hidden by default (they are resolved — T2-10); pass
+    `include_dismissed=true` to see them.
+    """
     stmt = select(Insight).where(Insight.company_id == company.id)
     if insight_type is not None:
         stmt = stmt.where(Insight.insight_type == insight_type)
     if not include_applied:
         stmt = stmt.where(Insight.is_applied.is_(False))
+    if not include_dismissed:
+        stmt = stmt.where(Insight.is_dismissed.is_(False))
 
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = (
@@ -72,6 +83,7 @@ def list_insights(
         .where(
             Insight.company_id == company.id,
             Insight.is_applied.is_(False),
+            Insight.is_dismissed.is_(False),
         )
     ).scalar_one()
     return InsightsListResponse(
@@ -99,6 +111,29 @@ def apply_insight(
     if not insight.is_applied:
         insight.is_applied = True
         insight.applied_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(insight)
+    return _to_response(insight)
+
+
+@router.post("/{insight_id}/dismiss", response_model=InsightResponse)
+def dismiss_insight(
+    insight_id: uuid.UUID,
+    company: Company = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> InsightResponse:
+    """Dismiss an insight so recompute stops regenerating it (idempotent — T2-10)."""
+    insight = db.execute(
+        select(Insight).where(
+            Insight.id == insight_id, Insight.company_id == company.id
+        )
+    ).scalar_one_or_none()
+    if insight is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown insight")
+
+    if not insight.is_dismissed:
+        insight.is_dismissed = True
+        insight.dismissed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(insight)
     return _to_response(insight)

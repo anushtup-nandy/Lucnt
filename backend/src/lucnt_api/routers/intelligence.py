@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, select
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import get_current_company, get_db, require_admin
@@ -58,6 +59,7 @@ from lucnt_api.services.intelligence import (
     cost_per_output,
     project_spend,
 )
+from lucnt_api.services.spend_window import now_in_entity_tz, period_committed_spend
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
@@ -100,10 +102,16 @@ def _month_to_date(
     )
 
 
-def _budget_block(agent: Agent) -> BudgetBlock:
-    """Live budget headroom — mirrors budgets._rollup (spent = spent_ytd)."""
+def _budget_block(db: Session, agent: Agent, entity: Entity) -> BudgetBlock:
+    """Live budget headroom for the current month (mirrors the budgets rollup).
+
+    Spend is the entity-local, current-month committed figure derived from the
+    ledger (T2-3), not the never-reset ``agents.spent_ytd`` counter — so an agent
+    on-budget this month is not told it is "exhausted" by an inception-to-date
+    total compared against a monthly budget.
+    """
     budget = agent.monthly_budget
-    spent = agent.spent_ytd
+    spent, _today = period_committed_spend(db, agent.id, entity)
     remaining = budget - spent
     pct_used = (
         (spent / budget * 100).quantize(_ONE_PLACE, rounding=ROUND_HALF_UP)
@@ -131,8 +139,14 @@ def _build_intel(
     now: datetime,
     fallback_currency: str,
 ) -> tuple[AgentIntel, FingerprintFeatures, SpendProjection, list[CostUnit]]:
-    """Compute the full intelligence bundle for one agent from its records."""
-    features = compute_fingerprint(records)
+    """Compute the full intelligence bundle for one agent from its records.
+
+    ``now`` is entity-local and ``fallback_currency`` is the entity's functional
+    currency; the fingerprint pins its home currency to it (T2-6) and ages its
+    velocity to ``now`` (T2-16), and the projection uses local month boundaries
+    (T2-9).
+    """
+    features = compute_fingerprint(records, home_currency=fallback_currency, now=now)
     currency = features.home_currency or fallback_currency
     mtd = _month_to_date(records, now, features.home_currency)
     projection = project_spend(
@@ -163,15 +177,15 @@ def recompute(
     persist as a record of the action a human took). Idempotent — a second call
     with no new spend yields the same state.
     """
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
     agents = {
         a.id: a
         for a in db.execute(
             select(Agent).where(Agent.company_id == company.id)
         ).scalars()
     }
-    entity_currency = {
-        e.id: e.currency
+    entities = {
+        e.id: e
         for e in db.execute(
             select(Entity).where(Entity.company_id == company.id)
         ).scalars()
@@ -189,14 +203,20 @@ def recompute(
         agent = agents.get(agent_id)
         if agent is None:  # defensive: FK guarantees it exists
             continue
-        fallback = entity_currency.get(agent.entity_id, "USD")
-        intel, features, _proj, _units = _build_intel(agent, records, now, fallback)
+        entity = entities.get(agent.entity_id)
+        fallback = entity.currency if entity is not None else "USD"
+        # Compute in the entity's local time (month boundaries, velocity aging);
+        # stamp the fingerprint row with a real UTC wall-clock time.
+        now_local = now_in_entity_tz(entity) if entity is not None else now_utc
+        intel, features, _proj, _units = _build_intel(
+            agent, records, now_local, fallback
+        )
         intels.append(intel)
-        _upsert_fingerprint(db, company, agent, features, now)
+        _upsert_fingerprint(db, company, agent, features, now_utc)
 
     memory_count = _upsert_memories(db, company, derive_memories(intels))
     insight_drafts = generate_insights(intels)
-    _regenerate_insights(db, company, insight_drafts)
+    _sync_insights(db, company, insight_drafts)
 
     db.commit()
 
@@ -220,30 +240,46 @@ def _upsert_fingerprint(
     features: FingerprintFeatures,
     now: datetime,
 ) -> None:
-    """Insert or refresh the single fingerprint row for an agent."""
+    """Insert or refresh the single fingerprint row for an agent (race-safe).
+
+    A concurrent recompute may insert the row between our SELECT and INSERT; the
+    SAVEPOINT lets us fall back to an update instead of 500-ing on the
+    `uq_fingerprints_agent` violation (T2-15).
+    """
     existing = db.execute(
         select(Fingerprint).where(Fingerprint.agent_id == agent.id)
     ).scalar_one_or_none()
     if existing is None:
-        db.add(
-            Fingerprint(
-                company_id=company.id,
-                agent_id=agent.id,
-                feature_vector=features.as_feature_vector(),
-                anomaly_score=features.anomaly_score,
-                last_updated=now,
-            )
+        fingerprint = Fingerprint(
+            company_id=company.id,
+            agent_id=agent.id,
+            feature_vector=features.as_feature_vector(),
+            anomaly_score=features.anomaly_score,
+            last_updated=now,
         )
-    else:
-        existing.feature_vector = features.as_feature_vector()
-        existing.anomaly_score = features.anomaly_score
-        existing.last_updated = now
+        try:
+            with db.begin_nested():
+                db.add(fingerprint)
+                db.flush()
+            return
+        except IntegrityError:
+            existing = db.execute(
+                select(Fingerprint).where(Fingerprint.agent_id == agent.id)
+            ).scalar_one()
+    existing.feature_vector = features.as_feature_vector()
+    existing.anomaly_score = features.anomaly_score
+    existing.last_updated = now
 
 
 def _upsert_memories(
     db: Session, company: Company, drafts: list[DraftMemory]
 ) -> int:
-    """Insert or refresh each (agent, type) memory; returns the count written."""
+    """Insert or refresh each (agent, type) memory; returns the count written.
+
+    Race-safe against a concurrent recompute via a per-row SAVEPOINT that falls
+    back to an update on the `uq_memories_agent_type` violation (T2-15).
+    """
+    written = 0
     for draft in drafts:
         existing = db.execute(
             select(Memory).where(
@@ -252,46 +288,96 @@ def _upsert_memories(
             )
         ).scalar_one_or_none()
         if existing is None:
-            db.add(
-                Memory(
-                    company_id=company.id,
-                    agent_id=draft.agent_id,
-                    memory_type=draft.memory_type,
-                    summary=draft.summary,
-                    detail_text=draft.detail_text,
-                    metrics_json=draft.metrics_json,
-                )
-            )
-        else:
-            existing.summary = draft.summary
-            existing.detail_text = draft.detail_text
-            existing.metrics_json = draft.metrics_json
-    return len(drafts)
-
-
-def _regenerate_insights(
-    db: Session, company: Company, drafts: list[DraftInsight]
-) -> None:
-    """Clear the company's un-applied insights, then insert the fresh drafts."""
-    db.execute(
-        delete(Insight).where(
-            Insight.company_id == company.id,
-            Insight.is_applied.is_(False),
-        )
-    )
-    for draft in drafts:
-        db.add(
-            Insight(
+            memory = Memory(
                 company_id=company.id,
                 agent_id=draft.agent_id,
-                insight_type=draft.insight_type,
-                title=draft.title,
-                body=draft.body,
-                value_text=draft.value_text,
-                action_label=draft.action_label,
-                action_payload=draft.action_payload,
+                memory_type=draft.memory_type,
+                summary=draft.summary,
+                detail_text=draft.detail_text,
+                metrics_json=draft.metrics_json,
             )
+            try:
+                with db.begin_nested():
+                    db.add(memory)
+                    db.flush()
+                written += 1
+                continue
+            except IntegrityError:
+                existing = db.execute(
+                    select(Memory).where(
+                        Memory.agent_id == draft.agent_id,
+                        Memory.memory_type == draft.memory_type,
+                    )
+                ).scalar_one()
+        existing.summary = draft.summary
+        existing.detail_text = draft.detail_text
+        existing.metrics_json = draft.metrics_json
+        written += 1
+    return written
+
+
+def _sync_insights(
+    db: Session, company: Company, drafts: list[DraftInsight]
+) -> None:
+    """Upsert insights on their stable `dedup_key`, preserving ids (T2-10).
+
+    Instead of delete-all + reinsert (which churned ids and raced a human's
+    "apply"), match each draft to an existing row by `dedup_key`:
+    - a dismissed/applied row for that key → leave it (the human handled it; do not
+      regenerate an active copy — no more nagging forever);
+    - an active row → refresh its content in place (stable id);
+    - no row → insert.
+    Finally, delete active rows whose condition no longer regenerates (stale).
+    """
+    existing = list(
+        db.execute(
+            select(Insight).where(Insight.company_id == company.id)
+        ).scalars()
+    )
+    by_key: dict[str, list[Insight]] = {}
+    for row in existing:
+        if row.dedup_key is not None:
+            by_key.setdefault(row.dedup_key, []).append(row)
+
+    draft_keys: set[str] = set()
+    for draft in drafts:
+        draft_keys.add(draft.dedup_key)
+        rows = by_key.get(draft.dedup_key, [])
+        if any(r.is_dismissed or r.is_applied for r in rows):
+            continue
+        active = next(
+            (r for r in rows if not r.is_dismissed and not r.is_applied), None
         )
+        if active is not None:
+            active.insight_type = draft.insight_type
+            active.agent_id = draft.agent_id
+            active.title = draft.title
+            active.body = draft.body
+            active.value_text = draft.value_text
+            active.action_label = draft.action_label
+            active.action_payload = draft.action_payload
+        else:
+            db.add(
+                Insight(
+                    company_id=company.id,
+                    agent_id=draft.agent_id,
+                    dedup_key=draft.dedup_key,
+                    insight_type=draft.insight_type,
+                    title=draft.title,
+                    body=draft.body,
+                    value_text=draft.value_text,
+                    action_label=draft.action_label,
+                    action_payload=draft.action_payload,
+                )
+            )
+
+    for row in existing:
+        if (
+            not row.is_applied
+            and not row.is_dismissed
+            and (row.dedup_key is None or row.dedup_key not in draft_keys)
+        ):
+            db.delete(row)
 
 
 @router.get("/query", response_model=FinancialMemoryResponse)
@@ -310,7 +396,6 @@ def query(
     if agent_row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown agent: {agent}")
 
-    now = datetime.now(timezone.utc)
     records = [
         _record(txn)
         for txn in db.execute(
@@ -318,12 +403,15 @@ def query(
         ).scalars()
     ]
     entity = db.get(Entity, agent_row.entity_id)
-    fallback_currency = entity.currency if entity is not None else "USD"
+    if entity is None:  # FK guarantees it; guard for the type checker
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent entity not found")
+    fallback_currency = entity.currency
+    now = now_in_entity_tz(entity)
 
     intel, features, projection, cost_units = _build_intel(
         agent_row, records, now, fallback_currency
     )
-    budget = _budget_block(agent_row)
+    budget = _budget_block(db, agent_row, entity)
     top_units = [_cost_unit_block(u) for u in cost_units[:_QUERY_COST_UNITS]]
     fingerprint = _fingerprint_block(features)
     headline = _headline(q, intel.currency, budget, projection, cost_units)

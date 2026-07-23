@@ -25,6 +25,7 @@ from decimal import Decimal
 from lucnt_api.models.insight import InsightType
 from lucnt_api.models.memory import MemoryType
 from lucnt_api.services.intelligence import (
+    _MIN_FINGERPRINT_SAMPLES,
     ANOMALY_Z_THRESHOLD,
     CostUnit,
     FingerprintFeatures,
@@ -34,6 +35,31 @@ from lucnt_api.services.intelligence import (
 _UNATTRIBUTED = "(unattributed)"
 _COST_SPIKE_FACTOR = Decimal("3")
 _COST_SPIKE_MIN_UNITS = 3  # units needed in a currency to establish a baseline
+_COST_SPIKE_MIN_CHARGES = 2  # a one-off charge is not a sustained cost spike (T2-13)
+
+# Column-length guards. Titles/summaries interpolate agent names and project
+# labels (each up to 255 chars); an over-long composed string would raise a
+# DataError and roll back the *whole company's* recompute (PRODUCTION_PLAN T2-11).
+_TITLE_MAX = 255
+_VALUE_TEXT_MAX = 100
+_ACTION_LABEL_MAX = 100
+_SUMMARY_MAX = 255
+
+
+def _clamp(text: str, limit: int) -> str:
+    """Truncate `text` to at most `limit` characters, ellipsising if it overflows."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _dedup_key(
+    insight_type: InsightType, agent_id: uuid.UUID | None, subject: str = ""
+) -> str:
+    """Stable natural key `type:agent:subject` — the recompute upsert key (T2-10).
+
+    ``subject`` distinguishes per-unit insights (the cost_spike project); it is
+    empty for the per-agent types. Must match the migration back-fill.
+    """
+    return f"{insight_type.value}:{agent_id if agent_id is not None else ''}:{subject}"
 
 
 @dataclass(frozen=True)
@@ -55,11 +81,24 @@ class DraftInsight:
 
     insight_type: InsightType
     agent_id: uuid.UUID | None
+    dedup_key: str  # stable natural key (type:agent:subject) for in-place upsert
     title: str
     body: str
     value_text: str | None
     action_label: str | None
     action_payload: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Clamp string-column fields to length (T2-11); `body` is TEXT, unbounded."""
+        object.__setattr__(self, "title", _clamp(self.title, _TITLE_MAX))
+        if self.value_text is not None:
+            object.__setattr__(
+                self, "value_text", _clamp(self.value_text, _VALUE_TEXT_MAX)
+            )
+        if self.action_label is not None:
+            object.__setattr__(
+                self, "action_label", _clamp(self.action_label, _ACTION_LABEL_MAX)
+            )
 
 
 @dataclass(frozen=True)
@@ -71,6 +110,10 @@ class DraftMemory:
     summary: str
     detail_text: str
     metrics_json: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Clamp `summary` to length (T2-11); `detail_text` is TEXT, unbounded."""
+        object.__setattr__(self, "summary", _clamp(self.summary, _SUMMARY_MAX))
 
 
 def _median(values: Sequence[Decimal]) -> Decimal:
@@ -109,6 +152,7 @@ def _budget_risk_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
             DraftInsight(
                 insight_type=InsightType.BUDGET_RISK,
                 agent_id=intel.agent_id,
+                dedup_key=_dedup_key(InsightType.BUDGET_RISK, intel.agent_id),
                 title=f"{intel.agent_name} is projected to overrun its budget",
                 body=(
                     f"At the current run-rate {intel.agent_name} will spend "
@@ -143,6 +187,7 @@ def _anomaly_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
             DraftInsight(
                 insight_type=InsightType.ANOMALY,
                 agent_id=intel.agent_id,
+                dedup_key=_dedup_key(InsightType.ANOMALY, intel.agent_id),
                 title=f"{intel.agent_name} had an out-of-pattern spend",
                 body=(
                     f"A recent {intel.agent_name} spend sits "
@@ -159,11 +204,13 @@ def _anomaly_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
 
 
 def _cost_spike_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
-    # Pool real (attributed) units across the company, per currency.
+    # Pool real (attributed, repeated) units across the company, per currency.
     by_currency: dict[str, list[tuple[AgentIntel, CostUnit]]] = defaultdict(list)
     for intel in intels:
         for unit in intel.cost_units:
             if unit.unit == _UNATTRIBUTED:
+                continue
+            if unit.count < _COST_SPIKE_MIN_CHARGES:  # one-off is not a spike (T2-13)
                 continue
             by_currency[unit.currency].append((intel, unit))
 
@@ -171,17 +218,23 @@ def _cost_spike_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
     for currency, pairs in by_currency.items():
         if len(pairs) < _COST_SPIKE_MIN_UNITS:
             continue
-        median_cost = _median([u.avg_cost for _, u in pairs])
-        if median_cost <= 0:
-            continue
-        threshold = median_cost * _COST_SPIKE_FACTOR
-        for intel, unit in pairs:
+        costs = [u.avg_cost for _, u in pairs]
+        for idx, (intel, unit) in enumerate(pairs):
+            # Leave-one-out median (T2-13): the candidate is excluded from the
+            # baseline it is compared against, so it cannot inflate its own median.
+            median_cost = _median(costs[:idx] + costs[idx + 1 :])
+            if median_cost <= 0:
+                continue
+            threshold = median_cost * _COST_SPIKE_FACTOR
             if unit.avg_cost < threshold:
                 continue
             out.append(
                 DraftInsight(
                     insight_type=InsightType.COST_SPIKE,
                     agent_id=intel.agent_id,
+                    dedup_key=_dedup_key(
+                        InsightType.COST_SPIKE, intel.agent_id, unit.unit
+                    ),
                     title=f"'{unit.unit}' costs far more than the typical unit",
                     body=(
                         f"{intel.agent_name}'s '{unit.unit}' averages "
@@ -239,6 +292,31 @@ def _agent_memories(intel: AgentIntel) -> list[DraftMemory]:
                     "min": str(stats.minimum),
                     "max": str(stats.maximum),
                     "daily_velocity": str(features.daily_velocity),
+                },
+            )
+        )
+    elif features.total_records > 0:
+        # Cold-start row (T2-12): the agent has spent but not enough same-currency
+        # history to profile yet. Emit a "still learning" SPEND_PATTERN memory so a
+        # new agent has a row instead of a blank Memory page; it is upserted into
+        # the real profile once the baseline fills in.
+        out.append(
+            DraftMemory(
+                agent_id=intel.agent_id,
+                memory_type=MemoryType.SPEND_PATTERN,
+                summary=(
+                    f"Still learning {intel.agent_name}'s spend pattern "
+                    f"({features.total_records}/{_MIN_FINGERPRINT_SAMPLES} spends)"
+                ),
+                detail_text=(
+                    "Not enough same-currency history yet to establish a baseline; "
+                    "stats and anomaly detection activate once there are at least "
+                    f"{_MIN_FINGERPRINT_SAMPLES} spends in the home currency."
+                ),
+                metrics_json={
+                    "learning": True,
+                    "records_so_far": features.total_records,
+                    "samples_needed": _MIN_FINGERPRINT_SAMPLES,
                 },
             )
         )

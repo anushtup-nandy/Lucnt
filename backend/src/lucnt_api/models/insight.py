@@ -59,6 +59,10 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             values_callable=lambda e: [m.value for m in e],
         )
     )
+    # Stable natural key (type:agent:subject) so recompute upserts an insight in
+    # place instead of delete+insert (stable ids; T2-10). Nullable for rows that
+    # predate the column.
+    dedup_key: Mapped[str | None] = mapped_column(Text, default=None)
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
     # A headline figure for the card (e.g. "$1,240 projected overrun"); frontend
@@ -70,5 +74,11 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     action_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     is_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # A reviewed-but-not-applied insight can be dismissed; a dismissed insight is
+    # suppressed from regeneration so it does not nag forever (T2-10).
+    is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    dismissed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )

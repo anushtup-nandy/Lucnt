@@ -1,8 +1,11 @@
 """Budgets router — read the live spend rollups, adjust an agent's cap (M6).
 
-Every figure is derived from `agents.spent_ytd`/`spent_today` (updated on each
-capture in `routers/transactions.py`), so the view is always consistent with the
-ledger. Workflow spend sums its member agents' spend.
+Spend is derived from the ledger for the **current month** in the entity's local
+timezone and functional currency (`services/spend_window.py`), so the rollups reset
+at the period boundary and match the invariant `authorize()` enforces — never the
+never-reset `agents.spent_ytd` counter, which mis-reads inception-to-date spend
+against a *monthly* budget (PRODUCTION_PLAN T2-3). Workflow spend sums its member
+agents' current-month spend.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from lucnt_api.dependencies import (
     get_db,
     require_admin,
 )
-from lucnt_api.models import Agent, Company, Workflow
+from lucnt_api.models import Agent, Company, Entity, Workflow
 from lucnt_api.schemas.budget import (
     AgentBudget,
     BudgetsResponse,
@@ -29,6 +32,7 @@ from lucnt_api.schemas.budget import (
     WorkflowBudget,
 )
 from lucnt_api.services.audit import record as record_audit
+from lucnt_api.services.spend_window import period_committed_spend
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
 
@@ -53,17 +57,17 @@ def _rollup(spent: Decimal, budget: Decimal) -> tuple[Decimal, Decimal, str]:
     return remaining, pct_used, status_label
 
 
-def _agent_budget(agent: Agent) -> AgentBudget:
-    """Build the budget view for a single agent."""
-    remaining, pct_used, status_label = _rollup(agent.spent_ytd, agent.monthly_budget)
+def _agent_budget(agent: Agent, spent: Decimal, spent_today: Decimal) -> AgentBudget:
+    """Build the budget view for a single agent from its current-month spend."""
+    remaining, pct_used, status_label = _rollup(spent, agent.monthly_budget)
     return AgentBudget(
         id=agent.id,
         name=agent.name,
         slug=agent.slug,
         entity_id=agent.entity_id,
         monthly_budget=agent.monthly_budget,
-        spent=agent.spent_ytd,
-        spent_today=agent.spent_today,
+        spent=spent,
+        spent_today=spent_today,
         remaining=remaining,
         pct_used=pct_used,
         status=status_label,
@@ -92,11 +96,26 @@ def get_budgets(
         .scalars()
         .all()
     )
+    entities = {
+        e.id: e
+        for e in db.execute(
+            select(Entity).where(Entity.company_id == company.id)
+        ).scalars()
+    }
+
+    # Current-month committed spend per agent, entity-local period + functional
+    # currency (T2-3) — computed once, then reused for the workflow rollups.
+    month_spend: dict[uuid.UUID, tuple[Decimal, Decimal]] = {
+        a.id: period_committed_spend(db, a.id, entities[a.entity_id]) for a in agents
+    }
 
     workflow_rollups: list[WorkflowBudget] = []
     for workflow in workflows:
         members = workflow.agents  # lazy-loaded; fine at MVP scale
-        spent = sum((m.spent_ytd for m in members), Decimal("0"))
+        spent = sum(
+            (month_spend[m.id][0] for m in members if m.id in month_spend),
+            Decimal("0"),
+        )
         remaining, pct_used, status_label = _rollup(spent, workflow.budget)
         workflow_rollups.append(
             WorkflowBudget(
@@ -112,7 +131,7 @@ def get_budgets(
         )
 
     return BudgetsResponse(
-        agents=[_agent_budget(a) for a in agents],
+        agents=[_agent_budget(a, *month_spend[a.id]) for a in agents],
         workflows=workflow_rollups,
     )
 
@@ -145,4 +164,8 @@ def update_agent_budget(
     )
     db.commit()
     db.refresh(agent)
-    return _agent_budget(agent)
+    entity = db.get(Entity, agent.entity_id)
+    if entity is None:  # FK guarantees it; guard for the type checker
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent entity not found")
+    spent, spent_today = period_committed_spend(db, agent.id, entity)
+    return _agent_budget(agent, spent, spent_today)

@@ -49,9 +49,9 @@ def _txn(
 
 
 def test_duplicate_within_window_flags_the_later_charge() -> None:
-    """Two identical charges 1h apart flag the later one for the full amount."""
+    """Two identical charges 2 min apart flag the later one for the full amount."""
     first = _txn(when=_BASE)
-    second = _txn(when=_BASE + timedelta(hours=1))
+    second = _txn(when=_BASE + timedelta(minutes=2))
     hits = detect_duplicates([first, second])
     assert len(hits) == 1
     hit = hits[0]
@@ -59,11 +59,26 @@ def test_duplicate_within_window_flags_the_later_charge() -> None:
     assert hit.exception_type == ReconExceptionType.DUPLICATE
     assert hit.amount_at_stake == Decimal("10")
     assert hit.evidence["original_transaction_id"] == str(first.id)
+    assert hit.evidence["window_minutes"] == 5  # int, not a float ratio (T2-16)
 
 
 def test_duplicate_outside_window_is_not_flagged() -> None:
-    """Identical charges more than 24h apart are not duplicates."""
-    hits = detect_duplicates([_txn(when=_BASE), _txn(when=_BASE + timedelta(hours=25))])
+    """Identical charges more than 5 min apart are not duplicates (T2-5)."""
+    hits = detect_duplicates(
+        [_txn(when=_BASE), _txn(when=_BASE + timedelta(minutes=6))]
+    )
+    assert hits == []
+
+
+def test_duplicate_at_exact_window_boundary_not_flagged() -> None:
+    """A gap of *exactly* the window is a cadence, not a double-charge (T2-5).
+
+    Guards the regression where clockwork billing at a fixed period (== window)
+    was flagged as a duplicate every cycle.
+    """
+    hits = detect_duplicates(
+        [_txn(when=_BASE), _txn(when=_BASE + timedelta(minutes=5))]
+    )
     assert hits == []
 
 
@@ -71,8 +86,8 @@ def test_three_identical_within_window_flag_two() -> None:
     """The first is the original; the two later ones are both duplicates."""
     txns = [
         _txn(when=_BASE),
-        _txn(when=_BASE + timedelta(hours=2)),
-        _txn(when=_BASE + timedelta(hours=4)),
+        _txn(when=_BASE + timedelta(minutes=1)),
+        _txn(when=_BASE + timedelta(minutes=2)),
     ]
     hits = detect_duplicates(txns)
     assert len(hits) == 2
@@ -110,6 +125,29 @@ def test_overcharge_flags_statistical_outlier() -> None:
 def test_overcharge_needs_minimum_samples() -> None:
     """Fewer than min_samples charges gives no baseline — nothing flagged."""
     assert detect_overcharges([_txn(amount="10"), _txn(amount="100")]) == []
+
+
+def test_overcharge_requires_baseline_excluding_candidate() -> None:
+    """Leave-one-out (T2-13): a 3-charge group has only a 2-charge baseline per
+    candidate — below min_samples — so the outlier is not flagged; the naive
+    median-of-all would have flagged it."""
+    txns = [_txn(amount="10"), _txn(amount="10"), _txn(amount="100")]
+    assert detect_overcharges(txns) == []
+
+
+def test_overcharge_does_not_mix_currencies() -> None:
+    """T2-1: a lone foreign-currency charge is not judged against a USD baseline.
+
+    A ¥1500 charge among three $10 charges lives in its own (agent, vendor, JPY)
+    group of one — no baseline — so it is never flagged as a ~$1489 overcharge.
+    """
+    txns = [
+        _txn(amount="10", currency="USD"),
+        _txn(amount="10", currency="USD"),
+        _txn(amount="10", currency="USD"),
+        _txn(amount="1500", currency="JPY"),
+    ]
+    assert detect_overcharges(txns) == []
 
 
 def test_overcharge_ignores_identical_recurring_charges() -> None:
@@ -154,6 +192,28 @@ def test_unused_subscription_ignores_non_monthly_cadence() -> None:
     """Daily-cadence identical charges are not a monthly subscription."""
     txns = [_txn(amount="99", when=_BASE + timedelta(days=d)) for d in (0, 1, 2)]
     assert detect_unused_subscriptions(txns) == []
+
+
+def test_unused_subscription_requires_consecutive_monthly_run() -> None:
+    """T2-16: scattered monthly gaps among irregular ones are not a subscription.
+
+    Days 0, 30, 35, 65 → gaps [30, 5, 30]: two monthly gaps but no consecutive run
+    of two, so nothing is flagged.
+    """
+    txns = [_txn(amount="99", when=_BASE + timedelta(days=d)) for d in (0, 30, 35, 65)]
+    assert detect_unused_subscriptions(txns) == []
+
+
+def test_unused_subscription_rounds_gaps_not_truncates() -> None:
+    """T2-16: a 24.6-day gap rounds to 25 (in the monthly window), not 24 (out).
+
+    Truncating `.days` would silently miss a genuine ~monthly subscription.
+    """
+    step = timedelta(days=24, hours=15)  # 24.625 days -> rounds to 25
+    txns = [_txn(amount="99", when=_BASE + step * i) for i in range(3)]
+    hits = detect_unused_subscriptions(txns)
+    assert len(hits) == 1
+    assert hits[0].evidence["cadence_days_observed"] == [25, 25]
 
 
 # --- run_detectors (combined) ---

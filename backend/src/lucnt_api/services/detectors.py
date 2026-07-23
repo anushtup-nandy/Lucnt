@@ -35,8 +35,16 @@ from decimal import Decimal
 from lucnt_api.models.reconciliation_exception import ReconExceptionType
 
 # --- Detector defaults (business constants) ---
-_DUPLICATE_WINDOW = timedelta(hours=24)
+# A true double-charge lands within seconds/minutes; a 24h window (with a `<=`
+# boundary) flagged routine agentic commerce — a $5 top-up 20x/day, or daily
+# billing at a gap of *exactly* 24h — as a duplicate forever (PRODUCTION_PLAN
+# T2-5). A tight window + a strict `<` boundary confines the signal to genuine
+# rapid double-charges. Higher-confidence dedup over the card rail wants an
+# idempotency-hash corroboration (P6.5) that the ledger alone cannot provide.
+_DUPLICATE_WINDOW = timedelta(minutes=5)
 _OVERCHARGE_FACTOR = Decimal("3")
+# Minimum baseline size *excluding the candidate* (leave-one-out, T2-13): a group
+# needs `_OVERCHARGE_MIN_SAMPLES + 1` charges before any one can be flagged.
 _OVERCHARGE_MIN_SAMPLES = 3
 _SUBSCRIPTION_MIN_OCCURRENCES = 3
 _SUBSCRIPTION_CADENCE_DAYS = (25, 35)  # inclusive ~monthly window
@@ -88,6 +96,33 @@ def _median(values: Sequence[Decimal]) -> Decimal:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def recurring_identity(view: TxnView) -> str:
+    """Canonical recurring-identity string for a transaction — the dedup basis.
+
+    ``agent:vendor:amount:currency`` using the same vendor/amount canonicalisation
+    the detectors group by, so the recon layer can dedupe recurring exceptions
+    (a dismissed subscription must not re-flag next month — T2-7) on exactly the
+    identity the detectors treat as "the same charge".
+    """
+    return (
+        f"{view.agent_id}:{_vendor_key(view.vendor)}"
+        f":{_amount_key(view.paid_amount)}:{view.paid_currency}"
+    )
+
+
+def _longest_monthly_run(gaps: Sequence[int], lo: int, hi: int) -> int:
+    """Length of the longest run of *consecutive* gaps inside ``[lo, hi]`` days.
+
+    A subscription is a run of regular monthly gaps; isolated monthly-length gaps
+    scattered among irregular ones are not (PRODUCTION_PLAN T2-16).
+    """
+    best = run = 0
+    for g in gaps:
+        run = run + 1 if lo <= g <= hi else 0
+        best = max(best, run)
+    return best
+
+
 _IdentityKey = tuple[uuid.UUID, str, Decimal, str]
 
 
@@ -117,6 +152,7 @@ def detect_duplicates(
     original; every later one within the window is flagged, with the full amount
     recoverable.
     """
+    window_minutes = int(window.total_seconds() // 60)
     out: list[DetectedException] = []
     for members in _group_by_identity(txns).values():
         if len(members) < 2:
@@ -124,11 +160,13 @@ def detect_duplicates(
         ordered = sorted(members, key=lambda t: t.transaction_date)
         for i in range(1, len(ordered)):
             current = ordered[i]
+            # Strict `<`: a gap of *exactly* the window (e.g. clockwork daily
+            # billing) is a cadence, not a double-charge (T2-5).
             original = next(
                 (
                     prior
                     for prior in ordered[:i]
-                    if current.transaction_date - prior.transaction_date <= window
+                    if current.transaction_date - prior.transaction_date < window
                 ),
                 None,
             )
@@ -143,7 +181,7 @@ def detect_duplicates(
                         "original_transaction_id": str(original.id),
                         "original_date": original.transaction_date.isoformat(),
                         "duplicate_date": current.transaction_date.isoformat(),
-                        "window_hours": window.total_seconds() / 3600,
+                        "window_minutes": window_minutes,  # int, not a float ratio
                         "vendor": current.vendor,
                         "amount": str(current.paid_amount),
                         "currency": current.paid_currency,
@@ -162,23 +200,31 @@ def detect_overcharges(
     """Flag a charge that is a statistical outlier vs the (agent, vendor) history.
 
     A charge is flagged when ``paid_amount >= factor * median`` of that agent's
-    charges to that vendor, given at least `min_samples` charges to establish a
-    baseline. The median is robust to a lone outlier, and an identical recurring
-    charge (a subscription) has median == amount, so it is never flagged here.
+    *other* charges to that vendor **in the same currency**. Two corrections vs a
+    naive median-of-all:
+
+    - **Same-currency grouping (T2-1):** a median across currencies is
+      meaningless — a routine ¥1,500 (~$10) charge would read as a ~$1,489
+      overcharge against a USD baseline. The currency is part of the group key.
+    - **Leave-one-out baseline (T2-13):** each charge is compared to the median of
+      the *other* charges, so a lone outlier cannot inflate the very baseline it is
+      judged against. A group needs more than `min_samples` charges (so the
+      baseline still has `min_samples`) before anything is flagged.
     """
-    groups: dict[tuple[uuid.UUID, str], list[TxnView]] = defaultdict(list)
+    groups: dict[tuple[uuid.UUID, str, str], list[TxnView]] = defaultdict(list)
     for t in txns:
-        groups[(t.agent_id, _vendor_key(t.vendor))].append(t)
+        groups[(t.agent_id, _vendor_key(t.vendor), t.paid_currency)].append(t)
 
     out: list[DetectedException] = []
     for members in groups.values():
-        if len(members) < min_samples:
+        if len(members) <= min_samples:  # need `min_samples` others per candidate
             continue
-        median = _median([m.paid_amount for m in members])
-        if median <= 0:
-            continue
-        threshold = median * factor
         for t in members:
+            baseline = [m.paid_amount for m in members if m.id != t.id]
+            median = _median(baseline)
+            if median <= 0:
+                continue
+            threshold = median * factor
             if t.paid_amount >= threshold:
                 out.append(
                     DetectedException(
@@ -189,7 +235,7 @@ def detect_overcharges(
                             "median": str(median),
                             "factor": str(factor),
                             "threshold": str(threshold),
-                            "sample_size": len(members),
+                            "baseline_size": len(baseline),
                             "vendor": t.vendor,
                             "amount": str(t.paid_amount),
                             "currency": t.paid_currency,
@@ -208,9 +254,11 @@ def detect_unused_subscriptions(
     """Flag the latest of an identical charge recurring on a ~monthly cadence.
 
     Detects the recurring *pattern* only — 'unused' is a human judgement at
-    resolve time (there is no per-subscription usage telemetry). Requires at
-    least `min_occurrences` charges with at least ``min_occurrences - 1`` gaps
-    inside the monthly `cadence_days` window.
+    resolve time (there is no per-subscription usage telemetry). Requires at least
+    `min_occurrences` charges forming a **consecutive run** of ``min_occurrences -
+    1`` monthly-cadence gaps: gaps are *rounded* to whole days (not truncated, so a
+    30.9-day gap counts as 31, not 30 — T2-16), and scattered one-off matches among
+    irregular gaps do not qualify.
     """
     lo, hi = cadence_days
     out: list[DetectedException] = []
@@ -219,11 +267,15 @@ def detect_unused_subscriptions(
             continue
         ordered = sorted(members, key=lambda t: t.transaction_date)
         gaps = [
-            (ordered[i].transaction_date - ordered[i - 1].transaction_date).days
+            round(
+                (
+                    ordered[i].transaction_date - ordered[i - 1].transaction_date
+                ).total_seconds()
+                / 86400
+            )
             for i in range(1, len(ordered))
         ]
-        monthly_gaps = [g for g in gaps if lo <= g <= hi]
-        if len(monthly_gaps) < min_occurrences - 1:
+        if _longest_monthly_run(gaps, lo, hi) < min_occurrences - 1:
             continue
         latest = ordered[-1]
         out.append(

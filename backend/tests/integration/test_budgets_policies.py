@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -23,6 +24,8 @@ from lucnt_api.models import (
     ApiKeyMode,
     Company,
     Entity,
+    Transaction,
+    TransactionSource,
     Workflow,
 )
 from lucnt_api.security import generate_api_key, hash_api_key
@@ -94,6 +97,36 @@ def _agent(
     return agent
 
 
+def _spend(
+    db: Session,
+    company: Company,
+    entity: Entity,
+    agent: Agent,
+    amount: Decimal,
+) -> None:
+    """Book a committed transaction this month so the derived budget window sees it.
+
+    Budget spend is derived from the current-month ledger (`local_amount`), not the
+    stored `spent_ytd` counter (PRODUCTION_PLAN T2-3), so budget tests must seed real
+    transactions rather than set the counter.
+    """
+    db.add(
+        Transaction(
+            company_id=company.id,
+            agent_id=agent.id,
+            entity_id=entity.id,
+            source=TransactionSource.SDK,
+            vendor="aws",
+            paid_amount=amount,
+            paid_currency=entity.currency,
+            local_amount=amount,
+            local_currency=entity.currency,
+            transaction_date=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+
+
 def _headers(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
@@ -105,14 +138,17 @@ def test_get_budgets_reports_agent_utilisation(
     client: TestClient, db_session: Session
 ) -> None:
     company, key = _company(db_session)
-    _agent(db_session, company, _entity(db_session, company), spent=Decimal("250"))
+    entity = _entity(db_session, company)
+    agent = _agent(db_session, company, entity)
+    _spend(db_session, company, entity, agent, Decimal("250"))
 
     body = client.get("/budgets", headers=_headers(key)).json()
     assert len(body["agents"]) == 1
-    agent = body["agents"][0]
-    assert Decimal(agent["remaining"]) == Decimal("750")
-    assert Decimal(agent["pct_used"]) == Decimal("25.0")
-    assert agent["status"] == "ok"
+    agent_view = body["agents"][0]
+    assert Decimal(agent_view["spent"]) == Decimal("250")
+    assert Decimal(agent_view["remaining"]) == Decimal("750")
+    assert Decimal(agent_view["pct_used"]) == Decimal("25.0")
+    assert agent_view["status"] == "ok"
 
 
 def test_budget_status_warning_then_exhausted(
@@ -120,8 +156,10 @@ def test_budget_status_warning_then_exhausted(
 ) -> None:
     company, key = _company(db_session)
     entity = _entity(db_session, company)
-    _agent(db_session, company, entity, slug="warn", spent=Decimal("900"))
-    _agent(db_session, company, entity, slug="over", spent=Decimal("1000"))
+    warn = _agent(db_session, company, entity, slug="warn")
+    over = _agent(db_session, company, entity, slug="over")
+    _spend(db_session, company, entity, warn, Decimal("900"))
+    _spend(db_session, company, entity, over, Decimal("1000"))
 
     agents = client.get("/budgets", headers=_headers(key)).json()["agents"]
     by_slug = {a["slug"]: a for a in agents}
@@ -165,8 +203,10 @@ def test_workflow_rollup_sums_member_spend(
 ) -> None:
     company, key = _company(db_session)
     entity = _entity(db_session, company)
-    a1 = _agent(db_session, company, entity, slug="a1", spent=Decimal("300"))
-    a2 = _agent(db_session, company, entity, slug="a2", spent=Decimal("400"))
+    a1 = _agent(db_session, company, entity, slug="a1")
+    a2 = _agent(db_session, company, entity, slug="a2")
+    _spend(db_session, company, entity, a1, Decimal("300"))
+    _spend(db_session, company, entity, a2, Decimal("400"))
     workflow = Workflow(
         company_id=company.id, name="Q3 offsite", budget=Decimal("1000")
     )
@@ -180,6 +220,43 @@ def test_workflow_rollup_sums_member_spend(
     assert Decimal(wf["spent"]) == Decimal("700")
     assert Decimal(wf["remaining"]) == Decimal("300")
     assert set(wf["agent_ids"]) == {str(a1.id), str(a2.id)}
+
+
+def test_budget_spend_resets_at_month_boundary(
+    client: TestClient, db_session: Session
+) -> None:
+    """Prior-month spend does not count against the current-month budget (T2-3).
+
+    The old `spent_ytd` counter never reset, so a $100/mo agent on a $1000 budget
+    read "exhausted" by month 11. The derived window must exclude last month.
+    """
+    from datetime import timedelta
+
+    company, key = _company(db_session)
+    entity = _entity(db_session, company)
+    agent = _agent(db_session, company, entity, monthly_budget=Decimal("1000"))
+    # This month: 200. ~45 days ago (prior month): 900 — must be excluded.
+    _spend(db_session, company, entity, agent, Decimal("200"))
+    db_session.add(
+        Transaction(
+            company_id=company.id,
+            agent_id=agent.id,
+            entity_id=entity.id,
+            source=TransactionSource.SDK,
+            vendor="aws",
+            paid_amount=Decimal("900"),
+            paid_currency=entity.currency,
+            local_amount=Decimal("900"),
+            local_currency=entity.currency,
+            transaction_date=datetime.now(timezone.utc) - timedelta(days=45),
+        )
+    )
+    db_session.flush()
+
+    agent_view = client.get("/budgets", headers=_headers(key)).json()["agents"][0]
+    assert Decimal(agent_view["spent"]) == Decimal("200")
+    assert Decimal(agent_view["remaining"]) == Decimal("800")
+    assert agent_view["status"] == "ok"
 
 
 # ------------------------------ policies ------------------------------

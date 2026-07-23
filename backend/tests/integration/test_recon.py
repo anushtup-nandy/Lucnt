@@ -147,7 +147,7 @@ def test_scan_detects_duplicate(client: TestClient, db_session: Session) -> None
         entity,
         vendor="stripe",
         amount="49.00",
-        when=_NOW + timedelta(hours=1),
+        when=_NOW + timedelta(minutes=1),
     )
 
     scan = client.post("/recon/scan", headers=_auth_headers(key)).json()
@@ -177,7 +177,7 @@ def test_scan_is_idempotent(client: TestClient, db_session: Session) -> None:
         entity,
         vendor="stripe",
         amount="49",
-        when=_NOW + timedelta(hours=1),
+        when=_NOW + timedelta(minutes=1),
     )
 
     first = client.post("/recon/scan", headers=_auth_headers(key)).json()
@@ -197,7 +197,7 @@ def test_scan_detects_overcharge(client: TestClient, db_session: Session) -> Non
             entity,
             vendor="aws",
             amount=amount,
-            when=_NOW + timedelta(days=2 * i),  # >24h apart: no duplicate flag
+            when=_NOW + timedelta(days=2 * i),  # >5 min apart: no duplicate flag
         )
 
     scan = client.post("/recon/scan", headers=_auth_headers(key)).json()
@@ -245,7 +245,7 @@ def test_scan_is_scoped_to_company(client: TestClient, db_session: Session) -> N
         entity_a,
         vendor="s",
         amount="5",
-        when=_NOW + timedelta(hours=1),
+        when=_NOW + timedelta(minutes=1),
     )
     _, key_b = _make_company_with_key(db_session)
 
@@ -268,7 +268,7 @@ def test_inbox_summary_and_ordering(client: TestClient, db_session: Session) -> 
             entity,
             vendor="aws",
             amount=amount,
-            when=_NOW + timedelta(days=2 * i),  # >24h apart: no duplicate flag
+            when=_NOW + timedelta(days=2 * i),  # >5 min apart: no duplicate flag
         )
     _make_transaction(
         db_session, company, agent, entity, vendor="s", amount="5", when=_NOW
@@ -280,15 +280,88 @@ def test_inbox_summary_and_ordering(client: TestClient, db_session: Session) -> 
         entity,
         vendor="s",
         amount="5",
-        when=_NOW + timedelta(hours=1),
+        when=_NOW + timedelta(minutes=1),
     )
     client.post("/recon/scan", headers=_auth_headers(key))
 
     inbox = client.get("/recon", headers=_auth_headers(key)).json()
     assert inbox["open_count"] == 2
-    assert Decimal(inbox["total_at_stake"]) == Decimal("95")  # 90 + 5
-    # highest $ at stake first
+    # Per-currency (T2-2): both are USD here, so one bucket summing 90 + 5.
+    assert Decimal(inbox["total_at_stake"]["USD"]) == Decimal("95")
+    # highest $ at stake first (within the currency)
     assert inbox["items"][0]["exception_type"] == "overcharge"
+
+
+def test_inbox_summary_is_per_currency(
+    client: TestClient, db_session: Session
+) -> None:
+    """T2-2: '$ at stake' is bucketed per currency, never summed across them."""
+    company, key, agent, entity = _setup(db_session)
+    # A USD duplicate ($5) and a JPY duplicate (¥1500) — different currencies.
+    for currency, amount in [("USD", "5"), ("JPY", "1500")]:
+        for minute in (0, 1):
+            _make_transaction(
+                db_session,
+                company,
+                agent,
+                entity,
+                vendor=f"vendor-{currency}",
+                amount=amount,
+                currency=currency,
+                when=_NOW + timedelta(minutes=minute),
+            )
+    client.post("/recon/scan", headers=_auth_headers(key))
+
+    at_stake = client.get("/recon", headers=_auth_headers(key)).json()["total_at_stake"]
+    assert Decimal(at_stake["USD"]) == Decimal("5")
+    assert Decimal(at_stake["JPY"]) == Decimal("1500")  # not summed with USD
+
+
+def test_dismissed_subscription_not_reflagged_next_month(
+    client: TestClient, db_session: Session
+) -> None:
+    """T2-7: a dismissed recurring charge stays dismissed on a new month's txn.
+
+    The dedup_key (recurring identity) suppresses re-flagging even though the
+    latest transaction row — the one the subscription detector points at — differs.
+    """
+    company, key, agent, entity = _setup(db_session)
+    for i in range(3):  # 3 monthly charges -> subscription
+        _make_transaction(
+            db_session,
+            company,
+            agent,
+            entity,
+            vendor="notion",
+            amount="8.00",
+            when=_NOW + timedelta(days=30 * i),
+        )
+    client.post("/recon/scan", headers=_auth_headers(key))
+    exc = client.get(
+        "/recon?exception_type=unused_subscription", headers=_auth_headers(key)
+    ).json()["items"][0]
+    client.post(
+        f"/recon/{exc['id']}/resolve",
+        json={"action": "dismiss"},
+        headers=_auth_headers(key),
+    )
+
+    # A 4th monthly charge arrives; re-scan must not re-flag the same identity.
+    _make_transaction(
+        db_session,
+        company,
+        agent,
+        entity,
+        vendor="notion",
+        amount="8.00",
+        when=_NOW + timedelta(days=30 * 3),
+    )
+    rescan = client.post("/recon/scan", headers=_auth_headers(key)).json()
+    assert rescan["created"] == 0
+    active = client.get(
+        "/recon?status=open", headers=_auth_headers(key)
+    ).json()
+    assert active["total"] == 0  # the dismissal stuck
 
 
 # --- failed delivery (SDK hook path) ---
@@ -329,6 +402,46 @@ def test_failed_delivery_is_idempotent(client: TestClient, db_session: Session) 
     ).json()
     assert first["id"] == second["id"]
     assert client.get("/recon", headers=_auth_headers(key)).json()["total"] == 1
+
+
+def test_failed_delivery_rejects_stake_over_paid_amount(
+    client: TestClient, db_session: Session
+) -> None:
+    """T2-14: amount_at_stake cannot exceed the transaction's paid amount."""
+    company, key, agent, entity = _setup(db_session)
+    txn = _make_transaction(
+        db_session, company, agent, entity, vendor="dataco", amount="50", when=_NOW
+    )
+    resp = client.post(
+        "/recon/failed-delivery",
+        json={
+            "transaction_id": str(txn.id),
+            "reason": "over",
+            "amount_at_stake": "51",
+        },
+        headers=_auth_headers(key),
+    )
+    assert resp.status_code == 422
+
+
+def test_failed_delivery_rejects_negative_stake(
+    client: TestClient, db_session: Session
+) -> None:
+    """T2-14: a negative amount_at_stake is rejected at the schema (422)."""
+    company, key, agent, entity = _setup(db_session)
+    txn = _make_transaction(
+        db_session, company, agent, entity, vendor="dataco", amount="50", when=_NOW
+    )
+    resp = client.post(
+        "/recon/failed-delivery",
+        json={
+            "transaction_id": str(txn.id),
+            "reason": "neg",
+            "amount_at_stake": "-1",
+        },
+        headers=_auth_headers(key),
+    )
+    assert resp.status_code == 422
 
 
 def test_failed_delivery_unknown_transaction(
@@ -387,10 +500,10 @@ def test_resolve_transitions_and_updates_summary(
     assert resolved["fix_notes"] == "vendor refunded"
     assert resolved["resolved_at"] is not None
 
-    # resolved exception leaves the active summary
+    # resolved exception leaves the active summary (no active rows -> empty map)
     inbox = client.get("/recon", headers=_auth_headers(key)).json()
     assert inbox["open_count"] == 0
-    assert Decimal(inbox["total_at_stake"]) == Decimal("0")
+    assert inbox["total_at_stake"] == {}
 
 
 def test_resolve_rejects_already_terminal(
@@ -441,7 +554,7 @@ def test_resolved_ledger_fact_is_not_reflagged(
         entity,
         vendor="s",
         amount="5",
-        when=_NOW + timedelta(hours=1),
+        when=_NOW + timedelta(minutes=1),
     )
     client.post("/recon/scan", headers=_auth_headers(key))
     exc = client.get("/recon", headers=_auth_headers(key)).json()["items"][0]

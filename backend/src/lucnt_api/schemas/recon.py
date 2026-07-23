@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ReconExceptionResponse(BaseModel):
@@ -26,6 +26,7 @@ class ReconExceptionResponse(BaseModel):
     status: str
     evidence: dict[str, Any]
     amount_at_stake: Decimal
+    currency: str | None
     fix_notes: str | None
     resolved_at: datetime | None
     created_at: datetime
@@ -37,14 +38,16 @@ class ReconListResponse(BaseModel):
 
     `total` is the filtered/paginated count; `total_at_stake` and `open_count`
     summarize all *active* (open + recovering) exceptions for the company,
-    independent of the list filters — the "$ at stake" headline.
+    independent of the list filters — the "$ at stake" headline. `total_at_stake`
+    is a **per-currency** map (currency -> sum), never a meaningless cross-currency
+    total (PRODUCTION_PLAN T2-2).
     """
 
     model_config = ConfigDict(frozen=True)
 
     items: list[ReconExceptionResponse]
     total: int
-    total_at_stake: Decimal
+    total_at_stake: dict[str, Decimal]
     open_count: int
 
 
@@ -67,8 +70,10 @@ class FailedDeliveryRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     transaction_id: uuid.UUID
-    reason: str
-    amount_at_stake: Decimal | None = None
+    # Bounded free text (T2-14): an unbounded reason is an abuse/DoS vector.
+    reason: str = Field(min_length=1, max_length=500)
+    # Non-negative; the router additionally caps it at the transaction's amount.
+    amount_at_stake: Decimal | None = Field(default=None, ge=0)
 
 
 class ScanResponse(BaseModel):

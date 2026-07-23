@@ -61,13 +61,15 @@ def _features(
     )
 
 
-def _cost_unit(unit: str, avg: str) -> CostUnit:
+def _cost_unit(unit: str, avg: str, *, count: int = 2) -> CostUnit:
+    # count defaults to 2: a cost spike needs a repeated charge, not a one-off
+    # (T2-13). total_spent is avg * count to stay internally consistent.
     return CostUnit(
         unit=unit,
         dimension="project",
         currency="USD",
-        total_spent=Decimal(avg),
-        count=1,
+        total_spent=Decimal(avg) * count,
+        count=count,
         avg_cost=Decimal(avg),
         total_tokens=None,
         cost_per_1k_tokens=None,
@@ -183,8 +185,9 @@ def test_derive_memories_full_agent() -> None:
     }
 
 
-def test_derive_memories_skips_absent_signals() -> None:
-    # No amount stats, no vendors, no attributed units -> no memories.
+def test_derive_memories_cold_start_row_when_learning() -> None:
+    # Has spend but no baseline yet -> a single "still learning" cold-start row so a
+    # new agent is not blank on the Memory page (T2-12).
     bare = FingerprintFeatures(
         enough_data=False,
         home_currency="USD",
@@ -196,6 +199,25 @@ def test_derive_memories_skips_absent_signals() -> None:
         anomaly_score=Decimal("0"),
     )
     intel = _intel(features=bare, cost_units=[_cost_unit("(unattributed)", "5")])
+    memories = derive_memories([intel])
+    assert len(memories) == 1
+    assert memories[0].memory_type == MemoryType.SPEND_PATTERN
+    assert memories[0].metrics_json["learning"] is True
+
+
+def test_derive_memories_empty_when_no_spend() -> None:
+    # Zero records -> nothing to say at all.
+    bare = FingerprintFeatures(
+        enough_data=False,
+        home_currency=None,
+        total_records=0,
+        amount_stats=None,
+        top_vendors=[],
+        active_hours={},
+        daily_velocity=Decimal("0"),
+        anomaly_score=Decimal("0"),
+    )
+    intel = _intel(features=bare, cost_units=[])
     assert derive_memories([intel]) == []
 
 

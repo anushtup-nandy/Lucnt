@@ -22,6 +22,15 @@ from sqlalchemy.orm import Session
 
 from lucnt_api.models import Authorization, Entity, Transaction, VerdictStatus
 
+__all__ = [
+    "now_in_entity_tz",
+    "period_starts",
+    "committed_spend",
+    "reserved_spend",
+    "recent_activity_count",
+    "period_committed_spend",
+]
+
 
 def now_in_entity_tz(entity: Entity) -> datetime:
     """Current time in the entity's local timezone (UTC if the tz string is bad)."""
@@ -100,6 +109,27 @@ def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
     # coalesce guarantees non-null at SQL level; the guard is for the type checker
     # (local_amount is a nullable column).
     return Decimal(total if total is not None else 0)
+
+
+def period_committed_spend(
+    db: Session, agent_id: uuid.UUID, entity: Entity
+) -> tuple[Decimal, Decimal]:
+    """`(this_month, today)` committed spend for an agent, in the entity's periods.
+
+    Both are derived from the ledger (T0-5), in the entity's functional currency
+    (``local_amount``, T1-2), with month/day boundaries in the entity's local
+    timezone (T2-9). This is the *display/read* counterpart to the invariant
+    ``authorize()`` already enforces — the budget rollups (``GET /budgets``) and
+    ``query()``'s budget headroom must show this period-resetting figure, not the
+    never-reset ``agents.spent_ytd`` counter that mis-reads inception-to-date spend
+    against a *monthly* budget (PRODUCTION_PLAN T2-3).
+    """
+    now = now_in_entity_tz(entity)
+    month_start, day_start = period_starts(now)
+    return (
+        committed_spend(db, agent_id, month_start),
+        committed_spend(db, agent_id, day_start),
+    )
 
 
 def recent_activity_count(db: Session, agent_id: uuid.UUID, since: datetime) -> int:

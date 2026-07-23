@@ -362,6 +362,7 @@ def _flag_unclassified_tax(
             transaction_id=transaction.id,
             exception_type=ReconExceptionType.TAX_UNCLASSIFIED,
             amount_at_stake=Decimal("0"),
+            currency=transaction.paid_currency,
             evidence_json={
                 "reason": reason,
                 "vendor": transaction.vendor,

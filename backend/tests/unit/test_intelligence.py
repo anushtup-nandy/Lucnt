@@ -77,8 +77,9 @@ def test_fingerprint_exact_statistics() -> None:
     assert stats.stddev == Decimal("16.0000")  # exact: sqrt(256)
     assert stats.minimum == Decimal("10.0000")
     assert stats.maximum == Decimal("50.0000")
-    # max recent z = |50 - 18| / 16 = 2.0
-    assert fp.anomaly_score == Decimal("2.0000")
+    # Leave-one-out (T2-4): the 50 is scored against its four 10s (a flat baseline,
+    # σ=0), so it reads as maximally out of pattern, capped at _MAX_Z = 10.
+    assert fp.anomaly_score == Decimal("10.0000")
 
 
 def test_fingerprint_top_vendors_by_count() -> None:
@@ -118,6 +119,27 @@ def test_fingerprint_flat_history_has_zero_anomaly() -> None:
     assert fp.anomaly_score == Decimal("0")  # no spread -> nothing anomalous
 
 
+def test_fingerprint_lone_outlier_fires_below_eight_samples() -> None:
+    """T2-4: a lone outlier in a 5-point history fires.
+
+    Population σ over all points capped a lone outlier at √(n-1) = 2.0 for n=5 —
+    below the 2.5 threshold, so it was silently missed. Leave-one-out removes the
+    cap: scored against the other four (9–12), the 500 is wildly anomalous.
+    """
+    amounts = ["10", "11", "9", "12", "500"]
+    fp = compute_fingerprint([_record(amount=a, day=i) for i, a in enumerate(amounts)])
+    assert fp.anomaly_score >= Decimal("2.5")
+
+
+def test_fingerprint_home_currency_can_be_pinned() -> None:
+    """T2-6: an explicit home currency overrides modal derivation and is stable."""
+    records = [_record(amount="10", currency="USD") for _ in range(3)]
+    records.append(_record(amount="9999", currency="EUR"))
+    fp = compute_fingerprint(records, home_currency="EUR")
+    assert fp.home_currency == "EUR"  # pinned, not the modal USD
+    assert "aws" in fp.known_vendors
+
+
 # --- score_anomaly ---
 
 
@@ -152,6 +174,23 @@ def test_score_anomaly_cross_currency_has_no_zscore() -> None:
     fp = _baseline()
     result = score_anomaly(fp, amount=Decimal("18"), currency="EUR", vendor="aws")
     assert result.z_score is None
+
+
+def test_score_anomaly_known_non_top_vendor_not_flagged() -> None:
+    """T2-8: a vendor seen before but outside the top-3 is *not* 'unknown'.
+
+    Judged against the full vendor history, not just the top few — the old
+    top-3-only check flagged every fourth+ vendor as anomalous.
+    """
+    records = [_record(amount="10", vendor=v) for v in ("aws", "aws", "aws")]
+    records += [_record(amount="10", vendor=v) for v in ("openai", "stripe", "gcp")]
+    fp = compute_fingerprint(records)
+    assert fp.top_vendors[0].vendor == "aws"
+    assert "gcp" not in {v.vendor for v in fp.top_vendors}  # gcp is not top-3
+    seen = score_anomaly(fp, amount=Decimal("10"), currency="USD", vendor="gcp")
+    assert seen.unknown_vendor is False  # but it IS in the full history
+    novel = score_anomaly(fp, amount=Decimal("10"), currency="USD", vendor="brandnew")
+    assert novel.unknown_vendor is True
 
 
 # --- cost_per_output ---
@@ -208,6 +247,21 @@ def test_project_spend_on_track() -> None:
     )
     assert proj.on_track is True
     assert proj.projected_overrun == Decimal("0")
+
+
+def test_project_spend_dampens_early_month() -> None:
+    """T2-9: a day-1 spend is not extrapolated to ~30x itself.
+
+    Naive run-rate (mtd / day_of_month) would project 300 * 30 = 9000 on day 1;
+    the elapsed-days floor (7) dampens it to 9000 / 7 ≈ 1285.71.
+    """
+    proj = project_spend(
+        month_to_date=Decimal("300"),
+        now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        monthly_budget=Decimal("310"),
+    )
+    assert proj.day_of_month == 1
+    assert proj.projected_month_end == Decimal("1285.7143")  # 9000 / 7, not 9000
 
 
 def test_project_spend_no_budget_never_over() -> None:
