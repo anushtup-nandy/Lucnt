@@ -19,7 +19,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,6 +55,9 @@ class Memory(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # One memory of each type per agent — recompute upserts in place so a
         # learned pattern is a single evolving record, not a growing log.
         UniqueConstraint("agent_id", "memory_type", name="uq_memories_agent_type"),
+        # GET /memory scopes by company (T3-1); agent_id lookups already ride
+        # uq_memories_agent_type's leading column.
+        Index("ix_memories_company_id", "company_id"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))

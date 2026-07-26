@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import (
@@ -23,6 +23,7 @@ from lucnt_api.dependencies import (
     require_admin,
 )
 from lucnt_api.models import Company, Vendor
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.vendor import (
     VendorCreate,
     VendorListResponse,
@@ -43,9 +44,7 @@ _PLACE_OF_SUPPLY_FIELDS = frozenset({"country", "state", "gst_registered_in"})
 def _require_vendor(db: Session, company: Company, vendor_id: uuid.UUID) -> Vendor:
     """Fetch a company-scoped vendor (404 if unknown — cross-tenant safe)."""
     vendor = db.execute(
-        select(Vendor).where(
-            Vendor.id == vendor_id, Vendor.company_id == company.id
-        )
+        select(Vendor).where(Vendor.id == vendor_id, Vendor.company_id == company.id)
     ).scalar_one_or_none()
     if vendor is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown vendor")
@@ -56,15 +55,16 @@ def _require_vendor(db: Session, company: Company, vendor_id: uuid.UUID) -> Vend
 def list_vendors(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate()),
 ) -> VendorListResponse:
     """List the company's vendors, newest first, paginated."""
     stmt = select(Vendor).where(Vendor.company_id == company.id)
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
         db.execute(
-            stmt.order_by(Vendor.created_at.desc()).offset(offset).limit(limit)
+            stmt.order_by(Vendor.created_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
         )
         .scalars()
         .all()
@@ -97,12 +97,15 @@ def create_vendor(
     one via `PATCH /vendors/{id}` instead.
     """
     normalized = normalize_vendor_name(request.name)
-    if db.execute(
-        select(Vendor.id).where(
-            Vendor.company_id == company.id,
-            Vendor.normalized_name == normalized,
-        )
-    ).scalar_one_or_none() is not None:
+    if (
+        db.execute(
+            select(Vendor.id).where(
+                Vendor.company_id == company.id,
+                Vendor.normalized_name == normalized,
+            )
+        ).scalar_one_or_none()
+        is not None
+    ):
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"vendor {request.name!r} already exists"
         )

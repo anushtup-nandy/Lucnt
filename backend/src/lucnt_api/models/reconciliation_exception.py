@@ -25,6 +25,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -80,6 +81,11 @@ class ReconciliationException(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # transaction row, which gets its own exception.
         UniqueConstraint(
             "transaction_id", "exception_type", name="uq_recon_txn_type"
+        ),
+        # The recovery inbox list + the open-count header (T3-1). transaction_id
+        # lookups already ride uq_recon_txn_type's leading column.
+        Index(
+            "ix_reconciliation_exceptions_company_id_status", "company_id", "status"
         ),
     )
 

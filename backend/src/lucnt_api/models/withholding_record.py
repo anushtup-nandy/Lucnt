@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, String, Text
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
@@ -24,6 +24,10 @@ class WithholdingRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     """s.195 withholding computed for one captured India → non-resident payment."""
 
     __tablename__ = "withholding_records"
+    __table_args__ = (
+        # Unindexed FK (T3-1) — records are read back per transaction.
+        Index("ix_withholding_records_transaction_id", "transaction_id"),
+    )
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transactions.id"))
     # The applied rate in basis points (1500 = 15%) + the functional-currency amount.

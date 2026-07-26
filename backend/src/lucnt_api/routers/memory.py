@@ -7,11 +7,18 @@ memory per (agent, type)); read-only, computed nowhere on the request path.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import get_current_company, get_db
 from lucnt_api.models import Agent, Company, Memory
+from lucnt_api.pagination import (
+    WIDE_MAX_PAGE_SIZE,
+    WIDE_PAGE_SIZE,
+    Page,
+    count_total,
+    paginate,
+)
 from lucnt_api.schemas.intelligence import MemoryListResponse, MemoryResponse
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -36,29 +43,26 @@ def list_memories(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     agent: str | None = Query(default=None, description="Filter by agent slug"),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate(WIDE_PAGE_SIZE, WIDE_MAX_PAGE_SIZE)),
 ) -> MemoryListResponse:
     """List learned patterns for the company's agents, newest-learned first."""
     stmt = select(Memory).where(Memory.company_id == company.id)
     if agent is not None:
         agent_row = db.execute(
-            select(Agent).where(
-                Agent.company_id == company.id, Agent.slug == agent
-            )
+            select(Agent).where(Agent.company_id == company.id, Agent.slug == agent)
         ).scalar_one_or_none()
         if agent_row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown agent: {agent}")
         stmt = stmt.where(Memory.agent_id == agent_row.id)
 
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
         db.execute(
-            stmt.order_by(Memory.updated_at.desc()).offset(offset).limit(limit)
+            stmt.order_by(Memory.updated_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
         )
         .scalars()
         .all()
     )
-    return MemoryListResponse(
-        items=[_to_response(row) for row in rows], total=total
-    )
+    return MemoryListResponse(items=[_to_response(row) for row in rows], total=total)

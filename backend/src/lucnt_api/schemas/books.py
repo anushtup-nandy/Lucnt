@@ -22,6 +22,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from lucnt_api.constants import ENTITY_CODE_MAX, JOURNAL_LINES_MAX
+
 
 class JournalLineRead(BaseModel):
     """One posting within a journal group / general-ledger account."""
@@ -78,7 +80,14 @@ class GLAccount(BaseModel):
     total_debit: Decimal
     total_credit: Decimal
     balance: Decimal
-    entries: list[JournalLineRead]
+    # How many journal lines this section totals. Always populated, so a client
+    # can tell that postings exist even when `entries` is empty (T3-2).
+    entry_count: int = 0
+    # Populated only for a single-account request (`?account=CODE`). The default
+    # listing returns totals per account and leaves this empty rather than
+    # serialising every line in the ledger — `entry_count` is the honest signal
+    # that lines exist, so an empty list is never mistaken for "no postings".
+    entries: list[JournalLineRead] = Field(default_factory=list)
 
 
 class GeneralLedgerResponse(BaseModel):
@@ -213,9 +222,7 @@ class ManualJournalLineInput(BaseModel):
     def _exactly_one_side(self) -> ManualJournalLineInput:
         """A line is one-sided: exactly one of debit/credit is non-zero (T0-7)."""
         if (self.debit > 0) == (self.credit > 0):
-            raise ValueError(
-                "each line must have exactly one of debit/credit non-zero"
-            )
+            raise ValueError("each line must have exactly one of debit/credit non-zero")
         return self
 
 
@@ -228,10 +235,12 @@ class ManualJournalRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    entity: str
+    entity: str = Field(min_length=1, max_length=ENTITY_CODE_MAX)
     memo: str = Field(min_length=1, max_length=500)
     posting_date: date | None = None
-    lines: list[ManualJournalLineInput] = Field(min_length=2)
+    lines: list[ManualJournalLineInput] = Field(
+        min_length=2, max_length=JOURNAL_LINES_MAX
+    )
 
 
 class FundingRequest(BaseModel):
@@ -244,7 +253,7 @@ class FundingRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    entity: str
+    entity: str = Field(min_length=1, max_length=ENTITY_CODE_MAX)
     amount: Decimal = Field(gt=0)
     memo: str = Field(default="Wallet funding", min_length=1, max_length=500)
     posting_date: date | None = None
@@ -272,7 +281,7 @@ class TaxSettlementRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    entity: str
+    entity: str = Field(min_length=1, max_length=ENTITY_CODE_MAX)
     date_from: date | None = None
     date_to: date | None = None
     memo: str = Field(default="GST return settlement", min_length=1, max_length=500)

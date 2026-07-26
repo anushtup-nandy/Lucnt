@@ -170,8 +170,13 @@ def books_client(client: TestClient, db_session: Session) -> tuple[TestClient, s
     db_session.flush()
     # Imported (USD 100 paid by SGD entity) -> SGD 200 @ 2.0; 9% RCM on top = 18.
     _capture(
-        client, key, vendor="openai", amount="100", currency="USD",
-        model="gpt-5", tokens=128000,
+        client,
+        key,
+        vendor="openai",
+        amount="100",
+        currency="USD",
+        model="gpt-5",
+        tokens=128000,
     )
     # Domestic (SGD) -> 9% GST embedded in 218 (== 18.00 tax).
     _capture(client, key, vendor="localcorp", amount="218", currency="SGD")
@@ -309,8 +314,12 @@ def test_company_level_statements_are_per_currency(
         v = client.post(
             "/transactions/authorize",
             json={
-                "agent": agent, "entity": entity, "vendor": "localcorp",
-                "amount": amount, "currency": currency, "reason": "t",
+                "agent": agent,
+                "entity": entity,
+                "vendor": "localcorp",
+                "amount": amount,
+                "currency": currency,
+                "reason": "t",
             },
             headers=_headers(key),
         ).json()
@@ -332,3 +341,64 @@ def test_company_level_statements_are_per_currency(
     assert by_ccy["USD"]["balanced"] is True
     assert tb["balanced"] is True  # every currency balances
     assert "total_debit" not in tb  # no bogus cross-currency scalar total
+
+
+# --- General ledger bounds (T3-2) -------------------------------------------
+
+
+def test_general_ledger_listing_omits_entries_but_reports_the_count(
+    books_client: tuple[TestClient, str],
+) -> None:
+    """The listing must not serialise every journal line.
+
+    Journal lines run 2-5x transaction count, so returning them all was the one
+    unbounded *response* among the T3-2 endpoints. `entry_count` is what keeps an
+    empty `entries` from reading as "this account has no postings".
+    """
+    client, key = books_client
+    gl = client.get("/books/gl", headers=_headers(key)).json()
+    by_code = {a["account_code"]: a for a in gl["accounts"]}
+    wallet = by_code["1010"]
+    assert wallet["entries"] == []
+    assert wallet["entry_count"] > 0
+
+
+def test_general_ledger_totals_match_the_trial_balance(
+    books_client: tuple[TestClient, str],
+) -> None:
+    """Both statements now read the same grouped aggregate — they cannot disagree."""
+    client, key = books_client
+    gl = client.get("/books/gl", headers=_headers(key)).json()
+    tb = client.get("/books/tb", headers=_headers(key)).json()
+    gl_by_code = {
+        (a["account_code"], a["currency"]): (a["total_debit"], a["total_credit"])
+        for a in gl["accounts"]
+    }
+    for row in tb["rows"]:
+        key_ = (row["account_code"], row["currency"])
+        assert gl_by_code[key_] == (row["debit"], row["credit"])
+
+
+def test_general_ledger_account_filter_returns_bounded_entries(
+    books_client: tuple[TestClient, str],
+) -> None:
+    """`?account=` is the detail view, and it is paginated."""
+    client, key = books_client
+    gl = client.get("/books/gl?account=1010", headers=_headers(key)).json()
+    assert [a["account_code"] for a in gl["accounts"]] == ["1010"]
+    section = gl["accounts"][0]
+    assert len(section["entries"]) == section["entry_count"]
+
+    one = client.get("/books/gl?account=1010&limit=1", headers=_headers(key)).json()
+    assert len(one["accounts"][0]["entries"]) == 1
+    # The totals are unaffected by the page — they come from the aggregate.
+    assert one["accounts"][0]["total_debit"] == section["total_debit"]
+    assert one["accounts"][0]["entry_count"] == section["entry_count"]
+
+
+def test_general_ledger_rejects_oversized_limit(
+    books_client: tuple[TestClient, str],
+) -> None:
+    client, key = books_client
+    response = client.get("/books/gl?account=1010&limit=10000", headers=_headers(key))
+    assert response.status_code == 422

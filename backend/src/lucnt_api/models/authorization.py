@@ -61,6 +61,18 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+        # Hot-path indexes (T3-1). `reserved_spend` filters (agent_id, status);
+        # `recent_activity_count` adds created_at — one composite serves both, so
+        # authorize() stops sequentially scanning holds twice per call
+        # (`services/spend_window.py:104,154`). The second index serves the
+        # review/human_hold approval queue.
+        Index(
+            "ix_authorizations_agent_id_status_created_at",
+            "agent_id",
+            "status",
+            "created_at",
+        ),
+        Index("ix_authorizations_company_id_status", "company_id", "status"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))

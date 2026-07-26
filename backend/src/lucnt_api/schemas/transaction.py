@@ -15,6 +15,19 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from lucnt_api.constants import (
+    AGENT_SLUG_MAX,
+    CATEGORY_MAX,
+    ENTITY_CODE_MAX,
+    INTENT_MAX,
+    MODEL_NAME_MAX,
+    PROJECT_MAX,
+    REASON_MAX,
+    TAX_CATEGORY_MAX,
+    URL_MAX,
+    VENDOR_MAX,
+)
+
 # ISO-4217 alpha codes are three uppercase letters. Membership in the *supported*
 # set is enforced downstream by the fail-closed FX table (a valid-format but
 # unrated currency is rejected at authorize/capture); the schema only guarantees
@@ -27,9 +40,12 @@ class SpendRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    agent: str
-    entity: str
-    vendor: str
+    # Every `max_length` below mirrors the column the value lands in (T3-8).
+    # Without them an oversized string passes validation and fails in Postgres as
+    # a 500 `DataError`; with them the caller gets a 422 naming the field.
+    agent: str = Field(min_length=1, max_length=AGENT_SLUG_MAX)
+    entity: str = Field(min_length=1, max_length=ENTITY_CODE_MAX)
+    vendor: str = Field(min_length=1, max_length=VENDOR_MAX)
     # Money must be strictly positive: a zero/negative authorize would *reduce*
     # projected spend and always approve, and a negative capture would decrement
     # spent_ytd (a budget-refund / theft primitive). See PRODUCTION_PLAN T0-4.
@@ -38,23 +54,25 @@ class SpendRequest(BaseModel):
     # fact only it knows. Never silently defaulted, so a foreign spend can never be
     # mislabelled as domestic. Validated to an ISO-4217 shape and upper-cased.
     currency: str
-    reason: str
-    intent: str | None = None
-    project: str | None = None
+    # `reason` is a TEXT column, so this cap is payload policy, not a column
+    # mirror — it is echoed into `agent.spend.created`.
+    reason: str = Field(min_length=1, max_length=REASON_MAX)
+    intent: str | None = Field(default=None, max_length=INTENT_MAX)
+    project: str | None = Field(default=None, max_length=PROJECT_MAX)
     # Optional expense category (T1-19): a known category
     # (software|ai_compute|travel|marketing|general) books to that account and
     # drives blocked-ITC (T1-14); an unknown value falls back to vendor inference.
-    category: str | None = None
+    category: str | None = Field(default=None, max_length=CATEGORY_MAX)
     # Tax slab + inclusive/exclusive (T1-10). `tax_category` picks the GST rate slab
     # (e.g. "gst_5"|"gst_12"|"gst_28"; omitted ⇒ "standard"); `tax_inclusive` says
     # whether a domestic amount embeds GST (default) or has it added on top.
-    tax_category: str | None = None
+    tax_category: str | None = Field(default=None, max_length=TAX_CATEGORY_MAX)
     tax_inclusive: bool = True
     # Whether the purchase is a service or goods (TE-4). A cross-border *goods*
     # spend routes to a customs path, never the services reverse charge; defaults to
     # ``service`` (agent spend is ~all services), so existing callers are unaffected.
     supply_type: Literal["service", "goods"] = "service"
-    model: str | None = None
+    model: str | None = Field(default=None, max_length=MODEL_NAME_MAX)
     tokens: int | None = Field(default=None, ge=0)
 
     @field_validator("currency")
@@ -105,11 +123,15 @@ class CaptureRequest(BaseModel):
 
     authorization_id: uuid.UUID
     source: Literal["sdk", "card", "invoice"] = "sdk"
-    invoice_url: str | None = None
+    # NOTE: accepted but *not persisted* — `transactions` has no `invoice_url`
+    # column, so this value is silently dropped today. Bounded here so it cannot
+    # be used as an unbounded-payload vector while it remains a no-op; wiring it
+    # to the invoice hook is M3 work, tracked separately.
+    invoice_url: str | None = Field(default=None, max_length=URL_MAX)
     # A settlement override, when present, must be strictly positive (T0-4); its
     # upper bound versus the authorized amount is enforced in the router (T0-3).
     amount: Decimal | None = Field(default=None, gt=0)
-    model: str | None = None
+    model: str | None = Field(default=None, max_length=MODEL_NAME_MAX)
     tokens: int | None = Field(default=None, ge=0)
 
 

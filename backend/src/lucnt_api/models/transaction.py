@@ -17,10 +17,12 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -66,6 +68,45 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         CheckConstraint(
             "exchange_rate > 0", name="ck_transactions_exchange_rate_positive"
         ),
+        # The card/invoice rails' dedup key (T3-6): a redelivered webhook must
+        # not double-book a spend. Partial, so source=sdk rows (always null,
+        # deduped by uq_transactions_authorization_id) stay unconstrained.
+        Index(
+            "uq_transactions_company_transaction_hash",
+            "company_id",
+            "transaction_hash",
+            unique=True,
+            postgresql_where=text("transaction_hash IS NOT NULL"),
+        ),
+        # At most one reversal per original transaction (T1-16, idempotent
+        # reverse). Declared here, not only in migration f3a4b5c6d7e8: without
+        # it `alembic revision --autogenerate` emits a `drop_index` for this
+        # money-integrity guard (caught by `alembic check`).
+        Index(
+            "uq_transactions_reverses_transaction_id",
+            "reverses_transaction_id",
+            unique=True,
+            postgresql_where=text("reverses_transaction_id IS NOT NULL"),
+        ),
+        # Hot-path indexes (T3-1). `(agent_id, transaction_date)` is the most
+        # important index in the schema: `services/spend_window.py` scans it
+        # twice on every authorize() to compute the budget window and the
+        # velocity count. The rest serve the list endpoint, the company-wide
+        # ledger reads (recon scan / intelligence recompute / tax reclass), the
+        # vendor filter, and the per-entity statement filter.
+        Index(
+            "ix_transactions_agent_id_transaction_date",
+            "agent_id",
+            "transaction_date",
+        ),
+        Index("ix_transactions_company_id_created_at", "company_id", "created_at"),
+        Index(
+            "ix_transactions_company_id_transaction_date",
+            "company_id",
+            "transaction_date",
+        ),
+        Index("ix_transactions_company_id_vendor", "company_id", "vendor"),
+        Index("ix_transactions_entity_id", "entity_id"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))

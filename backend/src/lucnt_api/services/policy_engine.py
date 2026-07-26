@@ -26,8 +26,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
 
+from lucnt_api.constants import MERCHANT_LIST_MAX, VENDOR_MAX
 from lucnt_api.models.authorization import VerdictStatus
 from lucnt_api.models.policy import Policy, PolicyRuleType
 
@@ -59,11 +60,29 @@ class BudgetCapConfig(BaseModel):
 
 
 class MerchantListConfig(BaseModel):
-    """Allow- or block-list of vendors (matched case-insensitively)."""
+    """Allow- or block-list of vendors (matched case-insensitively).
+
+    The list is bounded (T3-8) on two grounds: it is hand-authored configuration,
+    and `evaluate()` scans it linearly on every `authorize()` — so an unbounded
+    list is latency on the blocking money path, not just an oversized payload.
+    Each entry mirrors the `vendor` column it is compared against.
+    """
 
     model_config = {"extra": "forbid"}
     mode: Literal["allow", "block"]
-    vendors: list[str] = Field(min_length=1)
+    vendors: list[str] = Field(
+        min_length=1,
+        max_length=MERCHANT_LIST_MAX,
+    )
+
+    @field_validator("vendors")
+    @classmethod
+    def _check_vendor_lengths(cls, value: list[str]) -> list[str]:
+        """Reject an entry wider than the `vendor` column it is matched against."""
+        for vendor in value:
+            if len(vendor) > VENDOR_MAX:
+                raise ValueError(f"vendor entries must be <= {VENDOR_MAX} characters")
+        return value
 
 
 class VelocityConfig(BaseModel):

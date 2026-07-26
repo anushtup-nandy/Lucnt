@@ -21,6 +21,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt_api.database import get_db
@@ -31,10 +32,18 @@ from lucnt_api.models import (
     ApiKeyMode,
     Company,
     Entity,
+    Fingerprint,
     Transaction,
     TransactionSource,
 )
+from lucnt_api.routers.intelligence import (
+    _cost_units_for_agent,
+    _month_to_date,
+    _month_to_date_for_agent,
+    _record,
+)
 from lucnt_api.security import generate_api_key, hash_api_key
+from lucnt_api.services.intelligence import CostUnit, cost_per_output
 
 _NOW = datetime.now(timezone.utc)
 
@@ -190,9 +199,7 @@ def test_recompute_builds_fingerprint_and_memories(
     assert "openai" in affinity["summary"]
 
 
-def test_recompute_flags_budget_risk(
-    client: TestClient, db_session: Session
-) -> None:
+def test_recompute_flags_budget_risk(client: TestClient, db_session: Session) -> None:
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company)
     # $5,000 this month against a $1,000 budget -> run-rate always projects over.
@@ -232,16 +239,12 @@ def test_recompute_flags_anomaly(client: TestClient, db_session: Session) -> Non
     _make_transaction(db_session, company, agent, entity, amount="100", when=_NOW)
 
     client.post("/intelligence/recompute", headers=_auth(key))
-    insights = client.get(
-        "/insights?insight_type=anomaly", headers=_auth(key)
-    ).json()
+    insights = client.get("/insights?insight_type=anomaly", headers=_auth(key)).json()
     assert insights["total"] == 1
     assert "σ" in insights["items"][0]["value_text"]
 
 
-def test_recompute_flags_cost_spike(
-    client: TestClient, db_session: Session
-) -> None:
+def test_recompute_flags_cost_spike(client: TestClient, db_session: Session) -> None:
     company, key, agent, entity = _setup(db_session)
     # Two charges per project (a one-off is not a spike, T2-13). Unit avg costs are
     # [10, 12, 100]; leave-one-out median for "spike" is 11, 3x = 33, so only
@@ -281,9 +284,7 @@ def test_recompute_is_idempotent(client: TestClient, db_session: Session) -> Non
     assert client.get("/memory", headers=_auth(key)).json()["total"] == 3
 
 
-def test_recompute_scoped_to_company(
-    client: TestClient, db_session: Session
-) -> None:
+def test_recompute_scoped_to_company(client: TestClient, db_session: Session) -> None:
     company_a, key_a = _make_company_with_key(db_session)
     entity_a = _make_entity(db_session, company_a)
     agent_a = _make_agent(
@@ -332,9 +333,9 @@ def test_dismissed_insight_not_regenerated(
     assert client.get("/insights", headers=_auth(key)).json()["total"] == 0  # hidden
     client.post("/intelligence/recompute", headers=_auth(key))  # must not resurrect
     assert client.get("/insights", headers=_auth(key)).json()["total"] == 0
-    all_ins = client.get(
-        "/insights?include_dismissed=true", headers=_auth(key)
-    ).json()["items"]
+    all_ins = client.get("/insights?include_dismissed=true", headers=_auth(key)).json()[
+        "items"
+    ]
     assert any(i["id"] == insight_id and i["is_dismissed"] for i in all_ins)
 
 
@@ -364,9 +365,7 @@ def test_cold_start_memory_for_learning_agent(
 def test_apply_insight(client: TestClient, db_session: Session) -> None:
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company)
-    agent = _make_agent(
-        db_session, company, entity, slug="burner", monthly_budget="1"
-    )
+    agent = _make_agent(db_session, company, entity, slug="burner", monthly_budget="1")
     _make_transaction(db_session, company, agent, entity, amount="1000")
 
     client.post("/intelligence/recompute", headers=_auth(key))
@@ -374,9 +373,7 @@ def test_apply_insight(client: TestClient, db_session: Session) -> None:
     assert inbox["unapplied_count"] == 1
     insight_id = inbox["items"][0]["id"]
 
-    applied = client.post(
-        f"/insights/{insight_id}/apply", headers=_auth(key)
-    ).json()
+    applied = client.post(f"/insights/{insight_id}/apply", headers=_auth(key)).json()
     assert applied["is_applied"] is True
     assert applied["applied_at"] is not None
 
@@ -394,9 +391,7 @@ def test_applied_insight_survives_recompute(
 ) -> None:
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company)
-    agent = _make_agent(
-        db_session, company, entity, slug="burner", monthly_budget="1"
-    )
+    agent = _make_agent(db_session, company, entity, slug="burner", monthly_budget="1")
     _make_transaction(db_session, company, agent, entity, amount="1000")
 
     client.post("/intelligence/recompute", headers=_auth(key))
@@ -412,9 +407,7 @@ def test_applied_insight_survives_recompute(
     assert insight_id in ids
 
 
-def test_apply_unknown_insight_404(
-    client: TestClient, db_session: Session
-) -> None:
+def test_apply_unknown_insight_404(client: TestClient, db_session: Session) -> None:
     _, key, _, _ = _setup(db_session)
     resp = client.post(f"/insights/{uuid.uuid4()}/apply", headers=_auth(key))
     assert resp.status_code == 404
@@ -433,9 +426,7 @@ def test_query_blank_slate(client: TestClient, db_session: Session) -> None:
     assert Decimal(mem["budget"]["monthly_budget"]) == Decimal("100000")
 
 
-def test_query_live_financial_memory(
-    client: TestClient, db_session: Session
-) -> None:
+def test_query_live_financial_memory(client: TestClient, db_session: Session) -> None:
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company)
     agent = _make_agent(
@@ -459,9 +450,7 @@ def test_query_live_financial_memory(
             when=_NOW - timedelta(hours=i),
         )
 
-    mem = client.get(
-        "/intelligence/query?agent=research", headers=_auth(key)
-    ).json()
+    mem = client.get("/intelligence/query?agent=research", headers=_auth(key)).json()
     assert mem["currency"] == "USD"
     # Budget spend is derived from this month's committed ledger (4 x 10), not the
     # never-reset spent_ytd=500 counter (PRODUCTION_PLAN T2-3).
@@ -474,17 +463,13 @@ def test_query_live_financial_memory(
     assert Decimal(report["cost_per_1k_tokens"]) == Decimal("10.0000")
 
 
-def test_query_headline_routing(
-    client: TestClient, db_session: Session
-) -> None:
+def test_query_headline_routing(client: TestClient, db_session: Session) -> None:
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company)
     agent = _make_agent(
         db_session, company, entity, slug="research", monthly_budget="1000000"
     )
-    _make_transaction(
-        db_session, company, agent, entity, amount="10", project="report"
-    )
+    _make_transaction(db_session, company, agent, entity, amount="10", project="report")
 
     budget_q = client.get(
         "/intelligence/query?agent=research&q=how much budget is left",
@@ -505,9 +490,146 @@ def test_query_headline_routing(
     assert "track" in track_q["headline"].lower()
 
 
-def test_query_unknown_agent_404(
-    client: TestClient, db_session: Session
-) -> None:
+def test_query_unknown_agent_404(client: TestClient, db_session: Session) -> None:
     _, key, _, _ = _setup(db_session)
     resp = client.get("/intelligence/query?agent=ghost", headers=_auth(key))
     assert resp.status_code == 404
+
+
+# --- query: persisted fast path vs live fallback (T3-2) ----------------------
+
+
+def test_query_falls_back_to_live_without_a_recompute(
+    client: TestClient, db_session: Session
+) -> None:
+    """The documented contract: `query()` needs no prior recompute.
+
+    Pinned explicitly because the fast path below reads a stored fingerprint —
+    an agent that has never been recomputed must still get real statistics, not
+    a null block.
+    """
+    company, key, agent, entity = _setup(db_session)
+    _make_transaction(db_session, company, agent, entity, amount="10")
+    assert (
+        db_session.execute(
+            select(Fingerprint).where(Fingerprint.agent_id == agent.id)
+        ).scalar_one_or_none()
+        is None
+    )
+
+    body = client.get(
+        f"/intelligence/query?agent={agent.slug}", headers=_auth(key)
+    ).json()
+    assert body["fingerprint"] is not None
+    assert body["fingerprint"]["total_records"] == 1
+
+
+def test_query_serves_the_persisted_fingerprint_after_recompute(
+    client: TestClient, db_session: Session
+) -> None:
+    """The fast path: identical figures, read rather than recomputed."""
+    company, key, agent, entity = _setup(db_session)
+    for amount in ("10", "20", "30"):
+        _make_transaction(db_session, company, agent, entity, amount=amount)
+
+    live = client.get(
+        f"/intelligence/query?agent={agent.slug}", headers=_auth(key)
+    ).json()["fingerprint"]
+    client.post("/intelligence/recompute", headers=_auth(key))
+    stored = client.get(
+        f"/intelligence/query?agent={agent.slug}", headers=_auth(key)
+    ).json()["fingerprint"]
+
+    assert stored == live, "reading the stored fingerprint changed the figures"
+
+
+def test_query_budget_stays_live_when_the_fingerprint_is_stale(
+    client: TestClient, db_session: Session
+) -> None:
+    """The deliberate staleness tradeoff, stated as a test.
+
+    After a recompute, new spend does NOT move the stored statistics — but it
+    MUST move `budget`, which is a live SQL sum. Budget headroom is the figure an
+    agent gates on, so it is the one that may never be stale.
+    """
+    company, key, agent, entity = _setup(db_session)
+    _make_transaction(db_session, company, agent, entity, amount="10")
+    client.post("/intelligence/recompute", headers=_auth(key))
+
+    _make_transaction(db_session, company, agent, entity, amount="25")
+    body = client.get(
+        f"/intelligence/query?agent={agent.slug}", headers=_auth(key)
+    ).json()
+
+    assert Decimal(body["budget"]["spent"]) == Decimal("35"), "budget went stale"
+    assert body["fingerprint"]["total_records"] == 1, "fingerprint unexpectedly fresh"
+
+
+def test_sql_cost_units_match_the_pure_function(
+    client: TestClient, db_session: Session
+) -> None:
+    """The drift guard between the SQL aggregate and the engine it mirrors.
+
+    `_cost_units_for_agent` reimplements `cost_per_output` in SQL. Comments cannot
+    stop those diverging; this can. Covers the awkward cases: an unattributed
+    group, a group where only some rows carry tokens (so token metrics must be
+    suppressed), and two currencies.
+    """
+    company, _key, agent, entity = _setup(db_session)
+    rows = [
+        {"amount": "10", "project": "alpha", "tokens": 100},
+        {"amount": "20", "project": "alpha", "tokens": 200},
+        {"amount": "30", "project": "beta", "tokens": None},
+        {"amount": "40", "project": "beta", "tokens": 400},
+        {"amount": "50", "project": None, "tokens": 500},
+        {"amount": "60", "project": "", "tokens": 600},
+        {"amount": "70", "project": "alpha", "tokens": 700, "currency": "SGD"},
+    ]
+    for row in rows:
+        _make_transaction(db_session, company, agent, entity, **row)  # type: ignore[arg-type]
+
+    records = [
+        _record(txn)
+        for txn in db_session.execute(
+            select(Transaction).where(Transaction.agent_id == agent.id)
+        ).scalars()
+    ]
+    expected = cost_per_output(records)
+    actual = _cost_units_for_agent(db_session, agent.id)
+
+    def _key_of(u: CostUnit) -> tuple[str, str]:
+        return (u.unit, u.currency)
+
+    assert sorted(expected, key=_key_of) == sorted(actual, key=_key_of)
+
+
+def test_sql_month_to_date_matches_the_python_form(
+    client: TestClient, db_session: Session
+) -> None:
+    """Same guard for the MTD sum — including its two quirks.
+
+    It filters to the home currency and does NOT sign-flip reversals, which is
+    what makes it different from `spend_window.committed_spend`.
+    """
+    company, _key, agent, entity = _setup(db_session)
+    _make_transaction(db_session, company, agent, entity, amount="10")
+    _make_transaction(db_session, company, agent, entity, amount="20")
+    _make_transaction(db_session, company, agent, entity, amount="99", currency="SGD")
+    _make_transaction(
+        db_session,
+        company,
+        agent,
+        entity,
+        amount="5",
+        when=_NOW - timedelta(days=70),
+    )
+
+    records = [
+        _record(txn)
+        for txn in db_session.execute(
+            select(Transaction).where(Transaction.agent_id == agent.id)
+        ).scalars()
+    ]
+    assert _month_to_date_for_agent(
+        db_session, agent.id, "USD", _NOW
+    ) == _month_to_date(records, _NOW, "USD")

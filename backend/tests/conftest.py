@@ -12,7 +12,29 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from lucnt_api.config import settings
 from lucnt_api.database import engine
+from lucnt_api.rate_limit import get_limiter
+
+
+@pytest.fixture(autouse=True)
+def _rate_limiting_off() -> Iterator[None]:
+    """Disable rate limiting for the suite, and say why explicitly (T3-7).
+
+    Redis runs in local compose, so leaving the limiter on would make the suite
+    depend on wall-clock windows and on counters surviving between runs: the
+    `auth_failure` bucket is keyed by IP, every test shares `testclient`, and
+    several tests deliberately send bad keys. Tests that *exercise* the limiter
+    re-enable it and use a unique identity per test so their window starts empty.
+    """
+    original = settings.rate_limit_enabled
+    settings.rate_limit_enabled = False
+    get_limiter.cache_clear()
+    try:
+        yield
+    finally:
+        settings.rate_limit_enabled = original
+        get_limiter.cache_clear()
 
 
 @pytest.fixture

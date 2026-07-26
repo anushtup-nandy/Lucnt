@@ -51,12 +51,18 @@ class WorkflowBudget(BaseModel):
 
 
 class BudgetsResponse(BaseModel):
-    """Response body for `GET /budgets` — per-agent + per-workflow rollups."""
+    """Response body for `GET /budgets` — per-agent + per-workflow rollups.
+
+    `total` counts every agent matching the request's filters, not the length of
+    the returned `agents` page (T3-3). `workflows` is unpaginated and rolls up
+    *all* member agents, so a rollup stays correct regardless of the page.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     agents: list[AgentBudget]
     workflows: list[WorkflowBudget]
+    total: int = 0
 
 
 class BudgetUpdate(BaseModel):

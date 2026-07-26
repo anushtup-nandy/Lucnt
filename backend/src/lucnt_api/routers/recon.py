@@ -27,6 +27,7 @@ from lucnt_api.dependencies import (
     get_current_company,
     get_db,
     require_admin,
+    require_cheap_enough,
 )
 from lucnt_api.models import (
     Company,
@@ -35,6 +36,7 @@ from lucnt_api.models import (
     ReconExceptionType,
     Transaction,
 )
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.recon import (
     FailedDeliveryRequest,
     ReconExceptionResponse,
@@ -51,6 +53,11 @@ router = APIRouter(prefix="/recon", tags=["reconciliation"])
 # Non-terminal statuses — an exception in one of these is still "in the inbox".
 _ACTIVE_STATUSES = (ReconExceptionStatus.OPEN, ReconExceptionStatus.RECOVERING)
 _TERMINAL_STATUSES = (ReconExceptionStatus.RESOLVED, ReconExceptionStatus.DISMISSED)
+
+# Rows fetched per round trip when streaming the ledger in `scan` (T3-2). Large
+# enough that the per-chunk round trip is amortised over a whole-ledger read,
+# small enough that no single fetch is itself the memory spike we are removing.
+_LEDGER_CHUNK_SIZE = 1_000
 
 
 def _to_response(exc: ReconciliationException) -> ReconExceptionResponse:
@@ -109,8 +116,7 @@ def list_exceptions(
     exception_type: ReconExceptionType | None = Query(
         default=None, description="Filter by exception type"
     ),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate()),
 ) -> ReconListResponse:
     """List reconciliation exceptions, grouped by currency, highest stake first.
 
@@ -126,7 +132,7 @@ def list_exceptions(
     if exception_type is not None:
         stmt = stmt.where(ReconciliationException.exception_type == exception_type)
 
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
         db.execute(
             stmt.order_by(
@@ -134,8 +140,8 @@ def list_exceptions(
                 ReconciliationException.amount_at_stake.desc(),
                 ReconciliationException.created_at.desc(),
             )
-            .offset(offset)
-            .limit(limit)
+            .offset(page.offset)
+            .limit(page.limit)
         )
         .scalars()
         .all()
@@ -149,7 +155,14 @@ def list_exceptions(
     )
 
 
-@router.post("/scan", response_model=ScanResponse)
+@router.post(
+    "/scan",
+    response_model=ScanResponse,
+    # Tight per-key bucket on top of the admin gate (T3-7): the cost of a
+    # scan is proportional to ledger size, so valid credentials alone are
+    # enough to pin a worker (T3-2).
+    dependencies=[Depends(require_cheap_enough)],
+)
 def scan(
     company: Company = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -165,23 +178,42 @@ def scan(
       (a subscription, a repeated overcharge) is not re-raised on next month's new
       transaction row (T2-7).
     """
-    txns = list(
-        db.execute(select(Transaction).where(Transaction.company_id == company.id))
-        .scalars()
-        .all()
-    )
-    views = [
-        TxnView(
-            id=t.id,
-            agent_id=t.agent_id,
-            vendor=t.vendor,
-            paid_amount=t.paid_amount,
-            paid_currency=t.paid_currency,
-            transaction_date=t.transaction_date,
+    # T3-2: select only the six columns `TxnView` needs and stream them in
+    # bounded chunks, building the list and its index in a single pass. Loading
+    # ORM entities held three copies of the ledger resident at once (identity
+    # map, views, index) to produce a response of three scalars.
+    views: list[TxnView] = []
+    view_by_id: dict[uuid.UUID, TxnView] = {}
+    ledger = db.execute(
+        select(
+            Transaction.id,
+            Transaction.agent_id,
+            Transaction.vendor,
+            Transaction.paid_amount,
+            Transaction.paid_currency,
+            Transaction.transaction_date,
         )
-        for t in txns
-    ]
-    view_by_id = {v.id: v for v in views}
+        .where(Transaction.company_id == company.id)
+        .execution_options(yield_per=_LEDGER_CHUNK_SIZE)
+    ).tuples()
+    for (
+        txn_id,
+        agent_id,
+        vendor,
+        paid_amount,
+        paid_currency,
+        transaction_date,
+    ) in ledger:
+        view = TxnView(
+            id=txn_id,
+            agent_id=agent_id,
+            vendor=vendor,
+            paid_amount=paid_amount,
+            paid_currency=paid_currency,
+            transaction_date=transaction_date,
+        )
+        views.append(view)
+        view_by_id[txn_id] = view
 
     # Existing (txn, type) pairs and recurring-identity dedup_keys (any status).
     existing_pairs: set[tuple[uuid.UUID, ReconExceptionType]] = set()

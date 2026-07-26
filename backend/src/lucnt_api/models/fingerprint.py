@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,8 @@ class Fingerprint(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # One fingerprint per agent, ever — recompute upserts this row rather
         # than appending, so the fingerprint is a single evolving record.
         UniqueConstraint("agent_id", name="uq_fingerprints_agent"),
+        # Company-scoped reads during recompute (T3-1); agent_id is unique already.
+        Index("ix_fingerprints_company_id", "company_id"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))

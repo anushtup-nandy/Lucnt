@@ -15,6 +15,7 @@ dependencies = [
     "structlog>=24.0",
     "python-dotenv>=1.0",
     "uuid6>=2024.1.12",
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]

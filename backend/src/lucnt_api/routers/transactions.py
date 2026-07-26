@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,7 @@ from lucnt_api.models import (
     VerdictStatus,
     WithholdingRecord,
 )
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.transaction import (
     CaptureRequest,
     JournalLine,
@@ -607,9 +608,7 @@ def authorize(
             on_date=now.date(),
         )
     except FxRateUnavailableError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
-        ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
     # Spend measured against the budget = committed (ledger, period-resetting) +
     # reserved (outstanding approved holds). The stored spent_ytd/spent_today
@@ -736,9 +735,7 @@ def capture(
     # verdict was rendered on the authorized amount and only that amount was
     # reserved against the budget at authorize(). Cap the override at
     # auth x settlement_buffer; a larger true cost must be re-authorized.
-    paid_amount = (
-        request.amount if request.amount is not None else authorization.amount
-    )
+    paid_amount = request.amount if request.amount is not None else authorization.amount
     if request.amount is not None:
         max_settlement = authorization.amount * settings.settlement_buffer
         if request.amount > max_settlement:
@@ -768,9 +765,7 @@ def capture(
             on_date=capture_date.date(),
         )
     except FxRateUnavailableError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
-        ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
     transaction = Transaction(
         company_id=company.id,
@@ -838,9 +833,7 @@ def capture(
         supply_type=transaction.supply_type,
         when=capture_date,
     )
-    _persist_tax_records(
-        db, transaction.id, tax, applied_rule_id, applied_rule_source
-    )
+    _persist_tax_records(db, transaction.id, tax, applied_rule_id, applied_rule_source)
     # Reverse charge requires a buyer-issued self-invoice (r.46): produce the
     # actual record so `self_invoice_generated` is truthful, not fabricated (T1-7).
     if tax.self_invoice_required:
@@ -854,8 +847,12 @@ def capture(
     # deferred, TE-3). Any withholding *block* already gated this at authorize; a
     # capture means it was cleared to proceed, so the record is never blocked.
     withholding = _withholding_outcome(
-        db, company, entity, transaction.vendor,
-        transaction.local_amount, capture_date.date(),
+        db,
+        company,
+        entity,
+        transaction.vendor,
+        transaction.local_amount,
+        capture_date.date(),
     )
     if withholding.applies:
         db.add(
@@ -1036,8 +1033,7 @@ def list_transactions(
     db: Session = Depends(get_db),
     agent: str | None = Query(default=None, description="Filter by agent slug"),
     vendor: str | None = Query(default=None, description="Filter by vendor"),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate()),
 ) -> TransactionListResponse:
     """List committed transactions for the current company, filterable/paginated."""
     stmt = select(Transaction).where(Transaction.company_id == company.id)
@@ -1047,9 +1043,13 @@ def list_transactions(
     if vendor is not None:
         stmt = stmt.where(Transaction.vendor == vendor)
 
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
-        db.execute(stmt.order_by(Transaction.created_at.desc()).offset(offset).limit(limit))
+        db.execute(
+            stmt.order_by(Transaction.created_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
+        )
         .scalars()
         .all()
     )

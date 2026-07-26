@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Numeric, String
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
@@ -35,6 +35,17 @@ class JournalEntry(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         CheckConstraint(
             "debit >= 0 AND credit >= 0 AND (debit = 0) <> (credit = 0)",
             name="ck_journal_entries_one_sided",
+        ),
+        # Hot-path indexes (T3-1): the transaction FK was unindexed (the reverse
+        # path and `/books/journals` both look lines up by it), and every
+        # statement filters company_id + optional entity_id + optional
+        # posting_date range (`routers/books.py::_aggregates`).
+        Index("ix_journal_entries_transaction_id", "transaction_id"),
+        Index(
+            "ix_journal_entries_company_id_entity_id_posting_date",
+            "company_id",
+            "entity_id",
+            "posting_date",
         ),
     )
 

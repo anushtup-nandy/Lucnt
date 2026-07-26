@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import (
@@ -23,6 +23,7 @@ from lucnt_api.dependencies import (
     require_admin,
 )
 from lucnt_api.models import Agent, Authorization, Company, Entity, VerdictStatus
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.approval import (
     ApprovalActionResponse,
     ApprovalItem,
@@ -65,15 +66,26 @@ def _resolve_pending(
 def list_approvals(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
+    page: Page = Depends(paginate()),
 ) -> ApprovalListResponse:
-    """List holds awaiting approval (review + human_hold) for the current company."""
+    """List holds awaiting approval (review + human_hold) for the current company.
+
+    Paginated (T3-3): the queue grows with how long holds go unattended, which is
+    exactly the situation in which an unbounded response is least welcome.
+    """
     stmt = select(Authorization).where(
         Authorization.company_id == company.id,
         Authorization.status.in_(_PENDING),
     )
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
-        db.execute(stmt.order_by(Authorization.created_at.desc())).scalars().all()
+        db.execute(
+            stmt.order_by(Authorization.created_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
+        )
+        .scalars()
+        .all()
     )
     return ApprovalListResponse(
         items=[ApprovalItem.model_validate(row) for row in rows], total=total

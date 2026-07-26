@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import get_current_company, get_db, require_admin
 from lucnt_api.models import Company, Insight, InsightType
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.intelligence import InsightResponse, InsightsListResponse
 
 router = APIRouter(prefix="/insights", tags=["insights"])
@@ -53,8 +54,7 @@ def list_insights(
     include_dismissed: bool = Query(
         default=False, description="Include dismissed insights"
     ),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate()),
 ) -> InsightsListResponse:
     """List the company's insights, newest first, with an unapplied headline count.
 
@@ -69,10 +69,12 @@ def list_insights(
     if not include_dismissed:
         stmt = stmt.where(Insight.is_dismissed.is_(False))
 
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
         db.execute(
-            stmt.order_by(Insight.created_at.desc()).offset(offset).limit(limit)
+            stmt.order_by(Insight.created_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
         )
         .scalars()
         .all()

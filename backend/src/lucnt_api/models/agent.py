@@ -7,7 +7,16 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +41,15 @@ class Agent(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "agents"
     __table_args__ = (
         UniqueConstraint("company_id", "slug", name="uq_agents_company_slug"),
+        # Unindexed FK, filtered by GET /agents?entity= and the budget rollups.
+        Index("ix_agents_entity_id", "entity_id"),
+        # The agent_owner persona scopes GET /agents by owner_user_id
+        # (CLAUDE.local.md step 4). Partial: null for most rows today (T3-1).
+        Index(
+            "ix_agents_owner_user_id",
+            "owner_user_id",
+            postgresql_where=text("owner_user_id IS NOT NULL"),
+        ),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))

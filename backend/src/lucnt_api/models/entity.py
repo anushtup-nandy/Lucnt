@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, String
+from sqlalchemy import ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
@@ -15,6 +15,13 @@ class Entity(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     """A legal entity (subsidiary/jurisdiction) belonging to a company."""
 
     __tablename__ = "entities"
+    __table_args__ = (
+        # An entity code is the lookup key `authorize()` and every statement
+        # resolve on (T3-5). A duplicate makes `scalar_one_or_none()` raise
+        # MultipleResultsFound — a 500 that takes the spend path down for that
+        # entity. Mirrors uq_agents_company_slug; also indexes the lookup.
+        Index("uq_entities_company_code", "company_id", "code", unique=True),
+    )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(255))

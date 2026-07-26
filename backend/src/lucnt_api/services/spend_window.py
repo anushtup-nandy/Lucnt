@@ -13,6 +13,7 @@ approval queue (T0-11) — measures the budget identically. Free of routing/HTTP
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timezone, tzinfo
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -20,7 +21,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import ColumnElement, case, func, select
 from sqlalchemy.orm import Session
 
-from lucnt_api.models import Authorization, Entity, Transaction, VerdictStatus
+from lucnt_api.models import Agent, Authorization, Entity, Transaction, VerdictStatus
 
 __all__ = [
     "now_in_entity_tz",
@@ -29,6 +30,7 @@ __all__ = [
     "reserved_spend",
     "recent_activity_count",
     "period_committed_spend",
+    "company_period_committed_spend",
 ]
 
 
@@ -130,6 +132,64 @@ def period_committed_spend(
         committed_spend(db, agent_id, month_start),
         committed_spend(db, agent_id, day_start),
     )
+
+
+def company_period_committed_spend(
+    db: Session, company_id: uuid.UUID, entities: Iterable[Entity]
+) -> dict[uuid.UUID, tuple[Decimal, Decimal]]:
+    """`(this_month, today)` committed spend for every agent in a company.
+
+    The batched counterpart to ``period_committed_spend``, which costs two
+    queries *per agent* — a query storm at any real agent count (T3-3). Since
+    month/day boundaries are entity-local (T2-9), agents are grouped by entity
+    and one aggregate runs per entity: O(entities) queries, not O(agents), and
+    for the common single-entity tenant exactly one.
+
+    Filters on `agent_id`/`transaction_date` alone, exactly as
+    ``committed_spend`` does — the `agents` join only selects *which* agents,
+    so a transaction stamped with a different `entity_id` than its agent's
+    still lands in the same bucket both functions would put it in.
+
+    Args:
+        db: Session to query.
+        company_id: Tenant whose agents to total.
+        entities: The company's entities, supplying the local period boundaries.
+
+    Returns:
+        `{agent_id: (this_month, today)}`. An agent with no spend this month is
+        **absent**, not zero — callers must default it.
+    """
+    signed_amount = case(
+        (Transaction.reverses_transaction_id.is_(None), Transaction.local_amount),
+        else_=-Transaction.local_amount,
+    )
+    spend: dict[uuid.UUID, tuple[Decimal, Decimal]] = {}
+    for entity in entities:
+        month_start, day_start = period_starts(now_in_entity_tz(entity))
+        rows = db.execute(
+            select(
+                Transaction.agent_id,
+                func.coalesce(func.sum(signed_amount), 0),
+                # The outer WHERE already bounds to month_start, so only the
+                # narrower today-window needs its own FILTER.
+                func.coalesce(
+                    func.sum(signed_amount).filter(
+                        Transaction.transaction_date >= day_start
+                    ),
+                    0,
+                ),
+            )
+            .join(Agent, Agent.id == Transaction.agent_id)
+            .where(
+                Agent.company_id == company_id,
+                Agent.entity_id == entity.id,
+                Transaction.transaction_date >= month_start,
+            )
+            .group_by(Transaction.agent_id)
+        ).all()
+        for agent_id, month_total, today_total in rows:
+            spend[agent_id] = (Decimal(month_total), Decimal(today_total))
+    return spend
 
 
 def recent_activity_count(db: Session, agent_id: uuid.UUID, since: datetime) -> int:

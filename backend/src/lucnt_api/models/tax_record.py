@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, String, Text
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
@@ -20,6 +20,11 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     """The tax treatment (type, rate, amount, reclaim, self-invoice) for a txn."""
 
     __tablename__ = "tax_records"
+    __table_args__ = (
+        # Unindexed FK (T3-1): `services/tax_reclass.py` and the capture-replay
+        # rebuild both look records up by transaction.
+        Index("ix_tax_records_transaction_id", "transaction_id"),
+    )
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transactions.id"))
     # e.g. "GST_RCM" (reverse charge), "GST" (domestic), "SALES_TAX", "NONE".

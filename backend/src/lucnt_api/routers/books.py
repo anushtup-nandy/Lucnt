@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
+from lucnt_api.constants import ACCOUNT_CODE_MAX
 from lucnt_api.dependencies import (
     AuthContext,
     get_auth_context,
@@ -38,6 +39,7 @@ from lucnt_api.models import (
     JournalEntry,
     Transaction,
 )
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.books import (
     BalanceSheetResponse,
     BalanceSheetTotals,
@@ -130,6 +132,9 @@ class _Aggregate:
     currency: str
     debit: Decimal
     credit: Decimal
+    # Number of journal lines behind these totals. Only the general ledger reads
+    # it (T3-2); the trial balance and P&L ignore it.
+    line_count: int = 0
 
 
 def _resolve_entity_id(
@@ -172,6 +177,7 @@ def _aggregates(
             JournalEntry.currency,
             func.coalesce(func.sum(JournalEntry.debit), _ZERO).label("total_debit"),
             func.coalesce(func.sum(JournalEntry.credit), _ZERO).label("total_credit"),
+            func.count().label("line_count"),
         )
         .select_from(JournalEntry)
         .outerjoin(
@@ -198,13 +204,12 @@ def _aggregates(
             account_code=row.account_code,
             account_name=row.account_name or f"UNMAPPED {row.account_code}",
             category=(
-                _category_str(row.category)
-                if row.category is not None
-                else _UNMAPPED
+                _category_str(row.category) if row.category is not None else _UNMAPPED
             ),
             currency=row.currency,
             debit=row.total_debit,
             credit=row.total_credit,
+            line_count=row.line_count,
         )
         for row in db.execute(stmt)
     ]
@@ -223,32 +228,62 @@ def _category_str(category: AccountCategory | str) -> str:
     return category.value if isinstance(category, AccountCategory) else str(category)
 
 
-def _gl_account(
-    code: str, category: str, currency: str, lines: list[JournalEntry]
-) -> GLAccount:
-    """Assemble one general-ledger account section (per account + currency)."""
-    total_debit = sum((ln.debit for ln in lines), _ZERO)
-    total_credit = sum((ln.credit for ln in lines), _ZERO)
-    return GLAccount(
-        account_code=code,
-        account_name=lines[0].account_name,
-        category=category,
-        currency=currency,
-        total_debit=total_debit,
-        total_credit=total_credit,
-        balance=total_debit - total_credit,
-        entries=[
-            JournalLineRead(
-                account_code=ln.account_code,
-                account_name=ln.account_name,
-                debit=ln.debit,
-                credit=ln.credit,
-                ledger=ln.ledger,
-                currency=ln.currency,
-            )
-            for ln in lines
-        ],
+def _gl_entries(
+    db: Session,
+    company: Company,
+    entity_id: uuid.UUID | None,
+    account_code: str,
+    date_from: date | None,
+    date_to: date | None,
+    page: Page,
+) -> dict[tuple[str, str], list[JournalLineRead]]:
+    """One page of a single account's journal lines, keyed by (code, currency).
+
+    Scoped to one account and bounded by `page` so the general ledger never
+    materialises the whole journal (T3-2). Ordered by currency then posting time
+    so paging is stable; a page may therefore straddle two currency sections of
+    the same account.
+
+    Args:
+        db: Session to query.
+        company: Tenant scope.
+        entity_id: Optional entity filter, already resolved from its code.
+        account_code: The single account whose lines to read.
+        date_from: Inclusive period start, or None.
+        date_to: Inclusive period end, or None.
+        page: The `(limit, offset)` window.
+
+    Returns:
+        `{(account_code, currency): [line, ...]}` for the requested page.
+    """
+    stmt = (
+        select(JournalEntry)
+        .where(
+            JournalEntry.company_id == company.id,
+            JournalEntry.account_code == account_code,
+        )
+        .order_by(JournalEntry.currency, JournalEntry.created_at)
+        .offset(page.offset)
+        .limit(page.limit)
     )
+    if entity_id is not None:
+        stmt = stmt.where(JournalEntry.entity_id == entity_id)
+    for condition in _posting_date_conditions(date_from, date_to):
+        stmt = stmt.where(condition)
+
+    grouped: dict[tuple[str, str], list[JournalLineRead]] = defaultdict(list)
+    for line in db.execute(stmt).scalars():
+        grouped[(line.account_code, line.currency)].append(
+            JournalLineRead(
+                account_code=line.account_code,
+                account_name=line.account_name,
+                debit=line.debit,
+                credit=line.credit,
+                ledger=line.ledger,
+                currency=line.currency,
+            )
+        )
+    return grouped
 
 
 def _net_profit(aggregates: list[_Aggregate]) -> Decimal:
@@ -269,8 +304,7 @@ def get_journals(
     entity: str | None = Query(default=None, description="Filter by entity code"),
     date_from: date | None = Query(default=None, description=_FROM_DESC),
     date_to: date | None = Query(default=None, description=_TO_DESC),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate()),
 ) -> JournalsResponse:
     """Journal explorer: postings grouped by transaction, newest first."""
     entity_id = _resolve_entity_id(db, company, entity)
@@ -284,10 +318,12 @@ def get_journals(
     for condition in _txn_date_conditions(date_from, date_to):
         base = base.where(condition)
 
-    total = db.execute(select(func.count()).select_from(base.subquery())).scalar_one()
+    total = count_total(db, base)
     transactions = (
         db.execute(
-            base.order_by(Transaction.created_at.desc()).limit(limit).offset(offset)
+            base.order_by(Transaction.created_at.desc())
+            .limit(page.limit)
+            .offset(page.offset)
         )
         .scalars()
         .all()
@@ -340,45 +376,55 @@ def get_general_ledger(
     entity: str | None = Query(default=None, description="Filter by entity code"),
     date_from: date | None = Query(default=None, description=_FROM_DESC),
     date_to: date | None = Query(default=None, description=_TO_DESC),
+    account: str | None = Query(
+        default=None,
+        max_length=ACCOUNT_CODE_MAX,
+        description="Return this account's individual journal lines",
+    ),
+    page: Page = Depends(paginate()),
 ) -> GeneralLedgerResponse:
-    """General ledger: every posted account/currency with postings and balance."""
+    """General ledger: every posted account/currency with its totals and balance.
+
+    Two shapes, because the line-level view is the only unbounded one (T3-2):
+
+    * **Listing** (no `account`) — totals per account/currency, computed by a
+      SQL `GROUP BY`. Costs one row per account, not one per journal line, so it
+      no longer loads a 500k-line ledger into memory to add up six numbers.
+      `entries` is empty here and `entry_count` reports how many lines exist.
+    * **Detail** (`?account=CODE`) — the same totals plus that account's lines,
+      bounded by `limit`/`offset`. Journal lines run 2-5x transaction count, so
+      this is the one place the row-level cost has to be paid, and it is paid a
+      page at a time.
+    """
     entity_id = _resolve_entity_id(db, company, entity)
 
-    stmt = (
-        select(JournalEntry, Account.category)
-        .select_from(JournalEntry)
-        .outerjoin(
-            Account,
-            (Account.company_id == JournalEntry.company_id)
-            & (Account.account_code == JournalEntry.account_code),
-        )
-        .where(JournalEntry.company_id == company.id)
-        .order_by(
-            JournalEntry.currency,
-            JournalEntry.account_code,
-            JournalEntry.created_at,
-        )
-    )
-    if entity_id is not None:
-        stmt = stmt.where(JournalEntry.entity_id == entity_id)
-    for condition in _posting_date_conditions(date_from, date_to):
-        stmt = stmt.where(condition)
+    # Totals come from the same grouped aggregate the trial balance and P&L use,
+    # so the three statements can never disagree about an account's balance.
+    aggregates = [
+        a
+        for a in _aggregates(db, company, entity_id, date_from, date_to)
+        if account is None or a.account_code == account
+    ]
 
-    # Key each section by (account_code, currency): the same account posted to in
-    # two currencies is two sections, never one mixed-currency balance. A code with
-    # no CoA account (LEFT JOIN miss) is surfaced in a loud `unmapped` bucket.
-    grouped: dict[tuple[str, str], list[JournalEntry]] = defaultdict(list)
-    category_by_key: dict[tuple[str, str], str] = {}
-    for line, category in db.execute(stmt):
-        key = (line.account_code, line.currency)
-        grouped[key].append(line)
-        category_by_key[key] = (
-            _category_str(category) if category is not None else _UNMAPPED
+    entries_by_key: dict[tuple[str, str], list[JournalLineRead]] = {}
+    if account is not None:
+        entries_by_key = _gl_entries(
+            db, company, entity_id, account, date_from, date_to, page
         )
 
     accounts = [
-        _gl_account(code, category_by_key[(code, currency)], currency, lines)
-        for (code, currency), lines in sorted(grouped.items())
+        GLAccount(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            category=a.category,
+            currency=a.currency,
+            total_debit=a.debit,
+            total_credit=a.credit,
+            balance=a.debit - a.credit,
+            entry_count=a.line_count,
+            entries=entries_by_key.get((a.account_code, a.currency), []),
+        )
+        for a in aggregates
     ]
     return GeneralLedgerResponse(accounts=accounts)
 
@@ -435,26 +481,38 @@ def get_profit_and_loss(
     aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     income = [
-        BookLine(account_code=a.account_code, account_name=a.account_name,
-                 currency=a.currency, amount=a.credit - a.debit)
+        BookLine(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            currency=a.currency,
+            amount=a.credit - a.debit,
+        )
         for a in aggregates
         if a.category == "income"
     ]
     expenses = [
-        BookLine(account_code=a.account_code, account_name=a.account_name,
-                 currency=a.currency, amount=a.debit - a.credit)
+        BookLine(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            currency=a.currency,
+            amount=a.debit - a.credit,
+        )
         for a in aggregates
         if a.category == "expense"
     ]
     currencies = [
         ProfitAndLossTotals(
             currency=ccy,
-            total_income=(ti := sum(
-                (a.credit - a.debit for a in aggs if a.category == "income"), _ZERO
-            )),
-            total_expenses=(te := sum(
-                (a.debit - a.credit for a in aggs if a.category == "expense"), _ZERO
-            )),
+            total_income=(
+                ti := sum(
+                    (a.credit - a.debit for a in aggs if a.category == "income"), _ZERO
+                )
+            ),
+            total_expenses=(
+                te := sum(
+                    (a.debit - a.credit for a in aggs if a.category == "expense"), _ZERO
+                )
+            ),
             net_profit=ti - te,
         )
         for ccy, aggs in sorted(_by_currency(aggregates).items())
@@ -477,20 +535,32 @@ def get_balance_sheet(
     aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     assets = [
-        BookLine(account_code=a.account_code, account_name=a.account_name,
-                 currency=a.currency, amount=a.debit - a.credit)
+        BookLine(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            currency=a.currency,
+            amount=a.debit - a.credit,
+        )
         for a in aggregates
         if a.category == "asset"
     ]
     liabilities = [
-        BookLine(account_code=a.account_code, account_name=a.account_name,
-                 currency=a.currency, amount=a.credit - a.debit)
+        BookLine(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            currency=a.currency,
+            amount=a.credit - a.debit,
+        )
         for a in aggregates
         if a.category == "liability"
     ]
     equity = [
-        BookLine(account_code=a.account_code, account_name=a.account_name,
-                 currency=a.currency, amount=a.credit - a.debit)
+        BookLine(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            currency=a.currency,
+            amount=a.credit - a.debit,
+        )
         for a in aggregates
         if a.category == "equity"
     ]
@@ -550,8 +620,12 @@ def get_cash_flow(
     aggregates = _aggregates(db, company, entity_id, date_from, date_to)
 
     operating = [
-        BookLine(account_code=a.account_code, account_name=a.account_name,
-                 currency=a.currency, amount=a.debit - a.credit)
+        BookLine(
+            account_code=a.account_code,
+            account_name=a.account_name,
+            currency=a.currency,
+            amount=a.debit - a.credit,
+        )
         for a in aggregates
         if a.account_code == WALLET_CODE
     ]
@@ -664,8 +738,14 @@ def create_manual_journal(
     posting_date = request.posting_date or datetime.now(timezone.utc).date()
     specs = [(ln.account_code, ln.debit, ln.credit) for ln in request.lines]
     result = _post_journal(
-        db, company, entity, posting_date, request.memo, entity.currency,
-        specs, accounts,
+        db,
+        company,
+        entity,
+        posting_date,
+        request.memo,
+        entity.currency,
+        specs,
+        accounts,
     )
     record_audit(
         db,
@@ -710,8 +790,14 @@ def create_funding(
         (CONTRIBUTED_CAPITAL_CODE, _ZERO, request.amount),
     ]
     result = _post_journal(
-        db, company, entity, posting_date, request.memo, entity.currency,
-        specs, accounts,
+        db,
+        company,
+        entity,
+        posting_date,
+        request.memo,
+        entity.currency,
+        specs,
+        accounts,
     )
     record_audit(
         db,
@@ -756,14 +842,10 @@ def settle_taxes(
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
     posting_date = (
-        request.posting_date
-        or request.date_to
-        or datetime.now(timezone.utc).date()
+        request.posting_date or request.date_to or datetime.now(timezone.utc).date()
     )
 
-    aggregates = _aggregates(
-        db, company, entity.id, request.date_from, request.date_to
-    )
+    aggregates = _aggregates(db, company, entity.id, request.date_from, request.date_to)
     by_code = {a.account_code: a for a in aggregates if a.currency == entity.currency}
 
     heads: list[TaxSettlementHead] = []
@@ -809,8 +891,14 @@ def settle_taxes(
     journal = None
     if specs:
         journal = _post_journal(
-            db, company, entity, posting_date, request.memo, entity.currency,
-            specs, accounts,
+            db,
+            company,
+            entity,
+            posting_date,
+            request.memo,
+            entity.currency,
+            specs,
+            accounts,
         )
         record_audit(
             db,

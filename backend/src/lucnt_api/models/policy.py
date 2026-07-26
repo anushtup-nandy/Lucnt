@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,11 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     """A single governance rule the policy engine evaluates at authorize time."""
 
     __tablename__ = "policies"
+    __table_args__ = (
+        # Read on every authorize() (`routers/transactions.py:129-131`) — an
+        # unindexed sequential scan of the whole policy table per call (T3-1).
+        Index("ix_policies_company_id_active", "company_id", "active"),
+    )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(255))

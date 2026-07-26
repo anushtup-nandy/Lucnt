@@ -13,9 +13,9 @@ from __future__ import annotations
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from lucnt_api.dependencies import (
     AuthContext,
@@ -25,6 +25,7 @@ from lucnt_api.dependencies import (
     require_admin,
 )
 from lucnt_api.models import Agent, Company, Entity, Workflow
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.budget import (
     AgentBudget,
     BudgetsResponse,
@@ -32,12 +33,19 @@ from lucnt_api.schemas.budget import (
     WorkflowBudget,
 )
 from lucnt_api.services.audit import record as record_audit
-from lucnt_api.services.spend_window import period_committed_spend
+from lucnt_api.services.spend_window import (
+    company_period_committed_spend,
+    period_committed_spend,
+)
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
 
 _WARNING_PCT = Decimal("80")  # utilisation at/above which a budget reads "warning"
 _ONE_PLACE = Decimal("0.1")
+SLUG_MAX_LENGTH = 100  # mirrors models.Agent.slug — String(100)
+
+# An agent absent from the batched spend map simply has no spend this month.
+_NO_SPEND = (Decimal("0"), Decimal("0"))
 
 
 def _rollup(spent: Decimal, budget: Decimal) -> tuple[Decimal, Decimal, str]:
@@ -78,12 +86,27 @@ def _agent_budget(agent: Agent, spent: Decimal, spent_today: Decimal) -> AgentBu
 def get_budgets(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
+    page: Page = Depends(paginate()),
+    agent: str | None = Query(
+        default=None, max_length=SLUG_MAX_LENGTH, description="Filter to one slug"
+    ),
 ) -> BudgetsResponse:
-    """Per-agent budget utilisation plus per-workflow rollups for the company."""
+    """Per-agent budget utilisation plus per-workflow rollups for the company.
+
+    The `agents` array is paginated and `total` counts all matching agents; the
+    `workflows` rollups are configuration-shaped (bounded by how many workflows
+    a customer authors, not by ledger volume) and are always returned whole, so
+    a rollup never silently omits a member that fell off the page.
+
+    `agent` narrows to a single slug — the SDK's `check_budget()` path, which
+    would otherwise download every agent's budget to read one row.
+    """
+    stmt = select(Agent).where(Agent.company_id == company.id)
+    if agent is not None:
+        stmt = stmt.where(Agent.slug == agent)
+    total = count_total(db, stmt)
     agents = (
-        db.execute(
-            select(Agent).where(Agent.company_id == company.id).order_by(Agent.name)
-        )
+        db.execute(stmt.order_by(Agent.name).offset(page.offset).limit(page.limit))
         .scalars()
         .all()
     )
@@ -91,30 +114,31 @@ def get_budgets(
         db.execute(
             select(Workflow)
             .where(Workflow.company_id == company.id)
+            # Eager-load members: the rollup below reads `workflow.agents` for
+            # every workflow, which lazy-loading turns into a query per row (T3-3).
+            .options(selectinload(Workflow.agents))
             .order_by(Workflow.name)
         )
         .scalars()
         .all()
     )
-    entities = {
-        e.id: e
-        for e in db.execute(
-            select(Entity).where(Entity.company_id == company.id)
-        ).scalars()
-    }
+    entities = (
+        db.execute(select(Entity).where(Entity.company_id == company.id))
+        .scalars()
+        .all()
+    )
 
-    # Current-month committed spend per agent, entity-local period + functional
-    # currency (T2-3) — computed once, then reused for the workflow rollups.
-    month_spend: dict[uuid.UUID, tuple[Decimal, Decimal]] = {
-        a.id: period_committed_spend(db, a.id, entities[a.entity_id]) for a in agents
-    }
+    # Current-month committed spend for the whole company in one aggregate per
+    # entity, entity-local period + functional currency (T2-3). Batched because
+    # the per-agent form cost two queries each (T3-3), and because the workflow
+    # rollups below need members that the current page may not contain.
+    month_spend = company_period_committed_spend(db, company.id, entities)
 
     workflow_rollups: list[WorkflowBudget] = []
     for workflow in workflows:
-        members = workflow.agents  # lazy-loaded; fine at MVP scale
+        members = workflow.agents
         spent = sum(
-            (month_spend[m.id][0] for m in members if m.id in month_spend),
-            Decimal("0"),
+            (month_spend.get(m.id, _NO_SPEND)[0] for m in members), Decimal("0")
         )
         remaining, pct_used, status_label = _rollup(spent, workflow.budget)
         workflow_rollups.append(
@@ -131,8 +155,9 @@ def get_budgets(
         )
 
     return BudgetsResponse(
-        agents=[_agent_budget(a, *month_spend[a.id]) for a in agents],
+        agents=[_agent_budget(a, *month_spend.get(a.id, _NO_SPEND)) for a in agents],
         workflows=workflow_rollups,
+        total=total,
     )
 
 

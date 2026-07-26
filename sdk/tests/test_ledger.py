@@ -410,27 +410,23 @@ def test_non_strict_blocked_verdict_still_returns(
     assert verdict.code == "velocity_exceeded"
 
 
-def test_check_budget_returns_status_for_matching_agent(
+def test_check_budget_filters_server_side(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The slug must be pushed to the server, not scanned for client-side.
+
+    `GET /budgets` is paginated (backend T3-3), so a client-side scan of the
+    returned array would report "no budget found" for any agent past the first
+    page — an agent that exists reading as absent.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/budgets"
+        assert request.url.params["agent"] == "ops"
         return httpx.Response(
             200,
             json={
                 "agents": [
-                    {
-                        "id": "a1",
-                        "name": "Other",
-                        "slug": "other",
-                        "entity_id": "e1",
-                        "monthly_budget": 100,
-                        "spent": 10,
-                        "spent_today": 0,
-                        "remaining": 90,
-                        "pct_used": 10.0,
-                        "status": "ok",
-                    },
                     {
                         "id": "a2",
                         "name": "Ops",
@@ -445,6 +441,7 @@ def test_check_budget_returns_status_for_matching_agent(
                     },
                 ],
                 "workflows": [],
+                "total": 1,
             },
         )
 

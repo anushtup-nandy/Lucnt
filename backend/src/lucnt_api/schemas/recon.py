@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from lucnt_api.constants import NOTES_MAX
+
 
 class ReconExceptionResponse(BaseModel):
     """One reconciliation exception in the recovery inbox."""
@@ -57,7 +59,10 @@ class ReconResolveRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     action: Literal["resolve", "dismiss"]
-    fix_notes: str | None = None
+    # Bounded (T3-8): `fix_notes` lands in a TEXT column, so nothing downstream
+    # rejects an oversized note — the cap is what stops one resolve inflating
+    # storage and the audit record.
+    fix_notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
 
 class FailedDeliveryRequest(BaseModel):

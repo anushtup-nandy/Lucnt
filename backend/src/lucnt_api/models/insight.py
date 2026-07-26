@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,10 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     """One actionable recommendation from the intelligence layer (the Insights page)."""
 
     __tablename__ = "insights"
+    __table_args__ = (
+        # The un-dismissed insight feed (T3-1) — `routers/insights.py:64-70`.
+        Index("ix_insights_company_id_is_dismissed", "company_id", "is_dismissed"),
+    )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
     # The agent an insight is about; null for company-level insights.

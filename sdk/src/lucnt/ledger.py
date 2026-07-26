@@ -250,18 +250,24 @@ def check_budget(*, agent: str | None = None) -> BudgetStatus:
     """
     ctx = get_current_task()
     slug = _resolve_required(agent, ctx.agent if ctx else None, "agent")
-    response = _get_transport().request("GET", "/budgets")
-    for row in response.json()["agents"]:
-        if row["slug"] == slug:
-            return BudgetStatus(
-                agent=slug,
-                monthly_budget=row["monthly_budget"],
-                spent=row["spent"],
-                remaining=row["remaining"],
-                pct_used=row["pct_used"],
-                status=row["status"],
-            )
-    raise LucntError(f"no budget found for agent {slug!r}")
+    # Filter server-side: `GET /budgets` is paginated, so scanning the returned
+    # array would miss any agent past the first page and report "no budget" for
+    # an agent that exists.
+    response = _get_transport().request(
+        "GET", "/budgets", params={"agent": slug, "limit": "1"}
+    )
+    rows = response.json()["agents"]
+    if not rows:
+        raise LucntError(f"no budget found for agent {slug!r}")
+    row = rows[0]
+    return BudgetStatus(
+        agent=slug,
+        monthly_budget=row["monthly_budget"],
+        spent=row["spent"],
+        remaining=row["remaining"],
+        pct_used=row["pct_used"],
+        status=row["status"],
+    )
 
 
 def query(

@@ -10,11 +10,12 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import get_current_company, get_db
 from lucnt_api.models import Agent, Company, Entity
+from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.agent import AgentDetail, AgentListResponse
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -25,8 +26,7 @@ def list_agents(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     entity: str | None = Query(default=None, description="Filter by entity code"),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate()),
 ) -> AgentListResponse:
     """List agents for the current company, filterable/paginated."""
     stmt = select(Agent).where(Agent.company_id == company.id)
@@ -38,9 +38,11 @@ def list_agents(
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown entity: {entity}")
         stmt = stmt.where(Agent.entity_id == entity_row.id)
 
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
-        db.execute(stmt.order_by(Agent.name).offset(offset).limit(limit)).scalars().all()
+        db.execute(stmt.order_by(Agent.name).offset(page.offset).limit(page.limit))
+        .scalars()
+        .all()
     )
     return AgentListResponse(
         items=[AgentDetail.model_validate(row) for row in rows], total=total

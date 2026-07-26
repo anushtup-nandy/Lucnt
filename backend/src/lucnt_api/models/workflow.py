@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Table,
@@ -49,6 +50,10 @@ class Workflow(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     """A named, budgeted grouping of agents whose spend rolls up together."""
 
     __tablename__ = "workflows"
+    __table_args__ = (
+        # Workflow budget rollups scope by company (T3-1) — `routers/budgets.py`.
+        Index("ix_workflows_company_id", "company_id"),
+    )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(255))

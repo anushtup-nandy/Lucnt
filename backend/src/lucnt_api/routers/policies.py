@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucnt_api.dependencies import (
@@ -22,6 +22,13 @@ from lucnt_api.dependencies import (
     require_admin,
 )
 from lucnt_api.models import Agent, Company, Policy, PolicyRuleType, PolicyScopeType
+from lucnt_api.pagination import (
+    WIDE_MAX_PAGE_SIZE,
+    WIDE_PAGE_SIZE,
+    Page,
+    count_total,
+    paginate,
+)
 from lucnt_api.schemas.policy import (
     PolicyCreate,
     PolicyListResponse,
@@ -91,22 +98,23 @@ def list_policies(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
     active: bool | None = Query(default=None, description="Filter by active flag"),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
+    page: Page = Depends(paginate(WIDE_PAGE_SIZE, WIDE_MAX_PAGE_SIZE)),
 ) -> PolicyListResponse:
     """List policies for the current company."""
     stmt = select(Policy).where(Policy.company_id == company.id)
     if active is not None:
         stmt = stmt.where(Policy.active.is_(active))
-    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    total = count_total(db, stmt)
     rows = (
-        db.execute(stmt.order_by(Policy.created_at.desc()).offset(offset).limit(limit))
+        db.execute(
+            stmt.order_by(Policy.created_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
+        )
         .scalars()
         .all()
     )
-    return PolicyListResponse(
-        items=[_to_response(row) for row in rows], total=total
-    )
+    return PolicyListResponse(items=[_to_response(row) for row in rows], total=total)
 
 
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
