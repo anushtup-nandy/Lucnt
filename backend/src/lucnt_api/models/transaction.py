@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -122,7 +123,12 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     reverses_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("transactions.id"), default=None
     )
-    is_reversed: Mapped[bool] = mapped_column(default=False)
+    # `server_default` mirrors migration `f3a4b5c6d7e8`, which needed one to add a
+    # NOT NULL column to a populated table. Declaring it here too is not cosmetic:
+    # with T4-7's `compare_server_default` on, an undeclared DB default is drift,
+    # and it means a row inserted outside the ORM would hit a NOT NULL violation
+    # in the model's view of the world but succeed in the real database.
+    is_reversed: Mapped[bool] = mapped_column(default=False, server_default=false())
     source: Mapped[TransactionSource] = mapped_column(
         Enum(
             TransactionSource,

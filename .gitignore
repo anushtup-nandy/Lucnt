@@ -73,6 +73,22 @@ secrets/
 .tmp/
 temp/
 
-# Plans and OpenCode files
-AGENTS.md
-CLAUDE.md
+# T4-3: `AGENTS.md`, `CLAUDE.md`, `.github/` and a mis-anchored `alembic/versions/*`
+# used to sit here, and all four were removed.
+#
+# NOTE, because PRODUCTION_PLAN's T4-3 got this wrong: it claimed `CLAUDE.md` and
+# `AGENTS.md` were "already tracked, so the rules were dead". They were **not**
+# tracked — `git log` shows neither was ever committed — so removing those two
+# lines newly commits both files. That is intended (the files that govern how
+# agents work in this repo belong to the repo, not to one laptop), but it is a
+# real change in what gets published, not the no-op the plan described.
+#
+# The other two were unambiguous foot-guns: `.github/` meant a new CI workflow
+# silently vanished unless force-added, and `alembic/versions/*` was root-anchored
+# so it never matched `backend/alembic/versions/` — a landmine one directory move
+# away from making migrations uncommittable.
+
+# Local agent state. `settings.json` hardcodes absolute paths under one user's
+# home directory, so committing it would break for anyone else; `settings.local.json`
+# is local-only by convention.
+.claude/

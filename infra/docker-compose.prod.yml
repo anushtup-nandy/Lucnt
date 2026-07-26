@@ -1,0 +1,122 @@
+# Deployed stack (T4-1/T4-6). Not for local development — use docker-compose.yml.
+#
+#     docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Three deliberate differences from the dev stack:
+#
+# * **Nothing but nginx publishes a port.** The backend and Redis are reachable
+#   only on the internal network, so the API cannot be hit except through TLS,
+#   and Redis — which holds rate-limit counters and no credentials — is not
+#   addressable from outside at all.
+# * **Every secret is required, none has a default.** `${VAR:?message}` fails the
+#   `up` with that message rather than starting with a placeholder credential.
+#   This is the direct fix for a stack whose password was `postgres`.
+# * **Postgres is external by default.** A managed database gives you backups,
+#   PITR and failover, none of which this file can. A ledger is exactly the wrong
+#   place to discover you had no point-in-time recovery. A self-hosted service is
+#   provided below, commented, for a pilot that genuinely needs it.
+#
+# MIGRATIONS run from the same image as the app, as a one-shot before rollout:
+#
+#     docker compose -f docker-compose.prod.yml run --rm migrate
+
+services:
+  nginx:
+    image: nginx:1.27-bookworm
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_DIR:?set TLS_CERT_DIR to the directory holding fullchain.pem and privkey.pem}:/etc/nginx/certs:ro
+      - certbot_webroot:/var/www/certbot
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    image: ${BACKEND_IMAGE:-lucnt-backend:latest}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    # No `ports`: nginx reaches it over the compose network. Publishing 8000 here
+    # would bypass TLS, the body caps and the /metrics deny rule in one line.
+    expose:
+      - "8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_FORMAT: json
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Raise only together with Postgres `max_connections`: the ceiling is
+      # workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW). See `gunicorn.conf.py`.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Readiness, not liveness: nginx must not receive traffic until the schema
+      # is confirmed at head. The image's own HEALTHCHECK stays on liveness so a
+      # database blip never triggers a restart storm.
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # One-shot schema upgrade. Same image as `backend`, so the migrations that run
+  # are by construction the ones the running code expects.
+  migrate:
+    image: ${BACKEND_IMAGE:-lucnt-backend:latest}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    restart: "no"
+
+  redis:
+    image: redis:7.4-bookworm
+    # Internal only. Not published, so the absence of a Redis password is
+    # contained by the network boundary rather than by hope.
+    expose:
+      - "6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Self-hosted Postgres, for a pilot without a managed database. If you enable
+  # this, you own backups and restore drills. Point DATABASE_URL at `postgres`.
+  #
+  # postgres:
+  #   # Match the base OS of whatever created the data directory — a glibc change
+  #   # under an existing cluster invalidates collation-dependent indexes.
+  #   image: postgres:16.14-trixie
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB:-lucnt}
+  #   expose:
+  #     - "5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+
+volumes:
+  certbot_webroot:
+  # postgres_data:

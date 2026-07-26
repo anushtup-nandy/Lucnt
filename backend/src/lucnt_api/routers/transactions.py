@@ -19,6 +19,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from lucnt_api import metrics
 from lucnt_api.config import settings
 from lucnt_api.dependencies import (
     AuthContext,
@@ -143,6 +144,10 @@ def _fetch_active_policies(db: Session, company: Company, agent: Agent) -> list[
 
 def _verdict_from(authorization: Authorization) -> Verdict:
     """Reconstruct the wire verdict from a persisted hold (idempotent replay, T0-6)."""
+    # The single construction point for every verdict `authorize` returns, which
+    # makes it the one honest place to count them (T4-4). Labelled by the
+    # `VerdictStatus` enum, so the label set is closed and cannot inflate.
+    metrics.authorize_verdicts_total.labels(verdict=authorization.status.value).inc()
     return Verdict(
         authorization_id=authorization.id,
         status=authorization.status.value,

@@ -1,0 +1,32 @@
+# Keep the build context small and, more importantly, keep secrets and local
+# state out of the image entirely (T4-1). `.env` is the one that matters: it
+# holds the real DATABASE_URL, and a COPY that swept it in would bake a
+# credential into a distributable layer.
+.env
+.env.*
+!.env.example
+
+# Local caches and build output — never useful in the image, and large.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Tests are not shipped: the runtime image should not contain fixtures that can
+# create companies and API keys. CI runs the suite from the checkout instead.
+tests/
+
+# VCS / editor / OS noise.
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store

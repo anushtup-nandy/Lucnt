@@ -4,21 +4,49 @@ version = "0.1.0"
 description = "Backend API for the LUCNT platform"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi[standard]>=0.111",
+    # T4-8: was `fastapi[standard]`, which pulls `fastapi-cli`,
+    # `fastapi-cloud-cli` (a deployment client that talks to a third-party
+    # service), `rich-toolkit`, `jinja2`, `python-multipart` and
+    # `email-validator` into the deployable image. None is imported anywhere in
+    # `src/` — no templates, no form parsing, no `EmailStr` — and every
+    # documented workflow invokes `uvicorn` directly, never `fastapi dev`. Six
+    # fewer packages in the runtime image, one of which makes network calls.
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
-    "alembic>=1.13",
+    # Dev/CI convenience: the binary wheel needs no compiler. The IMAGE replaces
+    # it with a source build of `psycopg2` (see `Dockerfile`), because the binary
+    # wheel bundles its own OpenSSL, which `apt-get upgrade` can never patch.
     "psycopg2-binary>=2.9",
+    "alembic>=1.13",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    "python-jose[cryptography]>=3.3",
-    "bcrypt>=4.1",
+    # T4-8: `python-jose` and `bcrypt` were removed here. Neither was ever
+    # imported — there is no JWT or session auth, and API keys are SHA-256 hashed
+    # in `security.py` (deliberately, see its docstring). They were not merely
+    # dead weight: `python-jose` pulled in `ecdsa`, whose Minerva timing attack
+    # (PYSEC-2026-1325) the maintainers have declared out of scope with **no
+    # planned fix**, plus three `pyasn1` CVEs. Deleting two unused lines removed
+    # four of the six vulnerabilities `pip-audit` reported. Reinstate them only
+    # alongside the auth feature that needs them, and prefer `argon2`/`bcrypt`
+    # over `python-jose`, which is thinly maintained.
     "structlog>=24.0",
     "python-dotenv>=1.0",
     "uuid6>=2024.1.12",
     "redis>=5.0",
+    "prometheus-client>=0.20",
+    # Process manager for the deployable image (T4-1). `uvicorn.workers` is
+    # deprecated in favour of the separately released `uvicorn-worker`, which is
+    # what `infra/gunicorn.conf.py` loads.
+    "gunicorn>=22.0",
+    "uvicorn-worker>=0.2",
 ]
 
 [project.optional-dependencies]
+# Error reporting is opt-in: with `SENTRY_DSN` unset, `sentry_sdk` is never
+# imported. Kept out of the default set so the deployable image carries no
+# dependency on a third-party service unless someone deliberately configures one.
+sentry = ["sentry-sdk>=2.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

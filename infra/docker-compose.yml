@@ -1,32 +1,94 @@
+# Local development stack (T4-11).
+#
+# What changed and why:
+#
+# * **Ports bind to 127.0.0.1.** They were on `0.0.0.0` with default credentials,
+#   so on any shared network — coworking wifi, a conference, a hotel LAN — the
+#   ledger database was reachable by anyone who scanned port 5432. Redis was
+#   worse: no credentials at all, and since T3-7 it holds the rate-limit counters.
+# * **Credentials come from the environment**, defaulting to the previous values
+#   so nothing breaks on first run. Copy `.env.example` to `.env` in this
+#   directory to override; compose reads it automatically.
+# * **Images are pinned to a patch release** rather than floating on `:16`, so a
+#   `docker compose pull` cannot silently move the Postgres minor version
+#   underneath a ledger.
+#
+# The `backend` service sits behind a profile on purpose: `docker compose up -d`
+# must keep meaning "start my dependencies", so the documented `uvicorn` workflow
+# in `docs/DEMO.md` still works and nothing contends for port 8000. Run the
+# containerised API explicitly with:
+#
+#     docker compose --profile backend up -d --build
+
 services:
   postgres:
-    image: postgres:16
+    # Pinned to the exact patch release AND base OS the existing `postgres_data`
+    # volume was created with (16.14, Debian trixie, glibc 2.41). This is not
+    # pedantry: Postgres records the collation version its text indexes were built
+    # against, and starting an existing cluster on an image with a different glibc
+    # logs a collation mismatch and puts collation-dependent index correctness in
+    # question. Changing this line means planning a reindex, not just a pull.
+    image: postgres:16.14-trixie
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: lucnt
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-lucnt}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
-    image: redis:7
+    # Pinned to minor rather than patch, unlike Postgres above: this holds only
+    # fixed-window rate-limit counters with no volume behind them, so a patch
+    # bump has no data to be wrong about.
+    image: redis:7.4-bookworm
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    # T3-7 made Redis a real runtime dependency, so it needs a healthcheck like
+    # anything else the app waits on. No persistence configured: the rate-limit
+    # counters are fixed-window and disposable by design.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   mailhog:
     # mailhog/mailhog is unmaintained and amd64-only; mailpit is an
     # actively maintained, API-compatible drop-in with native arm64 images.
+    # Left on a floating tag deliberately: it is a development mail sink with no
+    # data worth protecting, and pinning it buys nothing.
     image: axllent/mailpit:latest
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+  backend:
+    profiles: ["backend"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Service names, not localhost: inside the compose network the database is
+      # reachable as `postgres`, not through the host's published port.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lucnt}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:

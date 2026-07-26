@@ -3,18 +3,45 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The value shipped in `.env.example` since the first commit, therefore identical
+# in every checkout and effectively public. Rejected outside development (T4-9).
+_EXAMPLE_SECRET_KEY = "dev_secret_change_me"
+_MIN_SECRET_KEY_LENGTH = 32
 
 
 class Settings(BaseSettings):
     """Runtime configuration, sourced from environment variables / `.env`."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # T4-12: `extra="ignore"` meant a typo'd variable was silently discarded —
+    # exactly how `REDIS_URL` sat inert in `.env.example` through all of Tier 3
+    # (see `redis_url` below). Forbidding extras turns "misspelled DB_POOL_SIZE"
+    # from a mystery performance regression into a startup crash. Every key that
+    # legitimately appears in `.env.example` must therefore be modelled here,
+    # including ones nothing reads yet (`smtp_*`).
+    model_config = SettingsConfigDict(env_file=".env", extra="forbid")
 
     database_url: str
-    secret_key: str
-    environment: str = "development"
+    # T4-12: tests bound to `DATABASE_URL` — i.e. to the developer's own database.
+    # Harmless for the suite itself (every fixture rolls back), but CI's migration
+    # round-trip runs `alembic downgrade base`, which does not. Set this and both
+    # the suite and its Alembic setup target a throwaway database instead.
+    test_database_url: str | None = None
+    # T4-9: declared `str` (required) but read by nothing — there is no session or
+    # JWT auth yet; API keys are hashed in `dependencies.py`. Now optional so a
+    # deployment isn't forced to invent a secret for a feature that doesn't exist,
+    # and validated below so that when one *is* supplied outside development it
+    # cannot be the committed example.
+    secret_key: str | None = None
+    # T4-12/SCALABILITY_PLAN.md §501: this used to default to "development", so an
+    # unset ENVIRONMENT in production served `/docs`, `/redoc` and `/openapi.json`
+    # — the entire financial API surface — to the internet. Required and closed:
+    # an unset or misspelled value now fails startup instead of failing open.
+    environment: Literal["development", "staging", "production"]
     # Connection pool + timeouts (T3-4). A bare `create_engine()` inherits
     # SQLAlchemy's 5+10 defaults with no liveness check and no server-side cap:
     # a connection dropped while idle 500s the next request, and one slow query
@@ -71,6 +98,63 @@ class Settings(BaseSettings):
     withholding_treaty_rate: Decimal = Decimal("0.15")
     withholding_domestic_rate: Decimal = Decimal("0.20")
     withholding_15cb_threshold: Decimal = Decimal("500000")
+    # M3 invoice/email ingestion (not built). Modelled only because `.env.example`
+    # and compose's mailpit already define them and `extra="forbid"` would now
+    # reject them — declaring a field is the price of documenting a variable.
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    # --- Observability (T4-4) ----------------------------------------------
+    log_level: str = "INFO"
+    # None = decide from `environment`: JSON where something ships logs to an
+    # aggregator, human-readable colour where a developer is reading them.
+    log_format: Literal["json", "console"] | None = None
+    # Errors go nowhere today. Optional so the dependency stays optional: unset
+    # means Sentry is never imported, let alone initialised.
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    # `/metrics` carries no authentication and must never be internet-reachable —
+    # `infra/nginx/nginx.conf` denies it at the edge. This flag is the second lock.
+    metrics_enabled: bool = True
+    # Lifespan DB ping + "schema is at head" assertion (T4-12). The suite turns
+    # this off: the app under test is served sessions through
+    # `dependency_overrides`, so a check against the module-level engine would be
+    # asserting about a database the tests never touch. It is covered directly by
+    # `tests/integration/test_startup_and_health.py` instead.
+    startup_checks_enabled: bool = True
+
+    @model_validator(mode="after")
+    def _validate_deployment_safety(self) -> Settings:
+        """Reject configurations that are only safe on a laptop (T4-9/T4-12)."""
+        if self.environment != "development":
+            if self.test_database_url is not None:
+                raise ValueError(
+                    "TEST_DATABASE_URL must not be set outside development — the "
+                    "suite truncates and downgrades whatever it points at."
+                )
+            if self.secret_key is not None and (
+                self.secret_key == _EXAMPLE_SECRET_KEY
+                or len(self.secret_key) < _MIN_SECRET_KEY_LENGTH
+            ):
+                raise ValueError(
+                    f"SECRET_KEY must be at least {_MIN_SECRET_KEY_LENGTH} "
+                    "characters and must not be the committed example value."
+                )
+        if (
+            self.test_database_url is not None
+            and self.test_database_url == self.database_url
+        ):
+            raise ValueError(
+                "TEST_DATABASE_URL is identical to DATABASE_URL, which defeats "
+                "the point of having a separate test database."
+            )
+        return self
+
+    @property
+    def resolved_log_format(self) -> Literal["json", "console"]:
+        """Explicit `log_format`, else JSON everywhere but development."""
+        if self.log_format is not None:
+            return self.log_format
+        return "console" if self.environment == "development" else "json"
 
 
 # pydantic-settings fills required fields from the environment at runtime.

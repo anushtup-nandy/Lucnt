@@ -1,0 +1,209 @@
+name: CI
+
+# The repo's mandated "Green CI" gate (CLAUDE.md §4), enforced on every push/PR:
+# ruff + mypy + pytest for both packages, plus an Alembic reversibility round-trip
+# and a schema-drift check for the backend. Runs the exact commands used locally
+# so CI never diverges.
+#
+# T4-2 additions beyond the original lint/type/test job:
+#   * a Redis service — T3-7 made Redis a real runtime dependency, and a suite
+#     that only ever ran with it absent proves the fail-open path and nothing else;
+#   * `alembic check`, which is only meaningful now that T4-7 turned on
+#     `compare_type`/`compare_server_default` (it immediately found real drift);
+#   * a dedicated TEST_DATABASE_URL, so the destructive downgrade round-trip
+#     provably runs somewhere other than the database the suite reads (T4-12);
+#   * secret and dependency scanning;
+#   * a Docker build, because an image that only builds on the author's laptop is
+#     not a deployable artifact (T4-1).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (ruff · mypy · alembic · pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.14-trixie
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lucnt
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-bookworm
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # The suite reads and writes `lucnt_test`; `DATABASE_URL` stays pointed at
+      # `lucnt` so the round-trip below cannot be the thing that migrates the
+      # database the tests then assert against.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lucnt
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lucnt_test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: development
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install
+        # Resolves fresh, deliberately: CI is the early-warning system for a
+        # dependency that breaks us, while `requirements.lock` keeps the *image*
+        # reproducible. The drift check below stops the two diverging silently.
+        run: pip install -e ".[dev]"
+
+      - uses: astral-sh/setup-uv@v5
+      - name: Lockfile is in sync with pyproject.toml
+        # A stale lockfile means the image ships something other than what
+        # pyproject declares — and nothing else in CI would notice.
+        run: |
+          uv pip compile pyproject.toml --universal --python-version 3.10 \
+            --generate-hashes --quiet -o /tmp/requirements.check
+          # uv's header echoes its own `-o` path, so that one line always differs
+          # and is dropped from both sides rather than stripped from the
+          # committed file, which stays self-documenting.
+          strip() { sed '/^#    uv pip compile/d' "$1"; }
+          if ! diff -u <(strip requirements.lock) <(strip /tmp/requirements.check); then
+            echo "::error::requirements.lock is stale. Regenerate it with:" >&2
+            echo "  uv pip compile pyproject.toml --universal --python-version 3.10 --generate-hashes -o requirements.lock" >&2
+            exit 1
+          fi
+
+      - name: Create the test database
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -c 'CREATE DATABASE lucnt_test'
+
+      - name: Lint (ruff)
+        # `tests/` and the gunicorn config are linted too: the original job only
+        # covered `src/`, so a lint error in either was invisible to CI.
+        run: ruff check src/ tests/ gunicorn.conf.py alembic/env.py
+      - name: Types (mypy)
+        run: mypy src/ gunicorn.conf.py
+
+      - name: Migrations round-trip (upgrade → downgrade → upgrade)
+        # Against the throwaway database, deliberately: `downgrade base` drops
+        # every table it can reach.
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Schema drift (alembic check)
+        # Fails if the models imply a migration nobody wrote. Only sharp now that
+        # T4-7 enabled type and server-default comparison.
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic check
+
+      - name: Tests (pytest)
+        run: pytest
+
+  backend-image:
+    name: backend image (docker build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: lucnt-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Assert the image does not run as root
+        # A regression here is silent and serious, so it is asserted rather than
+        # trusted to the Dockerfile staying correct.
+        run: |
+          uid=$(docker run --rm lucnt-backend:ci id -u)
+          echo "image uid: $uid"
+          test "$uid" != "0"
+      - name: Assert no build toolchain leaked into the runtime stage
+        run: |
+          if docker run --rm lucnt-backend:ci sh -c 'command -v gcc'; then
+            echo "gcc present in runtime image" >&2
+            exit 1
+          fi
+
+  sdk:
+    name: sdk (ruff · mypy · pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: ruff check src/
+      - name: Types (mypy)
+        run: mypy src/
+      - name: Tests (pytest)
+        run: pytest
+
+  security:
+    name: security (secrets · dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs history to scan commits, not just the tree.
+          fetch-depth: 0
+      - name: Secret scan (gitleaks)
+        # Run the upstream image rather than `gitleaks/gitleaks-action`, which
+        # gates on a paid licence key for organisation-owned repositories.
+        # `--redact` keeps any finding out of the public build log. Scans history,
+        # not just the tree — a key deleted in a later commit is still leaked.
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source=/repo --redact --verbose
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Dependency audit (pip-audit)
+        # Audits the resolved environment, which is the only place transitive
+        # versions are known. Advisory for now: a CVE published overnight in a
+        # transitive dependency should raise a flag, not block an unrelated PR.
+        # Flip to a hard failure once the T4-8 lockfile pins the input set.
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip install -e ./backend
+          pip-audit --desc

@@ -101,7 +101,16 @@ alembic upgrade head
 uvicorn lucnt_api.main:app --reload --port 8000
 ```
 
-API docs are served at `http://localhost:8000/docs` only when `ENVIRONMENT=development`. To
+To run the API as a container instead (the deployable artifact, T4-1):
+
+```bash
+cd infra && docker compose --profile backend up -d --build   # gunicorn, 2 workers, non-root
+curl localhost:8000/health/ready                             # {"status":"ready", …}
+```
+
+`ENVIRONMENT` is **required** and must be one of `development` / `staging` / `production` — it no
+longer defaults, because a default of `development` meant an unset value in production published
+`/docs`, `/redoc` and `/openapi.json`. API docs are served only when `ENVIRONMENT=development`. To
 inspect the migrated schema directly:
 
 ```bash
@@ -194,8 +203,10 @@ mypy src/
 pytest
 ```
 
-**Backend:** `ruff` clean, `mypy` clean over **70 source files**, **382 tests** green, and
-`alembic check` reporting no drift between the models and the migrations.
+**Backend:** `ruff` clean, `mypy` clean over **75 source files**, **395 tests** green, and
+`alembic check` reporting no drift between the models and the migrations. The same gate runs on every
+push/PR (`.github/workflows/ci.yml`), plus a migration round-trip, secret and dependency scans, and an
+image build asserting the container is non-root.
 ```bash
 cd backend
 ruff check src/ tests/

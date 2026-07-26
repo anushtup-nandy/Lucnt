@@ -1,0 +1,20 @@
+# gitleaks configuration (T4-2).
+#
+# Extends the upstream ruleset rather than replacing it — a hand-rolled rule list
+# would silently stop detecting whatever upstream adds next.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated caches whose content hashes trip the entropy heuristic"
+
+# `graphify-out/cache/` is the knowledge-graph tool's cache: JSON maps of file
+# path → content hash. Every hash is a high-entropy hex string, so the
+# `generic-api-key` rule flags them — 13 findings, none of them a credential.
+#
+# Scoped to this one directory on purpose. A broad `*.json` allowlist would also
+# excuse a real key committed in a config file, which is precisely the thing this
+# scan exists to catch.
+paths = [
+  '''graphify-out/cache/.*\.json$''',
+]
