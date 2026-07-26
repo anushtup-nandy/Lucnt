@@ -12,10 +12,17 @@ contract-first alongside the backend; the dashboard is deferred to the last phas
 [`docs/STATUS.md`](docs/STATUS.md) for the full done-vs-planned breakdown and
 [`PLAN.md`](PLAN.md) for the phase-by-phase roadmap.
 
+**Pre-pilot hardening: Tier 3 is complete (8/8 — T3-1…T3-8).** Tiers 0, 1, 1.5 and 2 of
+[`docs/PRODUCTION_PLAN.md`](docs/PRODUCTION_PLAN.md) were already closed; Tier 3 ("scale,
+performance & operability") adds hot-query indexes, DB-level uniqueness, an explicit connection
+pool + statement timeout, one shared pagination contract, bounded request inputs, Redis-backed
+rate limiting, and the removal of the full-ledger in-memory loads. Tiers 4–5 are open. Details in
+[`CHANGELOG.md`](CHANGELOG.md).
+
 | Component | State |
 |---|---|
 | `sdk/` (`lucnt` package) | `task()`/`authorize()`/`capture()`/`spend()` — done, green (unit-tested, no backend needed) |
-| `backend/` | DB schema + first migration done (`companies`/`entities`/`users`); no FastAPI app yet |
+| `backend/` | FastAPI app live (`authorize`→`capture`, books, budgets, policies, recon, intelligence); 33 migrations, head `e1f2a3b4c5d6` |
 | `frontend/` | Not started — deferred to Phase 7 |
 
 ---
@@ -52,6 +59,7 @@ Full design docs: [`PLAN.md`](PLAN.md) (master plan), [`sdk/PLAN.md`](sdk/PLAN.m
 | **SDK** (`lucnt`, ★ primary deliverable) | Python 3.10+, httpx, Pydantic v2 |
 | **Backend** | Python 3.10+, FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2 |
 | **Database** | PostgreSQL 16 (Docker) |
+| **Rate limiting** | Redis 7 — a **runtime dependency** of the backend (`redis>=5.0` in `backend/pyproject.toml`), not just a compose service |
 | **Frontend** (deferred to Phase 7) | React 18, TypeScript, Vite, Tailwind CSS |
 
 ---
@@ -61,6 +69,11 @@ Full design docs: [`PLAN.md`](PLAN.md) (master plan), [`sdk/PLAN.md`](sdk/PLAN.m
 ### Prerequisites
 - Python 3.10+
 - Docker (for Postgres/Redis/MailHog)
+- **Redis** — rate limiting is on by default (`RATE_LIMIT_ENABLED=true`) and its counters live in
+  Redis, so it must be reachable at `REDIS_URL` for limits to be enforced. An unreachable Redis
+  **fails open**: the request is admitted and a warning is logged, because a cache blip must not
+  take down `authorize()`. The backend test suite therefore still passes without Redis — 11
+  rate-limit tests skip instead of failing.
 
 ### ⚠️ Use separate environments for `backend/` and `sdk/`
 
@@ -85,11 +98,11 @@ python -m venv .venv && source .venv/bin/activate   # separate env from sdk/, se
 pip install -e ".[dev]"
 cp .env.example .env                                 # defaults already match docker compose
 alembic upgrade head
+uvicorn lucnt_api.main:app --reload --port 8000
 ```
 
-The FastAPI app itself (`main.py`, routers) isn't built yet — see
-[`docs/STATUS.md`](docs/STATUS.md). Today, `backend/` gets you a migrated schema you can
-inspect directly:
+API docs are served at `http://localhost:8000/docs` only when `ENVIRONMENT=development`. To
+inspect the migrated schema directly:
 
 ```bash
 docker exec infra-postgres-1 psql -U postgres -d lucnt -c "\dt"
@@ -104,13 +117,56 @@ pip install -e ".[dev]"
 pytest   # fully mocked -- no backend or network needed
 ```
 
-`sdk/examples/example_agent.py` is the SDK's E2E acceptance driver, but it needs the
-backend's `/transactions/authorize` + `/transactions/capture` endpoints, which don't exist
-yet — it will fail with a connection error until then. That's expected, not a bug.
+`sdk/examples/example_agent.py` is the SDK's E2E acceptance driver and needs a live backend
+(step 2) with a valid `LUCNT_API_KEY`; without one it fails with a connection error.
 
 ### 4. Frontend
 
 Not started. Deferred to Phase 7 — see [`frontend/PLAN.md`](frontend/PLAN.md).
+
+---
+
+## Configuration
+
+All backend settings are read from the environment / `backend/.env` by
+`backend/src/lucnt_api/config.py` (Pydantic Settings). `backend/.env.example` is the canonical
+template and its defaults already match `infra/docker-compose.yml`.
+
+`DATABASE_URL` and `SECRET_KEY` are **required**; everything below has a default and only needs
+setting to override it.
+
+**Connection pool & timeouts** (added in Tier 3, T3-4)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DB_POOL_SIZE` | `10` | Persistent connections per worker process |
+| `DB_MAX_OVERFLOW` | `10` | Extra connections above `DB_POOL_SIZE` under burst |
+| `DB_POOL_TIMEOUT` | `10` | Seconds to wait for a free connection before failing fast |
+| `DB_POOL_RECYCLE` | `1800` | Recycle a connection after this many seconds, below any proxy/Postgres idle reaper |
+| `DB_CONNECT_TIMEOUT` | `10` | TCP connect timeout for a new connection (libpq `connect_timeout`) |
+| `DB_STATEMENT_TIMEOUT_MS` | `30000` | Server-side ceiling on any single statement; a runaway query is killed by Postgres rather than pinning a pool connection |
+
+Two sizing rules follow from this. Total connections are `(DB_POOL_SIZE + DB_MAX_OVERFLOW) ×
+worker count`, which must stay well under Postgres `max_connections` (100 by default). And
+because every route is a sync `def`, `main.py` pins AnyIO's worker-thread limiter to
+`DB_POOL_SIZE + DB_MAX_OVERFLOW` — so raising the pool raises request concurrency too, and the
+two can never disagree.
+
+**Rate limiting** (added in Tier 3, T3-7)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REDIS_URL` | `redis://localhost:6379/0` | Where the shared counters live |
+| `RATE_LIMIT_ENABLED` | `true` | Kill switch. Turning the feature *off* deliberately — not how you survive a Redis outage (that is already fail-open) |
+| `RATE_LIMIT_DEFAULT_PER_MINUTE` | `600` | Ordinary authenticated calls, per API key |
+| `RATE_LIMIT_AUTH_FAILURE_PER_MINUTE` | `20` | Failed authentications, per client IP |
+| `RATE_LIMIT_EXPENSIVE_PER_MINUTE` | `5` | Ledger-walking endpoints (`/recon/scan`, `/intelligence/recompute`), per API key |
+| `RATE_LIMIT_REDIS_TIMEOUT` | `0.25` | Seconds a limiter round-trip may take before failing open |
+
+> **Deployment requirement.** The `auth_failure` bucket is keyed on the client IP taken from the
+> socket. Once nginx fronts the app it **must** set `set_real_ip_from` / `real_ip_header`, or every
+> client collapses into one bucket and this becomes a lockout for all of them. See
+> [`infra/PLAN.md`](infra/PLAN.md) §5.
 
 ---
 
@@ -130,7 +186,7 @@ lucnt/
 
 ## Verification
 
-**SDK:**
+**SDK:** `ruff` + `mypy` clean, **65 tests** green.
 ```bash
 cd sdk
 ruff check src/ tests/
@@ -138,13 +194,18 @@ mypy src/
 pytest
 ```
 
-**Backend:**
+**Backend:** `ruff` clean, `mypy` clean over **70 source files**, **382 tests** green, and
+`alembic check` reporting no drift between the models and the migrations.
 ```bash
 cd backend
 ruff check src/ tests/
 mypy src/
-pytest   # requires `alembic upgrade head` against a running Postgres first
+pytest          # requires `alembic upgrade head` against a running Postgres first
+alembic check   # must report "No new upgrade operations detected."
 ```
+
+With Redis down the suite is still green — 11 rate-limit tests skip rather than fail, so CI
+without Redis is not a false failure.
 
 ---
 

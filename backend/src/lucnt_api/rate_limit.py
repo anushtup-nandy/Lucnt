@@ -1,4 +1,4 @@
-"""Redis-backed fixed-window rate limiting (T3-8's sibling, T3-7).
+"""Redis-backed fixed-window rate limiting (T3-7).
 
 Three buckets, because the abuse they stop is not the same shape:
 

@@ -1,6 +1,7 @@
-"""FastAPI dependencies: DB session, API-key auth, scope/mode gating.
+"""FastAPI dependencies: DB session, API-key auth, scope/mode gating, throttling.
 
-Three gates layer on one resolution (`get_auth_context`):
+Four gates layer on one resolution (`get_auth_context`), which itself charges the
+caller's per-key rate-limit bucket after resolving the principal (T3-7):
 
 * ``get_current_company`` — any active key; read endpoints.
 * ``require_live`` — a live key; the money path (authorize/capture). A test key
@@ -8,6 +9,9 @@ Three gates layer on one resolution (`get_auth_context`):
 * ``require_admin`` — a live, admin-scoped key; governance mutations (budgets,
   policies, reconciliation, approvals). Separates the governed principal (a
   runtime agent key) from the governor (T0-12).
+* ``require_cheap_enough`` — the tight `expensive` bucket for endpoints whose
+  cost scales with ledger size. Layered *on top of* another gate, never instead
+  of one.
 """
 
 from __future__ import annotations

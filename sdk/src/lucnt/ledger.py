@@ -277,13 +277,19 @@ def query(
 ) -> FinancialMemory:
     """Read an agent's living financial memory (M8 — self-regulation).
 
-    Computed live from the ledger, so an agent can check itself *before* it
-    spends: budget headroom, a month-end run-rate projection, cost-per-output,
-    and its spend fingerprint. `agent` falls back to the ambient `task()`
-    context. `question` (e.g. "am I on track this month?") is answered in
-    `FinancialMemory.headline`, keyword-routed server-side to the most relevant
-    dimension — there is no LLM, so the full structured memory is always
-    returned regardless of the wording.
+    Lets an agent check itself *before* it spends: budget headroom, a month-end
+    run-rate projection, cost-per-output, and its spend fingerprint. `agent`
+    falls back to the ambient `task()` context. `question` (e.g. "am I on track
+    this month?") is answered in `FinancialMemory.headline`, keyword-routed
+    server-side to the most relevant dimension — there is no LLM, so the full
+    structured memory is always returned regardless of the wording.
+
+    **Freshness.** `budget` is always computed live from the ledger. The
+    fingerprint statistics (mean, stddev, median, top vendors, anomaly score)
+    are served from the agent's last stored fingerprint once one exists, so they
+    are as fresh as the most recent server-side recompute; an agent that has
+    never been recomputed gets them computed live. Gate spending decisions on
+    `budget`, which never goes stale.
 
     Args:
         agent: Agent slug to read; falls back to `task()` context.

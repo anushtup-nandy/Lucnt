@@ -25,7 +25,7 @@ depends_on: str | Sequence[str] | None = None
 # justified by a real query site -- see the docstring in `upgrade()`.
 _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
     # -- transactions: the hot money path + every statement/scan -------------
-    # `services/spend_window.py:84,146` -- two sequential scans per authorize()
+    # `services/spend_window.py` -- two sequential scans per authorize()
     # (committed_spend + recent_activity_count). The single most important index
     # in the schema: it is on the blocking path of the product's core promise.
     (
@@ -34,7 +34,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["agent_id", "transaction_date"],
         None,
     ),
-    # `routers/transactions.py:1043,1052` -- GET /transactions paginates
+    # `routers/transactions.py` -- GET /transactions paginates
     # company-scoped rows ordered by created_at DESC. No DESC modifier needed:
     # Postgres scans a b-tree backwards at the same cost.
     (
@@ -43,8 +43,8 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["company_id", "created_at"],
         None,
     ),
-    # `routers/recon.py:169`, `routers/intelligence.py:196`,
-    # `services/tax_reclass.py:70` -- company-wide ledger reads that T3-2 will
+    # `routers/recon.py`, `routers/intelligence.py`,
+    # `services/tax_reclass.py` -- company-wide ledger reads that T3-2 will
     # narrow to a date window.
     (
         "ix_transactions_company_id_transaction_date",
@@ -52,7 +52,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["company_id", "transaction_date"],
         None,
     ),
-    # `routers/transactions.py:1048` -- GET /transactions?vendor=, and the
+    # `routers/transactions.py` -- GET /transactions?vendor=, and the
     # (agent, vendor, currency) grouping the overcharge detector needs.
     (
         "ix_transactions_company_id_vendor",
@@ -60,11 +60,11 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["company_id", "vendor"],
         None,
     ),
-    # `routers/books.py:283` -- per-entity statement filtering; also the
+    # `routers/books.py` -- per-entity statement filtering; also the
     # unindexed FK.
     ("ix_transactions_entity_id", "transactions", ["entity_id"], None),
     # -- authorizations: budget reservation + the approval queue -------------
-    # `services/spend_window.py:104,154` -- reserved_spend uses the
+    # `services/spend_window.py` -- reserved_spend uses the
     # (agent_id, status) prefix; recent_activity_count adds created_at. One
     # composite serves both, so authorize() stops seq-scanning holds twice.
     (
@@ -73,7 +73,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["agent_id", "status", "created_at"],
         None,
     ),
-    # `routers/approvals.py:51,71` -- the review/human_hold queue (T0-11).
+    # `routers/approvals.py` -- the review/human_hold queue (T0-11).
     (
         "ix_authorizations_company_id_status",
         "authorizations",
@@ -81,10 +81,10 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         None,
     ),
     # -- policies: read on every authorize ----------------------------------
-    # `routers/transactions.py:129-131` -- _fetch_active_policies, per call.
+    # `routers/transactions.py` -- _fetch_active_policies, per call.
     ("ix_policies_company_id_active", "policies", ["company_id", "active"], None),
     # -- journal_entries: the ledger's line table ---------------------------
-    # `routers/transactions.py:918` (reverse) and `routers/books.py:299-305`
+    # `routers/transactions.py` (reverse) and `routers/books.py`
     # (journal lines for a page of transactions) -- an unindexed FK today.
     (
         "ix_journal_entries_transaction_id",
@@ -92,7 +92,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["transaction_id"],
         None,
     ),
-    # `routers/books.py:182,192` + `_aggregates` -- every statement filters
+    # `routers/books.py` + `_aggregates` -- every statement filters
     # company_id, optionally entity_id, optionally a posting_date range.
     (
         "ix_journal_entries_company_id_entity_id_posting_date",
@@ -101,7 +101,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         None,
     ),
     # -- tax/withholding children: unindexed FKs ----------------------------
-    # `services/tax_reclass.py:111` and the capture-replay rebuild.
+    # `services/tax_reclass.py` and the capture-replay rebuild.
     ("ix_tax_records_transaction_id", "tax_records", ["transaction_id"], None),
     (
         "ix_withholding_records_transaction_id",
@@ -110,7 +110,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         None,
     ),
     # -- recon / intelligence read paths ------------------------------------
-    # `routers/recon.py:85,95-96,122-125` -- the inbox list and the open-count
+    # `routers/recon.py` -- the inbox list and the open-count
     # header. (transaction_id lookups already ride uq_recon_txn_type.)
     (
         "ix_reconciliation_exceptions_company_id_status",
@@ -118,21 +118,21 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["company_id", "status"],
         None,
     ),
-    # `routers/insights.py:64-70,84-86` -- the un-dismissed insight feed.
+    # `routers/insights.py` -- the un-dismissed insight feed.
     (
         "ix_insights_company_id_is_dismissed",
         "insights",
         ["company_id", "is_dismissed"],
         None,
     ),
-    # `routers/memory.py:43` -- GET /memory. (agent_id rides uq_memories_agent_type.)
+    # `routers/memory.py` -- GET /memory. (agent_id rides uq_memories_agent_type.)
     ("ix_memories_company_id", "memories", ["company_id"], None),
     # `routers/intelligence.py` fingerprint upserts. (agent_id is unique already.)
     ("ix_fingerprints_company_id", "fingerprints", ["company_id"], None),
-    # `routers/budgets.py:93` -- workflow rollups.
+    # `routers/budgets.py` -- workflow rollups.
     ("ix_workflows_company_id", "workflows", ["company_id"], None),
     # -- agents -------------------------------------------------------------
-    # `routers/agents.py:39`, `routers/budgets.py` entity join -- unindexed FK.
+    # `routers/agents.py`, `routers/budgets.py` entity join -- unindexed FK.
     ("ix_agents_entity_id", "agents", ["entity_id"], None),
     # The agent_owner persona scopes GET /agents by owner_user_id
     # (CLAUDE.local.md step 4). Partial: the column is null for most rows today.
