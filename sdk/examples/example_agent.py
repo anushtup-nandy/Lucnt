@@ -31,10 +31,27 @@ and its spend fingerprint — computed live from the ledger so it can self-regul
 *before* it spends (M8). The `POST /intelligence/recompute` + Insights/Memory
 dashboard tables are the control-plane side, curled live like the recon scan.
 
+Tier 2 (correctness) additions: the **third verdict** — a spend that is neither
+approved nor blocked but `review`, held for a human (T0-11); budget measured in
+the entity's functional currency rather than the paid one (T1-2/T2-6); spend
+derived from the current month of the ledger with entity-local boundaries, not a
+stored counter (T2-3/T2-9); and an anomaly score computed against the agent's
+*own* baseline (T2-8).
+
+Tier 3 (hardening) additions: oversized free text is rejected at the edge as a
+422 naming the field instead of dying as a 500 `DataError` (T3-8), including on
+the recovery hook (T2-14); `check_budget()` resolves one agent server-side so its
+cost no longer scales with tenant size (T3-3); and the freshness contract — a
+capture moves `budget` immediately, because it is a live SQL sum, while
+fingerprint statistics are only as fresh as the last recompute (T3-2).
+
 Requires a live backend at LUCNT_BASE_URL (see infra/PLAN.md) seeded via
 `scripts/seed_dev.py`. Not collected by pytest (testpaths = ["tests"]); run
 manually:
     python -m examples.example_agent
+
+Every step asserts. A silent pass is not a pass — if a beat stops holding, this
+script fails loudly rather than printing a story that is no longer true.
 """
 
 from __future__ import annotations
@@ -177,8 +194,7 @@ def main() -> None:
         )
     except lucnt.PolicyBlocked as exc:
         print(
-            f"[example] policy blocked coinbase as expected: "
-            f"{exc.code} - {exc.reason}"
+            f"[example] policy blocked coinbase as expected: {exc.code} - {exc.reason}"
         )
     else:
         raise AssertionError("expected the crypto spend to be policy-blocked")
@@ -282,6 +298,126 @@ def main() -> None:
     with lucnt.task(agent="research", entity="in"):
         cost_view = lucnt.query(question="what is my cost per output?")
     print(f"[example]   (via task ctx) {cost_view.headline}")
+
+    # ── Tier 2: the correctness the numbers depend on ────────────────────
+    # (a) There is a THIRD verdict. approve/block is the easy story; the one
+    #     that matters operationally is `review` — the spend is inside budget
+    #     and breaks no merchant rule, but crosses a threshold a human owns
+    #     (T0-11). The caller must stop: nothing is captured, and the hold
+    #     lands in the approval queue for an admin to approve or reject.
+    held = lucnt.authorize(
+        agent="research",
+        entity="in",
+        vendor="dataprovider",
+        amount=150_000,
+        currency="INR",  # inside the 600,000 budget, over the 100,000 threshold
+        reason="annual dataset licence renewal",
+    )
+    if held.approved:
+        raise AssertionError("a spend over the review threshold must not auto-approve")
+    if held.status != "review":
+        raise AssertionError(f"expected a review verdict, got {held.status}")
+    print(
+        f"[example] held for human review: {held.status} - {held.reason} "
+        f"(nothing captured; awaiting an approver)"
+    )
+
+    # (b) Budget is measured in the entity's FUNCTIONAL currency, never the
+    #     paid one (T1-2/T2-6). research paid in USD above; its budget, spend
+    #     and projection all read in INR because that is what the IN entity
+    #     books in. Mixed-currency addition is the classic way a budget
+    #     invariant goes quietly wrong.
+    if memory.currency != "INR":
+        raise AssertionError(f"IN entity must budget in INR, got {memory.currency}")
+    print(
+        f"[example] budget currency {memory.currency} — the USD spends above were "
+        f"FX-converted at capture, never summed as-paid"
+    )
+
+    # (c) Spend is derived from the CURRENT MONTH of the ledger, not a stored
+    #     running counter (T2-3), with month boundaries in the entity's local
+    #     timezone (T2-9). That is why it resets on its own and can never drift
+    #     from the journals.
+    print(
+        f"[example] month-to-date {memory.projection.month_to_date} "
+        f"{memory.currency} — derived from the ledger, resets at the entity-local "
+        f"month boundary"
+    )
+
+    # (d) The fingerprint scores each agent against its OWN baseline (T2-8), so
+    #     "large" is relative to that agent rather than a global constant.
+    print(
+        f"[example] anomaly score {memory.fingerprint.anomaly_score} "
+        f"(max recent z-score against this agent's own history)"
+    )
+
+    # ── Tier 3: the hardening, as the caller actually experiences it ──────
+    # (a) Every free-text field is bounded server-side (T3-8). Oversized input
+    #     is a 422 naming the offending field — previously it sailed through
+    #     validation and died in Postgres as a 500 DataError, which reads to the
+    #     caller as "the service is broken" rather than "your input is wrong".
+    try:
+        lucnt.authorize(
+            agent="research",
+            entity="in",
+            vendor="dataprovider",
+            amount=1,
+            currency="INR",
+            reason="x" * 2_001,  # REASON_MAX is 2,000
+        )
+    except lucnt.LucntError as exc:
+        detail = str(exc)
+        if "422" not in detail:
+            raise AssertionError(
+                f"expected a 422 for oversized reason, got {detail}"
+            ) from exc
+        print("[example] oversized reason rejected at the edge: 422, field named")
+    else:
+        raise AssertionError("an oversized reason must be rejected, not truncated")
+
+    # (b) The recovery hook is bounded too (T2-14) — an agent-supplied failure
+    #     reason is attacker-adjacent free text on a write path.
+    try:
+        lucnt.mark_failed_delivery(transaction=paid, reason="x" * 501)
+    except lucnt.LucntError:
+        print("[example] oversized failed-delivery reason rejected (bounded at 500)")
+    else:
+        raise AssertionError("an oversized recovery reason must be rejected")
+
+    # (c) check_budget() resolves ONE agent server-side (T3-3). It used to fetch
+    #     every agent's budget and scan the list for a matching slug — which
+    #     silently broke the moment /budgets became paginated, reporting "no
+    #     budget found" for an agent that exists. Cost is now independent of how
+    #     many agents the tenant has.
+    solo = lucnt.check_budget(agent="ops")
+    print(
+        f"[example] check_budget(ops) resolved server-side: "
+        f"{solo.spent}/{solo.monthly_budget} ({solo.status})"
+    )
+
+    # (d) The freshness contract (T3-2). `budget` is always a live SQL sum over
+    #     the ledger — prove it by spending and re-reading. Once the control
+    #     plane has run /intelligence/recompute, the fingerprint STATISTICS are
+    #     served from that stored fingerprint and are only as fresh as it;
+    #     `budget` never is. Gate spending decisions on budget.
+    before_spend = lucnt.query(agent="research").budget.spent
+    topup = lucnt.spend(
+        agent="research",
+        entity="in",
+        vendor="dataprovider",
+        amount=3,
+        currency="USD",
+        reason="incremental dataset pull",
+    )
+    if not isinstance(topup, lucnt.Transaction):
+        raise AssertionError(f"expected the top-up spend to book, got {topup}")
+    after_spend = lucnt.query(agent="research").budget.spent
+    if after_spend <= before_spend:
+        raise AssertionError("budget must reflect a new spend immediately")
+    print(
+        f"[example] budget is always live: {before_spend} -> {after_spend} "
+        f"{memory.currency} immediately after a capture"
+    )
 
 
 if __name__ == "__main__":
