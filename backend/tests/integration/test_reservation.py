@@ -14,10 +14,10 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
-from sqlalchemy.orm import Session
+from sqlalchemy import Engine, delete
+from sqlalchemy.orm import Session, sessionmaker
 
-from lucnt_api.database import SessionLocal, get_db
+from lucnt_api.database import get_db
 from lucnt_api.main import app
 from lucnt_api.models import (
     Agent,
@@ -171,14 +171,39 @@ def test_velocity_counts_uncaptured_holds(
 # --- T0-1: the row lock serializes genuinely concurrent authorizes ---
 
 
-def test_concurrent_authorizes_cannot_bust_budget() -> None:
+def test_concurrent_authorizes_cannot_bust_budget(resolved_engine: Engine) -> None:
     """Two parallel $60 authorizes on a $100 budget: the FOR UPDATE agent lock
-    lets exactly one through. Runs against the real DB (no rollback fixture) so
-    the two requests hold separate transactions, as production would."""
-    app.dependency_overrides.pop(get_db, None)  # ensure real sessions
+    lets exactly one through. Deliberately skips the rollback fixture so the two
+    requests hold separate transactions and really commit, as production would.
+
+    Bound to `resolved_engine` — the engine the suite is configured against — not
+    to the module-level `SessionLocal`. `SessionLocal` follows `DATABASE_URL`,
+    which since T4-12 is *not* where the suite lives:
+
+      * in CI only `TEST_DATABASE_URL` is migrated, so `SessionLocal` hit an empty
+        database and this test failed with `relation "companies" does not exist`;
+      * on a developer machine `DATABASE_URL` is their own database, so the test
+        created and then `DELETE`d rows in it — exactly what T4-12 introduced
+        `TEST_DATABASE_URL` to stop.
+
+    The override below mirrors `get_db` (a fresh session per request, closed
+    afterwards) rather than reusing the savepoint-based `db_session` fixture: one
+    shared connection would serialise the two workers and the row lock this test
+    exists to prove would never be contended.
+    """
+    session_factory = sessionmaker(bind=resolved_engine)
+
+    def _real_session() -> Iterator[Session]:
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _real_session
 
     key = generate_api_key(ApiKeyMode.LIVE)
-    setup = SessionLocal()
+    setup = session_factory()
     try:
         company = Company(name="Race", slug=f"race-{uuid.uuid4().hex[:8]}")
         setup.add(company)
@@ -254,7 +279,7 @@ def test_concurrent_authorizes_cannot_bust_budget() -> None:
         # Exactly one approved, one blocked — never two approvals busting budget.
         assert sorted(results) == ["approved", "blocked"], results
     finally:
-        cleanup = SessionLocal()
+        cleanup = session_factory()
         try:
             cleanup.execute(
                 delete(Transaction).where(Transaction.company_id == company_id)
@@ -270,3 +295,8 @@ def test_concurrent_authorizes_cannot_bust_budget() -> None:
         finally:
             cleanup.close()
             setup.close()
+            # This test installs its own override instead of using the `client`
+            # fixture, so it is responsible for removing it. Leaving it in place
+            # would hand later tests real committing sessions instead of their
+            # rolled-back ones.
+            app.dependency_overrides.pop(get_db, None)
