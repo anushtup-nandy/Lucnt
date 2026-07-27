@@ -18,19 +18,21 @@ description = "Generated knowledge-graph output, which is derived from tracked s
 #
 #   * `cache/*.json` — maps of file path → content hash. Every hash is a
 #     high-entropy hex string. 13 findings.
-#   * `graph.json` / `graph.html` / `<date>/graph.json` — node labels lifted
-#     verbatim from the docs. `docs/PRODUCTION_PLAN.md`'s "(API-key brute force,
-#     scan/recompute abuse)" is inert as markdown prose, but serialising it as a
-#     quoted JSON string value matches the rule's keyword-then-quoted-value
-#     shape. 6 findings, which is what broke the security job on b3de55e: the
-#     narrow `cache/` allowlist below was written clean, then the closing
-#     `graphify update` re-baked freshly-edited Tier 4 prose into the graph.
+#   * `graph.json` / `graph.html` / `<date>/graph.json` — node labels, which are
+#     graphify's own condensed summaries of source files, not verbatim quotes.
+#     6 findings. The flagged string exists in NO tracked file at ANY commit:
+#     `docs/PRODUCTION_PLAN.md:410` spreads "API-key brute force", `scan` and
+#     `recompute` across a markdown table with backticks and an arrow between
+#     them — nothing adjacent, nothing quoted, no match. Compressing them into
+#     "(API-key brute force, scan/recompute abuse)" inside a JSON string value is
+#     what produced the rule's keyword-then-quoted-value shape.
 #
 # Widened from `cache/.*\.json$` to the whole directory rather than chasing each
-# new label: the content is derived from files this scan already covers, so
-# nothing goes unscanned in substance. Still scoped to this one generated
-# directory — a broad `*.json` allowlist would excuse a real key in a config
-# file, which is the thing this scan exists to catch.
+# new label, because you cannot grep your own docs to predict what a summariser
+# will emit — that treadmill has no end. The content is derived from files this
+# scan already covers, so nothing goes unscanned in substance. Still scoped to
+# this one generated directory — a broad `*.json` allowlist would excuse a real
+# key in a config file, which is the thing this scan exists to catch.
 paths = [
   '''^graphify-out/''',
 ]

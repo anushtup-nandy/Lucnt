@@ -100,12 +100,12 @@ temp/
 #     so it is regenerable and adds no information a clone doesn't already have;
 #   * `cache/last_query_stamp` is rewritten by every `graphify query`, so the
 #     working tree was permanently dirty just from reading the graph;
-#   * it kept re-breaking the gitleaks job. Baking doc prose into JSON turns
-#     unquoted markdown into a quoted high-entropy value, which is exactly what
-#     the `generic-api-key` rule matches. `docs/PRODUCTION_PLAN.md`'s "(API-key
-#     brute force, scan/recompute abuse)" became a "leaked credential" the moment
-#     it was serialised into a node label. That is an open-ended treadmill: any
-#     future doc edit near the word "key" mints a new false positive.
+#   * it kept re-breaking the gitleaks job. Node labels are graphify's condensed
+#     summaries of source files, and compressing scattered markdown into one
+#     quoted JSON value can manufacture a credential-shaped string that exists in
+#     no tracked file — see `.gitleaks.toml` and `docs/SECURITY.md` Lesson 2 for
+#     the worked example. That treadmill has no end: you cannot audit your docs
+#     to predict what the summariser will emit.
 #
 # Bootstrap a fresh clone with `graphify update .` — see the graphify section of
 # `CLAUDE.md`. NOTE: history still contains the old blobs, so `.gitleaks.toml`
