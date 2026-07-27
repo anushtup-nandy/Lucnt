@@ -56,11 +56,19 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      # The suite reads and writes `lucnt_test`; `DATABASE_URL` stays pointed at
-      # `lucnt` so the round-trip below cannot be the thing that migrates the
-      # database the tests then assert against.
+      # `DATABASE_URL` stays pointed at `lucnt` so the round-trip below cannot be
+      # the thing that migrates the database the tests then assert against.
+      #
+      # `TEST_DATABASE_URL` is deliberately NOT set here — only on the `pytest`
+      # step. The T4-12 validator in `config.py` rejects a config where the two
+      # are equal, and the alembic steps below have to point `DATABASE_URL` at
+      # the throwaway database; with both in job scope they collide and every
+      # `Settings()` construction raises before doing any work. Scoping each var
+      # to the steps that actually read it keeps the guard's intent — the
+      # *suite's* destructive fixtures must never target the read database —
+      # without the two ever being in scope together.
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lucnt
-      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lucnt_test
+      TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/lucnt_test
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: development
     defaults:
@@ -109,9 +117,12 @@ jobs:
 
       - name: Migrations round-trip (upgrade → downgrade → upgrade)
         # Against the throwaway database, deliberately: `downgrade base` drops
-        # every table it can reach.
+        # every table it can reach. Alembic reads `DATABASE_URL` only
+        # (`alembic/env.py` imports `settings` at module scope), so pointing it at
+        # the throwaway database is the whole mechanism — and why
+        # `TEST_DATABASE_URL` must not also be in scope here.
         env:
-          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: |
           alembic upgrade head
           alembic downgrade base
@@ -121,10 +132,15 @@ jobs:
         # Fails if the models imply a migration nobody wrote. Only sharp now that
         # T4-7 enabled type and server-default comparison.
         env:
-          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: alembic check
 
       - name: Tests (pytest)
+        # The one step that reads `TEST_DATABASE_URL`: `tests/conftest.py` builds
+        # its engine from it and warns when it is unset. `DATABASE_URL` keeps the
+        # job-level value, so the two differ and the T4-12 validator is satisfied.
+        env:
+          TEST_DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: pytest
 
   backend-image:

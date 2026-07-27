@@ -6,15 +6,31 @@
 useDefault = true
 
 [allowlist]
-description = "Generated caches whose content hashes trip the entropy heuristic"
+description = "Generated knowledge-graph output, which is derived from tracked source"
 
-# `graphify-out/cache/` is the knowledge-graph tool's cache: JSON maps of file
-# path → content hash. Every hash is a high-entropy hex string, so the
-# `generic-api-key` rule flags them — 13 findings, none of them a credential.
+# `graphify-out/` is `graphify update .` output. It is now gitignored, but
+# `gitleaks detect` scans **commit history**, not the working tree — the workflow
+# passes `fetch-depth: 0` precisely so a key deleted in a later commit is still
+# caught. So untracking the directory does nothing for the ~29 commits that
+# already contain it, and this allowlist has to stay.
 #
-# Scoped to this one directory on purpose. A broad `*.json` allowlist would also
-# excuse a real key committed in a config file, which is precisely the thing this
-# scan exists to catch.
+# Two distinct false-positive classes came from here, both `generic-api-key`:
+#
+#   * `cache/*.json` — maps of file path → content hash. Every hash is a
+#     high-entropy hex string. 13 findings.
+#   * `graph.json` / `graph.html` / `<date>/graph.json` — node labels lifted
+#     verbatim from the docs. `docs/PRODUCTION_PLAN.md`'s "(API-key brute force,
+#     scan/recompute abuse)" is inert as markdown prose, but serialising it as a
+#     quoted JSON string value matches the rule's keyword-then-quoted-value
+#     shape. 6 findings, which is what broke the security job on b3de55e: the
+#     narrow `cache/` allowlist below was written clean, then the closing
+#     `graphify update` re-baked freshly-edited Tier 4 prose into the graph.
+#
+# Widened from `cache/.*\.json$` to the whole directory rather than chasing each
+# new label: the content is derived from files this scan already covers, so
+# nothing goes unscanned in substance. Still scoped to this one generated
+# directory — a broad `*.json` allowlist would excuse a real key in a config
+# file, which is the thing this scan exists to catch.
 paths = [
-  '''graphify-out/cache/.*\.json$''',
+  '''^graphify-out/''',
 ]
