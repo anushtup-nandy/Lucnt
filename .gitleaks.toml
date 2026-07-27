@@ -36,3 +36,25 @@ description = "Generated knowledge-graph output, which is derived from tracked s
 paths = [
   '''^graphify-out/''',
 ]
+
+# The same false-positive string, quoted deliberately in `docs/SECURITY.md` as the
+# worked example in Lesson 2. That file carries an inline `gitleaks:allow` marker on
+# the line, which is the correct narrow suppression — but the marker was added one
+# commit too late: `370fc21` had already committed and pushed the unmarked line, and
+# `detect` scans history, so the tree being clean does not help. (Lesson 1, demoed on
+# itself.) A regex allowlist is the non-destructive fix; the alternative is a
+# `filter-repo` rewrite and a force-push of `main`.
+#
+# Scoped to this one literal, not to `docs/SECURITY.md` as a path — a real key pasted
+# into that file must still fail the build.
+#
+# NOTE: `regexes` is matched against the **secret** gitleaks extracted, not the whole
+# line. Here the rule's capture group is exactly `scan/recompute` (entropy 3.52) — the
+# surrounding "(API-key brute force, ... abuse)" is only the context that made the
+# rule fire. Anchoring to the secret is why this entry is `^scan/recompute$` and not
+# the sentence it appears in; a line-level pattern silently matches nothing. Confirm
+# any new entry with `gitleaks detect --source=. --verbose` (no `--redact`) and copy
+# the `Secret:` field.
+regexes = [
+  '''^scan/recompute$''',
+]

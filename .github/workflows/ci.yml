@@ -87,10 +87,33 @@ jobs:
         run: pip install -e ".[dev]"
 
       - uses: astral-sh/setup-uv@v5
+        with:
+          # Without this the action warns "No file matched to
+          # [**/uv.lock,**/requirements*.txt]. The cache will never get invalidated" —
+          # its default globs match neither `requirements.lock` (`.lock`, not `.txt`)
+          # nor this job's `backend/` working directory, so the uv cache was dead
+          # weight rather than a cache.
+          cache-dependency-glob: backend/requirements.lock
       - name: Lockfile is in sync with pyproject.toml
-        # A stale lockfile means the image ships something other than what
-        # pyproject declares — and nothing else in CI would notice.
+        # Blocking gate: does `requirements.lock` still satisfy what `pyproject.toml`
+        # declares? A lock that has genuinely diverged means the image ships something
+        # other than what pyproject says, and nothing else in CI would notice.
+        #
+        # The check is SEEDED with the committed lock (the `cp` below), because
+        # `uv pip compile` treats an existing output file as preferences and keeps its
+        # pins. Unseeded — as this step was originally written — it resolved fresh from
+        # the index on every run, so the gate went red whenever any of ~60 direct or
+        # transitive dependencies published a new version, with no change to the repo
+        # at all. That is exactly what broke `370fc21`: `fastapi 0.140.7` reached PyPI
+        # 44 minutes before the push, and the identical workflow had passed the day
+        # before. Seeded, the gate fires only on real divergence — a dependency added
+        # to or removed from pyproject, or a constraint the lock's pins no longer
+        # satisfy. Verified by injecting a dependency into a throwaway pyproject and
+        # confirming the seeded check still catches it.
+        #
+        # Picking up newer versions is a deliberate act: see the advisory step below.
         run: |
+          cp requirements.lock /tmp/requirements.check
           uv pip compile pyproject.toml --universal --python-version 3.10 \
             --generate-hashes --quiet -o /tmp/requirements.check
           # uv's header echoes its own `-o` path, so that one line always differs
@@ -98,9 +121,35 @@ jobs:
           # committed file, which stays self-documenting.
           strip() { sed '/^#    uv pip compile/d' "$1"; }
           if ! diff -u <(strip requirements.lock) <(strip /tmp/requirements.check); then
-            echo "::error::requirements.lock is stale. Regenerate it with:" >&2
-            echo "  uv pip compile pyproject.toml --universal --python-version 3.10 --generate-hashes -o requirements.lock" >&2
+            echo "::error::requirements.lock no longer satisfies pyproject.toml. Regenerate with:" >&2
+            echo "  cd backend && uv pip compile pyproject.toml --universal \\" >&2
+            echo "    --python-version 3.10 --generate-hashes -o requirements.lock" >&2
             exit 1
+          fi
+
+      - name: Newer dependency versions available (advisory)
+        # Preserves the early-warning value the blocking gate used to supply, without
+        # taxing unrelated pushes. Resolves fresh from the index and reports what a
+        # deliberate `--upgrade` would move. Never fails the build.
+        #
+        # Note `--upgrade` is REQUIRED to see this: a plain
+        # `uv pip compile ... -o requirements.lock` over an existing lock preserves its
+        # pins, so it is a no-op for version bumps. The old error message told people
+        # to run exactly that, which would have shown them an empty diff and sent them
+        # back to a still-red build.
+        continue-on-error: true
+        run: |
+          uv pip compile pyproject.toml --universal --python-version 3.10 \
+            --generate-hashes --upgrade --quiet -o /tmp/requirements.latest
+          strip() { sed '/^#    uv pip compile/d' "$1"; }
+          if diff -q <(strip requirements.lock) <(strip /tmp/requirements.latest) >/dev/null; then
+            echo "requirements.lock is at the newest resolvable version set."
+          else
+            echo "::warning::Newer dependency versions are available. Upgrade deliberately with:"
+            echo "  cd backend && uv pip compile pyproject.toml --universal \\"
+            echo "    --python-version 3.10 --generate-hashes --upgrade -o requirements.lock"
+            diff -u <(strip requirements.lock) <(strip /tmp/requirements.latest) \
+              | grep -E '^[-+][A-Za-z0-9._-]+==' || true
           fi
 
       - name: Create the test database
