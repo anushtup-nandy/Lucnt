@@ -21,7 +21,7 @@ description = "Generated knowledge-graph output, which is derived from tracked s
 #   * `graph.json` / `graph.html` / `<date>/graph.json` — node labels, which are
 #     graphify's own condensed summaries of source files, not verbatim quotes.
 #     6 findings. The flagged string exists in NO tracked file at ANY commit:
-#     `docs/PRODUCTION_PLAN.md:410` spreads "API-key brute force", `scan` and
+#     `docs/production/plan1.md:410` spreads "API-key brute force", `scan` and
 #     `recompute` across a markdown table with backticks and an arrow between
 #     them — nothing adjacent, nothing quoted, no match. Compressing them into
 #     "(API-key brute force, scan/recompute abuse)" inside a JSON string value is
@@ -37,7 +37,7 @@ paths = [
   '''^graphify-out/''',
 ]
 
-# The same false-positive string, quoted deliberately in `docs/SECURITY.md` as the
+# The same false-positive string, quoted deliberately in `docs/security/Security.md` as the
 # worked example in Lesson 2. That file carries an inline `gitleaks:allow` marker on
 # the line, which is the correct narrow suppression — but the marker was added one
 # commit too late: `370fc21` had already committed and pushed the unmarked line, and
@@ -45,7 +45,7 @@ paths = [
 # itself.) A regex allowlist is the non-destructive fix; the alternative is a
 # `filter-repo` rewrite and a force-push of `main`.
 #
-# Scoped to this one literal, not to `docs/SECURITY.md` as a path — a real key pasted
+# Scoped to this one literal, not to `docs/security/Security.md` as a path — a real key pasted
 # into that file must still fail the build.
 #
 # NOTE: `regexes` is matched against the **secret** gitleaks extracted, not the whole

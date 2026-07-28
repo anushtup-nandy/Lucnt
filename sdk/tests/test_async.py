@@ -471,6 +471,8 @@ def test_check_budget_async_filters_server_side(
                         "monthly_budget": "100.00",
                         "spent": "40.00",
                         "remaining": "60.00",
+                        "reserved": "10.00",
+                        "available": "50.00",
                         "pct_used": "40.00",
                         "status": "ok",
                     }
@@ -485,6 +487,8 @@ def test_check_budget_async_filters_server_side(
 
     status = asyncio.run(main())
     assert status.remaining == Decimal("60.00")
+    assert status.reserved == Decimal("10.00")  # F-10: holds visible to the read
+    assert status.available == Decimal("50.00")
     assert not status.exhausted
 
 

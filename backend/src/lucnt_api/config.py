@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # and validated below so that when one *is* supplied outside development it
     # cannot be the committed example.
     secret_key: str | None = None
-    # T4-12/SCALABILITY_PLAN.md §501: this used to default to "development", so an
+    # T4-12/docs/scale/SCALABILITY.md §501: this used to default to "development", so an
     # unset ENVIRONMENT in production served `/docs`, `/redoc` and `/openapi.json`
     # — the entire financial API surface — to the internet. Required and closed:
     # an unset or misspelled value now fails startup instead of failing open.

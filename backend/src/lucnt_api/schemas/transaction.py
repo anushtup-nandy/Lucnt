@@ -123,16 +123,18 @@ class CaptureRequest(BaseModel):
 
     authorization_id: uuid.UUID
     source: Literal["sdk", "card", "invoice"] = "sdk"
-    # NOTE: accepted but *not persisted* — `transactions` has no `invoice_url`
-    # column, so this value is silently dropped today. Bounded here so it cannot
-    # be used as an unbounded-payload vector while it remains a no-op; wiring it
-    # to the invoice hook is M3 work, tracked separately.
+    # Evidence link persisted on the transaction (F-12) and readable back via
+    # GET /transactions/{id}; the M3 invoice hook is its structured consumer.
     invoice_url: str | None = Field(default=None, max_length=URL_MAX)
     # A settlement override, when present, must be strictly positive (T0-4); its
     # upper bound versus the authorized amount is enforced in the router (T0-3).
     amount: Decimal | None = Field(default=None, gt=0)
     model: str | None = Field(default=None, max_length=MODEL_NAME_MAX)
     tokens: int | None = Field(default=None, ge=0)
+    # F-8: True when the booked amount is the authorize-time estimate rather
+    # than settled actual usage — the SDK's T5-1 fallback sets this so the
+    # ledger can distinguish an estimate from truth instead of an ERROR log.
+    estimated: bool = False
 
 
 class JournalLine(BaseModel):
@@ -186,6 +188,10 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
+    # F-8: echoes the request flag so the caller can see what the ledger booked.
+    estimated: bool = False
+    # F-12: echoes the persisted evidence link (readable back via GET too).
+    invoice_url: str | None = None
     journal: list[JournalLine] = Field(default_factory=list)
     tax: TaxInfo | None = None
 
@@ -210,6 +216,10 @@ class TransactionDetail(BaseModel):
     intent: str | None
     model_used: str | None
     tokens_consumed: int | None
+    # F-8: the booked amount is an unsettled estimate (see `CaptureRequest`).
+    estimated: bool
+    # F-12: the evidence link supplied at capture, if any.
+    invoice_url: str | None
     status: str
     reason_text: str | None
     failure_reason: str | None

@@ -1,0 +1,28 @@
+# Prometheus alerting rules for LUCNT (F-7).
+#
+# STATUS: this file is the alerting CONTRACT, not a live alert. The backend
+# exports /metrics (T4-4) but nothing scrapes, stores, or alerts on them yet —
+# that is the open P8 item ("Grafana dashboards + alerting thresholds",
+# PLAN.md §Phase 8). When Prometheus lands, load this file via
+# `rule_files: [alerts.yml]`; until then it records what must page on day one.
+groups:
+  - name: lucnt-security
+    rules:
+      # F-7: the rate limiter fails open when Redis is unreachable — requests
+      # are admitted without counting, so brute-force protection is OFF. The
+      # fail-open is deliberate (a cache blip must not take down authorize());
+      # the silence was the finding. Any increase means Redis is down or
+      # unreachable from the backend: page, check redis health and
+      # `redis_url`/network, and expect the WARNING log
+      # "rate limiter unavailable; admitting request" alongside.
+      - alert: RateLimiterFailOpen
+        expr: increase(lucnt_rate_limiter_fail_open_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Rate limiter is failing open ({{ $value }} unmetered requests in 5m)"
+          description: >-
+            Redis is unreachable from the backend, so requests are being
+            admitted without rate limiting (bucket={{ $labels.bucket }}).
+            Brute-force protection is disabled until Redis recovers.

@@ -1,5 +1,9 @@
 # LUCNT
 
+> ⚠️ **Before publishing the SDK or starting a pilot, read [docs/production/plan2.md](docs/production/plan2.md)** —
+> 27 open items compiled at Tier 5 close, split by which gate they block, with the six
+> that need a decision listed first.
+
 > Financial infrastructure that attaches to your existing agents — policy-gated spend
 > (`authorize` → `capture`), live accounting, and recovery for AI agents that transact.
 
@@ -13,7 +17,7 @@ contract-first alongside the backend; the dashboard is deferred to the last phas
 [`PLAN.md`](PLAN.md) for the phase-by-phase roadmap.
 
 **Pre-pilot hardening: Tier 3 is complete (8/8 — T3-1…T3-8).** Tiers 0, 1, 1.5 and 2 of
-[`docs/PRODUCTION_PLAN.md`](docs/PRODUCTION_PLAN.md) were already closed; Tier 3 ("scale,
+[`docs/production/plan1.md`](docs/production/plan1.md) were already closed; Tier 3 ("scale,
 performance & operability") adds hot-query indexes, DB-level uniqueness, an explicit connection
 pool + statement timeout, one shared pagination contract, bounded request inputs, Redis-backed
 rate limiting, and the removal of the full-ledger in-memory loads. Tiers 4–5 are open. Details in

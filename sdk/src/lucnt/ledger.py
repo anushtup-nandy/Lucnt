@@ -640,6 +640,7 @@ def _capture_call(
     amount: Money | None,
     model: str | None,
     tokens: int | None,
+    estimated: bool,
 ) -> _Call:
     """Build the capture request, overriding only the values actually settled."""
     body: dict[str, object] = {
@@ -653,6 +654,10 @@ def _capture_call(
         body["model"] = model
     if tokens is not None:
         body["tokens"] = tokens
+    if estimated:
+        # Sent only when True: an older backend never sees a field it does not
+        # know, and False is the wire default anyway (F-8).
+        body["estimated"] = True
     return _Call(
         "POST",
         _CAPTURE_PATH,
@@ -671,6 +676,7 @@ def capture(
     amount: Money | None = None,
     model: str | None = None,
     tokens: int | None = None,
+    estimated: bool = False,
 ) -> Transaction:
     """Commit the spend approved by `verdict` to the ledger.
 
@@ -693,6 +699,10 @@ def capture(
             as `Decimal`, `int`, or `str`. `float` is rejected.
         model: The actual model used (overrides the authorized value).
         tokens: The actual tokens consumed (overrides the authorized value).
+        estimated: Mark the booked amount as an unsettled estimate (F-8).
+            `meter()` sets this when it cannot read actual usage and books the
+            hold's estimate rather than losing the spend; the ledger records
+            the flag so an estimate is never presented as settled truth.
 
     Returns:
         The booked `Transaction`.
@@ -710,6 +720,7 @@ def capture(
         amount=amount,
         model=model,
         tokens=tokens,
+        estimated=estimated,
     )
     return _model(Transaction, _send(call), call.path)
 
@@ -721,6 +732,7 @@ async def capture_async(
     amount: Money | None = None,
     model: str | None = None,
     tokens: int | None = None,
+    estimated: bool = False,
 ) -> Transaction:
     """Commit the spend approved by `verdict` to the ledger (async twin).
 
@@ -734,6 +746,8 @@ async def capture_async(
             as `Decimal`, `int`, or `str`. `float` is rejected.
         model: The actual model used (overrides the authorized value).
         tokens: The actual tokens consumed (overrides the authorized value).
+        estimated: Mark the booked amount as an unsettled estimate (F-8); see
+            `capture()`.
 
     Returns:
         The booked `Transaction`.
@@ -749,6 +763,7 @@ async def capture_async(
         amount=amount,
         model=model,
         tokens=tokens,
+        estimated=estimated,
     )
     return _model(Transaction, await _send_async(call), call.path)
 
@@ -1023,6 +1038,11 @@ def _check_budget_result(
             monthly_budget=row["monthly_budget"],
             spent=row["spent"],
             remaining=row["remaining"],
+            # Required, not defaulted (F-10): a backend too old to report holds
+            # would otherwise hand a self-regulating agent headroom the gate
+            # refuses — the exact inconsistency these fields exist to close.
+            reserved=row["reserved"],
+            available=row["available"],
             pct_used=row["pct_used"],
             status=row["status"],
         )

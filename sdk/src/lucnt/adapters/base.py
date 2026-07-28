@@ -26,7 +26,7 @@ from lucnt.exceptions import LucntError
 from lucnt.pricing import (
     ModelPrices,
     PriceInput,
-    load_pricing_pack,
+    load_active_pack,
     normalize_prices,
 )
 
@@ -49,8 +49,20 @@ _DOCUMENT_BLOCK_TYPES = frozenset({"document", "file", "input_file"})
 
 
 def _quantize(amount: Decimal) -> Decimal:
-    """Round a cost to the ledger's 4-decimal precision (half-up)."""
-    return amount.quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
+    """Round a cost to the ledger's 4-decimal precision (half-up).
+
+    A positive amount is floored at the ledger's smallest unit (0.0001) rather
+    than rounded to zero: the backend refuses zero-amount money (T0-4's
+    `amount > 0` invariant), so a sub-precision spend — 8 embedding tokens,
+    say — quantized to 0.0000 would fail authorize outright and bounce a
+    settlement into the estimate fallback. Booking the minimum unit
+    over-states such a spend by a fraction of a hundredth of a cent, which is
+    the correct direction: never book a real spend as zero (F-13).
+    """
+    quantized = amount.quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
+    if quantized <= 0 < amount:
+        return _FOUR_PLACES
+    return quantized
 
 
 def _int_attr(obj: object, *names: str) -> int:
@@ -107,7 +119,9 @@ class MeterAdapter:
             LucntError: The pack has no entry for this adapter's vendor, or an
                 override is malformed.
         """
-        pack = load_pricing_pack()
+        # Feed-merged when the server feed is reachable, packaged pack
+        # otherwise (F-2); caller overrides below win over both.
+        pack = load_active_pack()
         vendor_pricing = pack.vendors.get(self.vendor)
         if vendor_pricing is None:
             raise LucntError(

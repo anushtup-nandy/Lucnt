@@ -26,6 +26,7 @@ from lucnt_api.routers import (
     intelligence,
     memory,
     policies,
+    pricing,
     recon,
     transactions,
     vendors,
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(books.router)
     app.include_router(budgets.router)
     app.include_router(policies.router)
+    app.include_router(pricing.router)
     app.include_router(recon.router)
     app.include_router(intelligence.router)
     app.include_router(insights.router)

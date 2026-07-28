@@ -31,6 +31,13 @@ class AgentBudget(BaseModel):
     spent: Decimal
     spent_today: Decimal
     remaining: Decimal
+    # F-10: what the authorize gate will actually grant. `remaining` ignores
+    # outstanding holds; the gate does not — `reserved` is the live-hold total
+    # measured with the gate's own predicate, and `available` (= remaining −
+    # reserved, may go negative like `remaining`) is the number an agent should
+    # self-regulate on.
+    reserved: Decimal
+    available: Decimal
     pct_used: Decimal
     status: str  # ok | warning | exhausted
 

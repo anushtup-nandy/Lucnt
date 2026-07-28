@@ -51,6 +51,11 @@ class LucntConfig(BaseModel):
     backoff_base: float = Field(default=0.25, gt=0)
     backoff_max: float = Field(default=8.0, gt=0)
     respect_retry_after: bool = True
+    # Server-fetched pricing feed (F-2): the backend serves today's effective
+    # vendor prices and the packaged pack becomes the offline fallback, so a
+    # price change (or a lapsing intro rate) never needs a client release.
+    pricing_feed: bool = True
+    pricing_feed_ttl: float = Field(default=3600.0, ge=0)
 
 
 class TaskContext(BaseModel):
@@ -145,6 +150,12 @@ class BudgetStatus(BaseModel):
 
     Mirrors the backend `AgentBudget`. `status` is `ok` | `warning` |
     `exhausted`; every figure is derived server-side from live spend.
+
+    **Self-regulate on `available`, not `remaining`** (F-10). `remaining` is
+    `monthly_budget − captured spend`; the authorize gate additionally
+    subtracts outstanding holds (`reserved`), so `available` is the headroom
+    the gate will actually grant. An agent that checks `remaining` can see
+    room, spend, and be blocked anyway.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -153,6 +164,10 @@ class BudgetStatus(BaseModel):
     monthly_budget: Decimal
     spent: Decimal
     remaining: Decimal
+    # Live approved-but-uncaptured holds, measured with the gate's predicate.
+    reserved: Decimal
+    # remaining − reserved: what the authorize gate will actually grant.
+    available: Decimal
     pct_used: Decimal
     status: str
 
@@ -214,6 +229,12 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
+    # F-8: True when `amount` is the authorize-time estimate rather than settled
+    # actual usage — meter()'s T5-1 fallback books that way instead of losing
+    # the spend, and the ledger records which rows it happened to.
+    estimated: bool = False
+    # F-12: the evidence link passed to `capture()`, persisted on the ledger row.
+    invoice_url: str | None = None
     journal: list[JournalLine] = Field(default_factory=list)
     tax: TaxInfo | None = None
 

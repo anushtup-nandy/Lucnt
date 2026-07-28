@@ -397,6 +397,8 @@ def _capture_response(
         vendor=transaction.vendor,
         amount=transaction.paid_amount,
         currency=transaction.paid_currency,
+        estimated=transaction.estimated,
+        invoice_url=transaction.invoice_url,
         journal=[
             JournalLine(
                 account_name=line.account_name,
@@ -737,7 +739,14 @@ def capture(
             f"captured; re-authorize the spend instead.",
         )
 
-    agent = db.get(Agent, authorization.agent_id)
+    # Locked up front, deliberately (F-9): inserting the transaction below takes
+    # a KEY SHARE lock on this agent row (the FK), and the spend-counter UPDATE
+    # after it upgrades that to an exclusive lock. A concurrent authorize()
+    # holding/waiting FOR UPDATE between those two steps closed a lock-upgrade
+    # cycle — the load test produced Postgres deadlocks at 50 users until this
+    # took the exclusive lock *before* the insert. Consistent lock ordering
+    # (agent row first, always) is the fix, not a retry.
+    agent = db.get(Agent, authorization.agent_id, with_for_update=True)
     if agent is None:  # FK-guaranteed; explicit guard, not an assert (T0-18)
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -814,6 +823,8 @@ def capture(
         supply_type=authorization.supply_type,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
+        estimated=request.estimated,
+        invoice_url=request.invoice_url,
         status=TransactionStatus.COMPLETED,
         approval_method="auto",
         reason_text=authorization.reason_text,
@@ -1010,6 +1021,14 @@ def reverse_transaction(
         ).scalars()
     )
 
+    # Same lock ordering as capture() (F-9): take the agent row exclusively
+    # BEFORE inserting the reversal, whose FK would otherwise grab a KEY SHARE
+    # that the spend-counter UPDATE below then upgrades — the lock-upgrade
+    # cycle that deadlocked against a concurrent authorize() FOR UPDATE.
+    db.execute(
+        select(Agent.id).where(Agent.id == original.agent_id).with_for_update()
+    )
+
     now = datetime.now(timezone.utc)
     reversal = Transaction(
         company_id=company.id,
@@ -1127,6 +1146,10 @@ def list_transactions(
     db: Session = Depends(get_db),
     agent: str | None = Query(default=None, description="Filter by agent slug"),
     vendor: str | None = Query(default=None, description="Filter by vendor"),
+    estimated: bool | None = Query(
+        default=None,
+        description="Filter to estimate-booked (true) or settled (false) rows (F-8)",
+    ),
     page: Page = Depends(paginate()),
 ) -> TransactionListResponse:
     """List committed transactions for the current company, filterable/paginated."""
@@ -1136,6 +1159,8 @@ def list_transactions(
         stmt = stmt.where(Transaction.agent_id == agent_row.id)
     if vendor is not None:
         stmt = stmt.where(Transaction.vendor == vendor)
+    if estimated is not None:
+        stmt = stmt.where(Transaction.estimated == estimated)
 
     total = count_total(db, stmt)
     rows = (
