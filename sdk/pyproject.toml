@@ -1,12 +1,40 @@
 [project]
 name = "lucnt"
-version = "0.1.0"
+# T5-7: single-sourced from src/lucnt/_version.py — never hardcode it here again.
+dynamic = ["version"]
 description = "Financial infrastructure that attaches to your existing agents."
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "httpx>=0.27",
-    "pydantic>=2.0",
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "LUCNT" }]
+keywords = ["agents", "llm", "fintech", "accounting", "spend-management", "budget"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Accounting",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
+# T5-10: cap the majors. `httpx>=0.27` alone would happily install a 1.x that
+# breaks the transport; same for a hypothetical pydantic 3.
+dependencies = [
+    "httpx>=0.27,<1.0",
+    "pydantic>=2.0,<3.0",
+]
+
+[project.urls]
+Homepage = "https://lucnt.dev"
+Documentation = "https://docs.lucnt.dev"
+Source = "https://github.com/lucnt/lucnt-python"
+Changelog = "https://github.com/lucnt/lucnt-python/blob/main/CHANGELOG.md"
+Issues = "https://github.com/lucnt/lucnt-python/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -19,8 +47,23 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/lucnt/_version.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/lucnt"]
+
+# Open source ships an sdist as well as a wheel (T5-7). Tests and the acceptance
+# example go in it deliberately — a consumer auditing money-path code wants them.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/examples",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 # -----------------------------------------------------------------------------
 # Pytest

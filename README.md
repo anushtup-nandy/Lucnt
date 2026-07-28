@@ -23,7 +23,7 @@ rate limiting, and the removal of the full-ledger in-memory loads. Tiers 4–5 a
 |---|---|
 | `sdk/` (`lucnt` package) | `task()`/`authorize()`/`capture()`/`spend()` — done, green (unit-tested, no backend needed) |
 | `backend/` | FastAPI app live (`authorize`→`capture`, books, budgets, policies, recon, intelligence); 33 migrations, head `e1f2a3b4c5d6` |
-| `frontend/` | Not started — deferred to Phase 7 |
+| `frontend/` | Not started — **next after Tier 5** (P7 was un-deferred 28 Jul 2026 and now runs before Phase 6) |
 
 ---
 
@@ -60,7 +60,7 @@ Full design docs: [`PLAN.md`](PLAN.md) (master plan), [`sdk/PLAN.md`](sdk/PLAN.m
 | **Backend** | Python 3.10+, FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2 |
 | **Database** | PostgreSQL 16 (Docker) |
 | **Rate limiting** | Redis 7 — a **runtime dependency** of the backend (`redis>=5.0` in `backend/pyproject.toml`), not just a compose service |
-| **Frontend** (deferred to Phase 7) | React 18, TypeScript, Vite, Tailwind CSS |
+| **Frontend** (P7 — next after Tier 5) | React 18, TypeScript, Vite, Tailwind CSS |
 
 ---
 
@@ -131,7 +131,8 @@ pytest   # fully mocked -- no backend or network needed
 
 ### 4. Frontend
 
-Not started. Deferred to Phase 7 — see [`frontend/PLAN.md`](frontend/PLAN.md).
+Not started. **Next up after Tier 5** — P7 was un-deferred on 28 Jul 2026 and now runs ahead of
+Phase 6. See [`frontend/PLAN.md`](frontend/PLAN.md).
 
 ---
 
@@ -185,7 +186,7 @@ two can never disagree.
 lucnt/
 ├── sdk/         # ★ primary deliverable — the `lucnt` Python SDK
 ├── backend/     # FastAPI application (DB schema done; app not started)
-├── frontend/    # React SPA — deferred to Phase 7, no code yet
+├── frontend/    # React SPA — P7, next after Tier 5; no code yet
 ├── infra/       # docker-compose.yml, Nginx config
 ├── docs/        # Design docs, status tracking, production-hardening plan
 └── logs/        # Daily session logs
