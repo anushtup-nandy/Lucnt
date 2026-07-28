@@ -59,6 +59,8 @@ from __future__ import annotations
 from decimal import Decimal
 from types import SimpleNamespace
 
+import httpx
+
 import lucnt
 
 
@@ -85,9 +87,17 @@ class _StubMessages:
 
 
 class _StubAnthropicClient:
-    """A tiny stand-in for `anthropic.Anthropic()` so the demo needs no API key."""
+    """A tiny stand-in for `anthropic.Anthropic()` so the demo needs no API key.
 
-    messages = _StubMessages()
+    Carries a real `httpx.Client` at `._client` because every real vendor
+    client has one and `meter()` now installs its transport governor there
+    (F-1) — a client it cannot govern is refused loudly. The stub's `create`
+    never does real I/O, so the transport is never actually hit.
+    """
+
+    def __init__(self) -> None:
+        self.messages = _StubMessages()
+        self._client = httpx.Client()
 
 
 # `meter()` detects the vendor by the client's module; spoof it so the stub is

@@ -118,6 +118,29 @@ def _usage(input_tokens: int = 1_000, output_tokens: int = 500) -> SimpleNamespa
     )
 
 
+def _vendor_net() -> httpx.Client:
+    """See test_meter.py's twin: fakes model the `._client` a real vendor
+    client always carries, so meter() can install the governor (F-1)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(
+            f"unexpected wire request: {request.method} {request.url}"
+        )
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _vendor_net_async() -> httpx.AsyncClient:
+    """Async twin of `_vendor_net` for the `Async...` fakes."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(
+            f"unexpected wire request: {request.method} {request.url}"
+        )
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
 class _AsyncOpenAICompletions:
     def __init__(self, response: object) -> None:
         self._response = response
@@ -132,6 +155,7 @@ class AsyncOpenAI:
     def __init__(self, response: object) -> None:
         self.chat = SimpleNamespace(completions=_AsyncOpenAICompletions(response))
         self.other_attr = "delegated"
+        self._client = _vendor_net_async()
 
 
 AsyncOpenAI.__module__ = "openai"
@@ -145,6 +169,7 @@ class _FailingAsyncOpenAICompletions:
 class FailingAsyncOpenAI:
     def __init__(self) -> None:
         self.chat = SimpleNamespace(completions=_FailingAsyncOpenAICompletions())
+        self._client = _vendor_net_async()
 
 
 FailingAsyncOpenAI.__module__ = "openai"
@@ -167,6 +192,7 @@ class StreamingAsyncOpenAI:
         self.chat = SimpleNamespace(
             completions=_AsyncStreamingOpenAICompletions(chunks)
         )
+        self._client = _vendor_net_async()
 
 
 StreamingAsyncOpenAI.__module__ = "openai"
@@ -222,6 +248,7 @@ class _AsyncAnthropicMessages:
 class AsyncAnthropic:
     def __init__(self, response: object, final: object) -> None:
         self.messages = _AsyncAnthropicMessages(response, final)
+        self._client = _vendor_net_async()
 
 
 AsyncAnthropic.__module__ = "anthropic"
@@ -476,6 +503,7 @@ def test_an_async_stream_that_errors_midway_is_booked_then_reraises(
     class Client:
         def __init__(self) -> None:
             self.chat = SimpleNamespace(completions=_Exploding())
+            self._client = _vendor_net_async()
 
     Client.__module__ = "openai"
     metered = meter_fn(Client(), agent="a", entity="e")
@@ -599,6 +627,7 @@ def test_a_failing_async_stream_entry_releases_the_hold(
     class Client:
         def __init__(self) -> None:
             self.messages = _Messages()
+            self._client = _vendor_net_async()
 
     Client.__module__ = "anthropic"
     metered = meter_fn(Client(), agent="a", entity="e")
@@ -639,6 +668,7 @@ def test_an_unreadable_async_final_message_books_the_estimate(
     class Client:
         def __init__(self) -> None:
             self.messages = _Messages()
+            self._client = _vendor_net_async()
 
     Client.__module__ = "anthropic"
     metered = meter_fn(Client(), agent="a", entity="e")
@@ -720,6 +750,7 @@ def test_the_sync_adapter_still_meters_a_sync_client(
     class SyncAnthropic:
         def __init__(self) -> None:
             self.messages = _Messages()
+            self._client = _vendor_net()
 
     SyncAnthropic.__module__ = "anthropic"
     metered = meter_fn(SyncAnthropic(), agent="a", entity="e")

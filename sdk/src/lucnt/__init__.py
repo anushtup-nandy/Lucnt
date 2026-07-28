@@ -13,6 +13,12 @@ living financial memory), their typed models, and the SDK's exception hierarchy.
 `meter()` detects an async vendor client and returns an async-aware proxy, so
 the same call wraps `OpenAI()` and `AsyncOpenAI()`. Calling a synchronous
 function from inside a running event loop raises rather than stalling the loop.
+
+`meter()` also installs a transport-layer governor on the wrapped client (F-1),
+so *every* call path that reaches the network is governed — not only the
+documented methods. For frameworks that build their own vendor client
+(LangChain and friends), `metered_http_client()` / `metered_async_http_client()`
+produce governed httpx clients to pass as their `http_client`.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from lucnt.exceptions import (
     RateLimitError,
     TransportError,
 )
+from lucnt.governor import metered_async_http_client, metered_http_client
 from lucnt.ledger import (
     aclose,
     authorize,
@@ -70,6 +77,7 @@ from lucnt.models import (
     Verdict,
     VoidResult,
 )
+from lucnt.pricing import refresh_pricing, refresh_pricing_async
 
 __all__ = [
     "APIError",
@@ -113,9 +121,13 @@ __all__ = [
     "mark_failed_delivery",
     "mark_failed_delivery_async",
     "meter",
+    "metered_async_http_client",
+    "metered_http_client",
     "operation",
     "query",
     "query_async",
+    "refresh_pricing",
+    "refresh_pricing_async",
     "spend",
     "spend_async",
     "task",

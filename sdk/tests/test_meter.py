@@ -53,6 +53,20 @@ def _stub(
 # --- Fake vendor clients (module-spoofed so adapters detect them) ---
 
 
+def _vendor_net() -> httpx.Client:
+    """Real vendor clients expose an httpx client at `._client`; the fakes
+    model that so `meter()` can install the transport governor (F-1). The
+    fakes' methods never do real I/O, so any request that actually reaches
+    this transport is a test bug."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(
+            f"unexpected wire request: {request.method} {request.url}"
+        )
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
 class _FakeAnthropicMessages:
     def __init__(self, response: object) -> None:
         self._response = response
@@ -67,6 +81,7 @@ class FakeAnthropic:
     def __init__(self, response: object) -> None:
         self.messages = _FakeAnthropicMessages(response)
         self.other_attr = "delegated"
+        self._client = _vendor_net()
 
 
 FakeAnthropic.__module__ = "anthropic"
@@ -85,6 +100,7 @@ class _FakeOpenAICompletions:
 class FakeOpenAI:
     def __init__(self, response: object) -> None:
         self.chat = SimpleNamespace(completions=_FakeOpenAICompletions(response))
+        self._client = _vendor_net()
 
 
 FakeOpenAI.__module__ = "openai"
@@ -370,6 +386,8 @@ def test_unreadable_usage_books_the_authorized_estimate(
     # No settled amount/model/tokens — the authorization's held values stand.
     assert "amount" not in captured[0]
     assert captured[0]["authorization_id"] == "auth_m"
+    # F-8: the booked amount is an estimate and the ledger must know it.
+    assert captured[0]["estimated"] is True
 
 
 def test_an_unpriced_reported_model_never_reaches_the_estimate_fallback(
@@ -389,6 +407,8 @@ def test_an_unpriced_reported_model_never_reaches_the_estimate_fallback(
         model="claude-opus-5", messages=[{"role": "user", "content": "hi"}]
     )
     assert captured[0]["amount"] == "5.0000"  # settled at claude-opus-5's rate
+    # A settled capture is truth, not an estimate — the flag must not be sent.
+    assert "estimated" not in captured[0]
 
 
 def test_malformed_vendor_response_still_returns_it(
@@ -552,6 +572,7 @@ class _FailingAnthropicMessages:
 class FailingAnthropic:
     def __init__(self, error: BaseException) -> None:
         self.messages = _FailingAnthropicMessages(error)
+        self._client = _vendor_net()
 
 
 FailingAnthropic.__module__ = "anthropic"
@@ -695,6 +716,44 @@ def test_a_successful_call_never_voids_its_hold(
     assert "/transactions/void" not in paths
 
 
+# --- F-1: the transport governor is installed on the real HTTP client ---------
+
+
+def test_meter_installs_the_transport_governor() -> None:
+    """F-1: wrapping the documented methods is not enough — the client's own
+    httpx transport must be governed so every other call path is covered."""
+    from lucnt.governor import GovernedTransport
+
+    client = FakeAnthropic(None)
+    meter_fn(client, agent="a", entity="e")
+    assert isinstance(client._client._transport, GovernedTransport)
+
+
+def test_remetering_replaces_rather_than_stacks_governors() -> None:
+    """meter() twice must not authorize twice per call."""
+    from lucnt.governor import GovernedTransport
+
+    client = FakeAnthropic(None)
+    meter_fn(client, agent="a", entity="e")
+    meter_fn(client, agent="a", entity="e")
+    transport = client._client._transport
+    assert isinstance(transport, GovernedTransport)
+    assert not isinstance(transport._inner, GovernedTransport)
+
+
+def test_meter_refuses_a_client_it_cannot_govern() -> None:
+    """A client with no httpx `._client` would leave unwrapped paths silently
+    unmetered — the exact F-1 failure — so meter() fails loud instead."""
+
+    class Ungovernable:
+        def __init__(self) -> None:
+            self.messages = _FakeAnthropicMessages(None)
+
+    Ungovernable.__module__ = "anthropic"
+    with pytest.raises(LucntError, match="transport governor"):
+        meter_fn(Ungovernable(), agent="a", entity="e")
+
+
 # --- T5-5: streamed calls must be metered, not silently skipped ---------------
 
 
@@ -737,6 +796,7 @@ class _FakeAnthropicStreamingMessages:
 class StreamingAnthropic:
     def __init__(self, final: object, entered: list[str] | None = None) -> None:
         self.messages = _FakeAnthropicStreamingMessages(final, entered or [])
+        self._client = _vendor_net()
 
 
 StreamingAnthropic.__module__ = "anthropic"
@@ -812,6 +872,7 @@ def test_an_unreadable_stream_books_the_estimate(
 
     assert len(captured) == 1
     assert "amount" not in captured[0]  # the hold's estimate stands
+    assert captured[0]["estimated"] is True  # and is flagged as such (F-8)
     assert "could not read the final message" in caplog.text
 
 
@@ -831,14 +892,43 @@ def test_a_failed_stream_open_releases_its_hold(
     class BoomAnthropic:
         def __init__(self) -> None:
             self.messages = _Boom()
+            self._client = _vendor_net()
 
     BoomAnthropic.__module__ = "anthropic"
 
     metered = meter_fn(BoomAnthropic(), agent="a", entity="e")
-    opener = metered.messages.stream
-    with pytest.raises(RuntimeError, match="stream refused"):
-        opener(model="claude-opus-5", messages=[])
+    manager = metered.messages.stream(model="claude-opus-5", messages=[])
+    with pytest.raises(RuntimeError, match="stream refused"), manager:
+        raise AssertionError("the stream must not be entered")
     assert len(voids) == 1
+
+
+def test_no_hold_is_taken_until_the_sync_stream_is_entered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A manager built and never entered must not reserve budget (F-11).
+
+    The async twin already authorizes in `__aenter__`; the sync path used to
+    authorize eagerly at call time, so `mgr = client.messages.stream(...)`
+    without a `with` minted a hold that only the 24h server-side TTL released.
+    """
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={"authorization_id": "auth_m", "status": "approved", "code": "ok"},
+        )
+
+    _stub(monkeypatch, handler)
+    client = StreamingAnthropic(None)
+    metered = meter_fn(client, agent="a", entity="e")
+    metered.messages.stream(
+        model="claude-opus-5", messages=[{"role": "user", "content": "hi"}]
+    )
+    assert paths == []  # no authorize — no ledger traffic at all
+    assert client.messages.stream_calls == []  # and the vendor stream never opened
 
 
 # --- T5-5: stream=True on the primary method ---------------------------------
