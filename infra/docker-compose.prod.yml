@@ -117,6 +117,38 @@ services:
   #     retries: 5
   #   restart: unless-stopped
 
+  # Certificate issuance/renewal (F-6). Opt-in via the `certs` profile so it
+  # never runs as part of a normal `up`. First issuance (port 80 must already
+  # be serving the ACME webroot via nginx):
+  #
+  #     docker compose -f docker-compose.prod.yml --profile certs run --rm \
+  #       certbot certonly --webroot -w /var/www/certbot \
+  #       -d <your-api-hostname> --email <ops-email> --agree-tos --no-eff-email
+  #
+  # Certificates land under ${TLS_CERT_DIR}/live/<hostname>/ — point nginx's
+  # ssl_certificate at them (or symlink fullchain.pem/privkey.pem into
+  # ${TLS_CERT_DIR} directly), then UNCOMMENT the HSTS line in nginx.conf and
+  # reload. Renewal is `... run --rm certbot renew` from cron/systemd.
+  certbot:
+    image: certbot/certbot
+    profiles: ["certs"]
+    volumes:
+      - ${TLS_CERT_DIR:?set TLS_CERT_DIR to the directory holding fullchain.pem and privkey.pem}:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    restart: "no"
+
+# F-4: the compose network is pinned to a fixed subnet so nginx.conf's
+# `set_real_ip_from` can trust EXACTLY this network instead of the whole
+# 172.16.0.0/12 — under the /12, any address in that range that could reach
+# the edge was able to forge X-Forwarded-For and pick its own rate-limit
+# bucket. Change the subnet only together with nginx.conf (two places:
+# set_real_ip_from and the /metrics allow).
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.100.0/24
+
 volumes:
   certbot_webroot:
   # postgres_data:
