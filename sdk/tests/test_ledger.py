@@ -477,3 +477,114 @@ def test_get_transport_rebuilds_after_reconfigure() -> None:
     config.configure(api_key="sk_other", base_url="https://api.test")
     second = ledger._get_transport()
     assert first is not second
+
+
+# --- T0-6: the SDK half of idempotency ---------------------------------------
+
+
+def _approved(auth_id: str) -> httpx.Response:
+    return httpx.Response(
+        200, json={"authorization_id": auth_id, "status": "approved", "reason": None}
+    )
+
+
+def _keys_seen(
+    monkeypatch: pytest.MonkeyPatch, sink: dict[str, list[str | None]]
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        sink.setdefault(request.url.path, []).append(
+            request.headers.get("Idempotency-Key")
+        )
+        if request.url.path == "/transactions/authorize":
+            return _approved("auth_idem")
+        return httpx.Response(
+            200,
+            json={
+                "id": "tx_idem",
+                "authorization_id": "auth_idem",
+                "status": "booked",
+                "vendor": "openai",
+                "amount": 1.0,
+                "currency": "USD",
+            },
+        )
+
+    _stub(monkeypatch, handler)
+
+
+def test_authorize_generates_an_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    ledger.authorize(
+        vendor="openai",
+        amount="1.00",
+        currency="USD",
+        reason="t",
+        agent="a",
+        entity="e",
+    )
+    (key,) = seen["/transactions/authorize"]
+    assert key is not None and len(key) == 32
+
+
+def test_authorize_uses_the_callers_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    ledger.authorize(
+        vendor="openai",
+        amount="1.00",
+        currency="USD",
+        reason="t",
+        agent="a",
+        entity="e",
+        idempotency_key="caller-owned-key",
+    )
+    assert seen["/transactions/authorize"] == ["caller-owned-key"]
+
+
+def test_each_authorize_call_gets_a_distinct_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two authorize() calls are two logical spends, not a retry of one."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    for _ in range(2):
+        ledger.authorize(
+            vendor="openai",
+            amount="1.00",
+            currency="USD",
+            reason="t",
+            agent="a",
+            entity="e",
+        )
+    first, second = seen["/transactions/authorize"]
+    assert first != second
+
+
+def test_spend_forwards_the_idempotency_key_to_authorize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    ledger.spend(
+        vendor="openai",
+        amount="1.00",
+        currency="USD",
+        reason="t",
+        agent="a",
+        entity="e",
+        idempotency_key="spend-key",
+    )
+    assert seen["/transactions/authorize"] == ["spend-key"]
+
+
+def test_capture_sends_no_idempotency_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """authorization_id already is capture's idempotency key — see capture()."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    ledger.capture(Verdict(authorization_id="auth_idem", status="approved"))
+    assert seen["/transactions/capture"] == [None]

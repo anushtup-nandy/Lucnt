@@ -10,6 +10,7 @@ API/LLM subset only).
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 from typing import Literal
 
@@ -69,6 +70,19 @@ def _as_decimal(amount: Decimal | float | int | str) -> Decimal:
     return amount if isinstance(amount, Decimal) else Decimal(str(amount))
 
 
+def _new_idempotency_key() -> str:
+    """Mint a key for one logical authorize, reused across its transport retries.
+
+    Auto-generating per call covers the transport-retry case (T5-3): the same
+    key goes out on every attempt, so a request that reached the server before
+    the connection dropped replays instead of minting a second hold. It does
+    *not* cover an application-level retry — calling `authorize()` again is a
+    new logical spend and gets a new key — which is why callers who retry at
+    their own layer must thread their own `idempotency_key` through.
+    """
+    return uuid.uuid4().hex
+
+
 def _raise_for_verdict(verdict: Verdict) -> None:
     """Raise the typed exception matching a non-approved verdict (strict mode)."""
     exc_type = (
@@ -99,6 +113,7 @@ def authorize(
     model: str | None = None,
     tokens: int | None = None,
     strict: bool = False,
+    idempotency_key: str | None = None,
 ) -> Verdict:
     """Ask policy for a verdict on a spend, before any money moves.
 
@@ -106,6 +121,32 @@ def authorize(
     context when not passed explicitly. With `strict=True`, a non-approved
     verdict raises instead of returning — `BudgetExhausted` if the block was a
     budget cap, else `PolicyBlocked` (which `BudgetExhausted` subclasses).
+
+    Args:
+        vendor: The merchant or vendor being paid, e.g. `"United Airlines"`.
+        amount: The amount to hold. Pass `Decimal` or `str` for money —
+            `float` is accepted today but will be rejected in 1.0.0.
+        reason: Human-readable justification, stored on the transaction.
+        currency: ISO-4217 code of the currency actually being paid in. Never
+            defaulted, so a foreign spend is never mislabelled as domestic.
+        agent: Agent handle to attribute the spend to. Falls back to `task()`.
+        entity: Legal entity handle. Falls back to `task()`.
+        intent: Free-text purpose of the task. Falls back to `task()`.
+        project: Cost-center / project label. Falls back to `task()`.
+        category: Expense category (`software`, `ai_compute`, `travel`,
+            `marketing`, `general`). Inferred from the vendor when omitted.
+        tax_category: Tax slab override, e.g. `"gst_5"`. Standard rate if omitted.
+        tax_inclusive: Whether a domestic `amount` already embeds tax (default)
+            or has it added on top.
+        supply_type: `"service"` (default) or `"goods"` — a cross-border goods
+            spend routes to a customs path rather than the services reverse charge.
+        model: Model identifier, for LLM/API spend only.
+        tokens: Tokens consumed, for LLM/API spend only.
+        strict: Raise on a non-approved verdict instead of returning it.
+        idempotency_key: Reuse the same key to make a retry replay the original
+            hold instead of minting a second one (T0-6). One is generated per
+            call when omitted, which covers transport-level retries; supply your
+            own if *your* code retries `authorize()` after a failure.
 
     Returns:
         A `Verdict`. With `strict=False` (default) a blocking verdict is
@@ -133,7 +174,10 @@ def authorize(
         tokens=tokens,
     )
     response = _get_transport().request(
-        "POST", "/transactions/authorize", json=request.model_dump(mode="json")
+        "POST",
+        "/transactions/authorize",
+        json=request.model_dump(mode="json"),
+        idempotency_key=idempotency_key or _new_idempotency_key(),
     )
     verdict = Verdict.model_validate(response.json())
     if strict and not verdict.approved:
@@ -156,6 +200,12 @@ def capture(
     omitted, the authorization's held values stand (the common SDK path). This
     is the hold-vs-settle split: `authorize` holds an estimate, `capture` books
     the truth.
+
+    Takes no idempotency key, deliberately: `verdict.authorization_id` already
+    is one. A repeated capture hits the backend's unique constraint on that
+    column and replays the original transaction (200), so a retry after a lost
+    response never double-books. A 409 here means something else entirely —
+    capturing a hold that policy blocked, say.
 
     Args:
         verdict: The `Verdict` returned by `authorize()`.
@@ -202,12 +252,35 @@ def spend(
     tokens: int | None = None,
     invoice_url: str | None = None,
     strict: bool = False,
+    idempotency_key: str | None = None,
 ) -> Verdict | Transaction:
     """Authorize and, if approved, immediately capture — the atomic convenience.
 
     For flows with nothing to gate mid-way (no purchase step between authorize
     and capture). `strict=True` is forwarded to `authorize()`, so a non-approved
     verdict raises (`PolicyBlocked` / `BudgetExhausted`) instead of returning.
+
+    Args:
+        vendor: The merchant or vendor being paid.
+        amount: The amount to spend. Prefer `Decimal` or `str` — `float` is
+            accepted today but will be rejected in 1.0.0.
+        reason: Human-readable justification, stored on the transaction.
+        currency: ISO-4217 code of the currency actually being paid in.
+        agent: Agent handle to attribute the spend to. Falls back to `task()`.
+        entity: Legal entity handle. Falls back to `task()`.
+        intent: Free-text purpose of the task. Falls back to `task()`.
+        project: Cost-center / project label. Falls back to `task()`.
+        category: Expense category. Inferred from the vendor when omitted.
+        tax_category: Tax slab override. Standard rate if omitted.
+        tax_inclusive: Whether a domestic `amount` already embeds tax.
+        supply_type: `"service"` (default) or `"goods"`.
+        model: Model identifier, for LLM/API spend only.
+        tokens: Tokens consumed, for LLM/API spend only.
+        invoice_url: Optional evidence link attached to the transaction.
+        strict: Raise on a non-approved verdict instead of returning it.
+        idempotency_key: Forwarded to `authorize()`. Supply your own if your
+            code retries `spend()` itself — otherwise the retry mints a second
+            hold and captures it, which is the double-book T0-6 describes.
 
     Returns:
         The booked `Transaction` if approved. With `strict=False`, a blocking
@@ -229,6 +302,7 @@ def spend(
         model=model,
         tokens=tokens,
         strict=strict,
+        idempotency_key=idempotency_key,
     )
     if not verdict.approved:
         return verdict

@@ -13,11 +13,16 @@ from lucnt._version import __version__
 from lucnt.config import configure
 from lucnt.context import task
 from lucnt.exceptions import (
+    APIError,
     AuthError,
     BudgetExhausted,
     ConfigurationError,
+    ConflictError,
+    InvalidRequestError,
     LucntError,
+    NotFoundError,
     PolicyBlocked,
+    RateLimitError,
     TransportError,
 )
 from lucnt.ledger import (
@@ -46,16 +51,21 @@ from lucnt.models import (
 )
 
 __all__ = [
+    "APIError",
     "AuthError",
     "BudgetExhausted",
     "BudgetStatus",
     "BudgetSummary",
     "ConfigurationError",
+    "ConflictError",
     "CostPerOutput",
     "FinancialMemory",
+    "InvalidRequestError",
     "JournalLine",
     "LucntError",
+    "NotFoundError",
     "PolicyBlocked",
+    "RateLimitError",
     "ReconException",
     "SpendFingerprint",
     "SpendProjection",
