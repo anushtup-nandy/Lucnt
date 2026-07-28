@@ -112,7 +112,7 @@ def test_spend_request_still_normalises_currency() -> None:
 
 
 def test_capture_request_bounds_invoice_url() -> None:
-    """Bounded even though it is never persisted — it is still accepted input."""
+    """Bounded at URL_MAX, mirroring the column it lands in since F-12."""
     with pytest.raises(ValidationError):
         CaptureRequest(
             authorization_id="0" * 8 + "-0000-0000-0000-" + "0" * 12,  # type: ignore[arg-type]

@@ -758,3 +758,137 @@ def test_get_transaction_detail_not_found(
     _, key = _make_company_with_key(db_session)
     response = client.get(f"/transactions/{uuid.uuid4()}", headers=_auth_headers(key))
     assert response.status_code == 404
+
+
+def _authorize_ok(client: TestClient, key: str, amount: str = "100") -> str:
+    """Authorize a simple SGD spend and return its authorization id."""
+    verdict = client.post(
+        "/transactions/authorize",
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "openai",
+            "amount": amount,
+            "currency": "SGD",
+            "reason": "metered call",
+        },
+        headers=_auth_headers(key),
+    ).json()
+    assert verdict["status"] == "approved"
+    return str(verdict["authorization_id"])
+
+
+def test_capture_estimated_flag_round_trips(
+    client: TestClient, db_session: Session
+) -> None:
+    """F-8: a capture booked from an estimate is queryable, not just logged.
+
+    T5-1's degradation path captures the hold as authorized when actual usage
+    cannot be read; before this flag the ledger presented that estimate as
+    settled truth with only an ERROR log to say otherwise.
+    """
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    authorization_id = _authorize_ok(client, key)
+
+    response = client.post(
+        "/transactions/capture",
+        json={
+            "authorization_id": authorization_id,
+            "source": "sdk",
+            "estimated": True,
+        },
+        headers=_auth_headers(key),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["estimated"] is True
+    tx_id = body["id"]
+
+    flagged = client.get(
+        "/transactions", params={"estimated": "true"}, headers=_auth_headers(key)
+    ).json()
+    assert [item["id"] for item in flagged["items"]] == [tx_id]
+    assert flagged["items"][0]["estimated"] is True
+
+    settled_only = client.get(
+        "/transactions", params={"estimated": "false"}, headers=_auth_headers(key)
+    ).json()
+    assert settled_only["total"] == 0
+
+    detail = client.get(f"/transactions/{tx_id}", headers=_auth_headers(key)).json()
+    assert detail["estimated"] is True
+
+
+def test_capture_defaults_to_settled_not_estimated(
+    client: TestClient, db_session: Session
+) -> None:
+    """A capture that does not send the flag books as settled (estimated=False)."""
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    authorization_id = _authorize_ok(client, key)
+
+    body = client.post(
+        "/transactions/capture",
+        json={"authorization_id": authorization_id, "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+    assert body["estimated"] is False
+
+    detail = client.get(
+        f"/transactions/{body['id']}", headers=_auth_headers(key)
+    ).json()
+    assert detail["estimated"] is False
+
+
+def test_capture_persists_and_returns_invoice_url(
+    client: TestClient, db_session: Session
+) -> None:
+    """F-12: `invoice_url` was accepted, validated, and silently dropped —
+    a caller who passed evidence could never read it back."""
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    authorization_id = _authorize_ok(client, key)
+    url = "https://vendor.example/inv/42.pdf"
+
+    body = client.post(
+        "/transactions/capture",
+        json={
+            "authorization_id": authorization_id,
+            "source": "sdk",
+            "invoice_url": url,
+        },
+        headers=_auth_headers(key),
+    ).json()
+    tx_id = body["id"]
+    assert body["invoice_url"] == url  # echoed on the capture response
+
+    detail = client.get(f"/transactions/{tx_id}", headers=_auth_headers(key)).json()
+    assert detail["invoice_url"] == url
+
+    # The replay path returns the original row — evidence included.
+    replay = client.post(
+        "/transactions/capture",
+        json={"authorization_id": authorization_id, "source": "sdk"},
+        headers=_auth_headers(key),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["id"] == tx_id
+
+
+def test_capture_without_invoice_url_reads_back_null(
+    client: TestClient, db_session: Session
+) -> None:
+    company, key = _make_company_with_key(db_session)
+    _make_agent(db_session, company, _make_entity(db_session, company))
+    authorization_id = _authorize_ok(client, key)
+
+    body = client.post(
+        "/transactions/capture",
+        json={"authorization_id": authorization_id, "source": "sdk"},
+        headers=_auth_headers(key),
+    ).json()
+    detail = client.get(
+        f"/transactions/{body['id']}", headers=_auth_headers(key)
+    ).json()
+    assert detail["invoice_url"] is None

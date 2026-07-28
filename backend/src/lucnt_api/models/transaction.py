@@ -162,6 +162,14 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     supply_type: Mapped[str] = mapped_column(String(10), default="service")
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
+    # F-8: True when the booked amount is the authorize-time estimate, not a
+    # settled actual — the SDK's T5-1 fallback books this way rather than lose
+    # the spend. `server_default` mirrors migration `a3b4c5d6e7f8` (same T4-7
+    # drift reasoning as `is_reversed` above).
+    estimated: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # F-12: the evidence link the capture contract accepts; length mirrors the
+    # schema's URL_MAX. The M3 invoice hook is its eventual structured consumer.
+    invoice_url: Mapped[str | None] = mapped_column(String(2048), default=None)
     status: Mapped[TransactionStatus] = mapped_column(
         Enum(
             TransactionStatus,
