@@ -83,7 +83,7 @@ def test_authorize_sends_the_resolved_request_and_returns_the_verdict(
     _stub(monkeypatch, handler)
     verdict = ledger.authorize(
         vendor="openai",
-        amount=1.83,
+        amount="1.83",
         currency="USD",
         reason="test",
         agent="research",
@@ -281,7 +281,7 @@ def test_spend_captures_when_approved(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub(monkeypatch, handler)
     result = ledger.spend(
         vendor="openai",
-        amount=1.83,
+        amount="1.83",
         currency="USD",
         reason="test",
         agent="research",

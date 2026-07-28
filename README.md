@@ -196,7 +196,7 @@ lucnt/
 
 ## Verification
 
-**SDK:** `ruff` + `mypy` clean, **65 tests** green.
+**SDK:** `ruff` + `mypy` clean, **332 tests** green.
 ```bash
 cd sdk
 ruff check src/ tests/

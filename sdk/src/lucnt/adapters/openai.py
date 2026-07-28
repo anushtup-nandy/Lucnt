@@ -27,9 +27,8 @@ class OpenAIAdapter(MeterAdapter):
 
     @classmethod
     def matches(cls, client: object) -> bool:
-        """Match a synchronous `openai.OpenAI` client by module + class."""
-        module = type(client).__module__.split(".", 1)[0]
-        return module == "openai" and "Async" not in type(client).__qualname__
+        """Match any `openai` client by module — `OpenAI` or `AsyncOpenAI` (T5-6)."""
+        return type(client).__module__.split(".", 1)[0] == "openai"
 
     def usage_from_response(self, response: object) -> Usage:
         """Read `.model` + `.usage.{prompt,completion}_tokens` off a chat response."""

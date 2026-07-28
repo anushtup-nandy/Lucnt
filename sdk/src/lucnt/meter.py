@@ -13,8 +13,15 @@ new backend surface.
 
 A blocking verdict **raises** (`PolicyBlocked` / `BudgetExhausted`) rather than
 returning — the wrapped method must yield the vendor's response type or nothing,
-so there is no falsy-return option. Only synchronous clients are supported in
-this MVP; an async client raises a clear error.
+so there is no falsy-return option.
+
+**Sync and async clients are both supported** (T5-6): `meter()` detects which it
+was handed and installs the matching wrapper, so the same call governs `OpenAI()`
+and `AsyncOpenAI()`. The async wrappers mirror the sync ones exactly, including
+the best-effort-bookkeeping rule below; the one structural difference is that a
+streaming *context manager* has to authorize inside `__aenter__` rather than at
+call time, because `async with client.messages.stream(...)` gives the wrapper no
+earlier point at which it may await.
 
 **The asymmetry that governs this module:** raising *before* the vendor call is
 correct — that is the policy gate doing its job, and no money has moved. Raising
@@ -31,7 +38,14 @@ from typing import Any, TypeVar, cast
 
 from lucnt.adapters import MeterAdapter, resolve_adapter
 from lucnt.exceptions import LucntError
-from lucnt.ledger import authorize, capture, void
+from lucnt.ledger import (
+    authorize,
+    authorize_async,
+    capture,
+    capture_async,
+    void,
+    void_async,
+)
 from lucnt.models import Verdict
 from lucnt.pricing import PriceInput
 
@@ -176,6 +190,95 @@ def _make_metered_stream_call(
     return metered_stream_call
 
 
+def _make_async_metered_call(
+    adapter: MeterAdapter,
+    original: Callable[..., Any],
+    *,
+    agent: str | None,
+    entity: str | None,
+    intent: str | None,
+    project: str | None,
+) -> Callable[..., Any]:
+    """Wrap an async vendor completion call with authorize→call→capture (T5-6).
+
+    Line-for-line the same shape as `_make_metered_call`, awaited. The
+    asymmetry that governs the sync version governs this one identically:
+    raising before `original(...)` is the gate working, raising after it would
+    destroy a completion the customer has already paid for.
+    """
+
+    async def metered_call(*args: Any, **kwargs: Any) -> Any:
+        model = kwargs.get("model")
+        streaming = adapter.is_streaming_request(kwargs)
+        verdict = await authorize_async(
+            vendor=adapter.vendor,
+            amount=adapter.estimate_cost(kwargs),
+            currency=adapter.currency,
+            reason=f"{adapter.vendor} completion ({model})",
+            agent=agent,
+            entity=entity,
+            intent=intent,
+            project=project,
+            model=model if isinstance(model, str) else None,
+            strict=True,
+        )
+        try:
+            response = await original(*args, **kwargs)
+        except BaseException as exc:
+            await _release_async(
+                verdict, f"{type(exc).__name__} from {adapter.vendor} call"
+            )
+            raise
+        # ---------------------------------------------------------------------
+        # The vendor has now been paid. Everything below is bookkeeping, and
+        # bookkeeping must never destroy what the customer paid for (T5-1).
+        # ---------------------------------------------------------------------
+        if streaming:
+            return _metered_astream(
+                adapter, verdict, response, requested_model=model
+            )
+        await _book_async(adapter, verdict, response, requested_model=model)
+        return response
+
+    return metered_call
+
+
+def _make_async_metered_stream_call(
+    adapter: MeterAdapter,
+    original: Callable[..., Any],
+    *,
+    agent: str | None,
+    entity: str | None,
+    intent: str | None,
+    project: str | None,
+) -> Callable[..., Any]:
+    """Wrap an async vendor streaming *helper* (`AsyncAnthropic.messages.stream`).
+
+    **Deliberately not a coroutine function.** `async with client.messages.stream(...)`
+    calls this and then looks for `__aenter__` on what comes back; a coroutine
+    object has none, so making this `async def` would break every caller's
+    `async with`. It returns the manager synchronously instead, and the
+    authorize happens inside `__aenter__` — the first point at which the wrapper
+    is allowed to await.
+    """
+
+    def metered_stream_call(*args: Any, **kwargs: Any) -> Any:
+        return _MeteredAsyncStreamManager(
+            lambda: original(*args, **kwargs),
+            adapter,
+            # The whole request, not just the model: the estimate is computed
+            # from the prompt's size, so passing only the model would price the
+            # hold as if the request were empty and under-reserve every time.
+            kwargs,
+            agent=agent,
+            entity=entity,
+            intent=intent,
+            project=project,
+        )
+
+    return metered_stream_call
+
+
 def _usage_bearing(adapter: MeterAdapter, chunk: object) -> bool:
     """True if `chunk` carries readable token usage."""
     try:
@@ -217,6 +320,33 @@ def _metered_stream(
     _book_streamed(adapter, verdict, last_usage_chunk, requested_model)
 
 
+async def _metered_astream(
+    adapter: MeterAdapter,
+    verdict: Verdict,
+    stream: Any,
+    *,
+    requested_model: object,
+) -> Any:
+    """Pass an async streamed response through, booking once it ends (T5-6).
+
+    The async twin of `_metered_stream`, and it books on every exit path for the
+    same reason: the vendor generated — and charged for — whatever was streamed
+    before the exit, so an abandoned stream is booked, never voided.
+    """
+    last_usage_chunk: object | None = None
+    try:
+        async for chunk in stream:
+            if _usage_bearing(adapter, chunk):
+                last_usage_chunk = chunk
+            yield chunk
+    except BaseException:
+        await _book_streamed_async(
+            adapter, verdict, last_usage_chunk, requested_model
+        )
+        raise
+    await _book_streamed_async(adapter, verdict, last_usage_chunk, requested_model)
+
+
 def _book_streamed(
     adapter: MeterAdapter,
     verdict: Verdict,
@@ -245,6 +375,35 @@ def _book_streamed(
             )
         return
     _book(adapter, verdict, usage_chunk, requested_model=requested_model)
+
+
+async def _book_streamed_async(
+    adapter: MeterAdapter,
+    verdict: Verdict,
+    usage_chunk: object | None,
+    requested_model: object,
+) -> None:
+    """Book a finished async stream from its usage chunk, or from the estimate."""
+    if usage_chunk is None:
+        _logger.warning(
+            "lucnt: streamed %s call carried no token usage "
+            "(authorization_id=%s); booking the authorized estimate. Pass "
+            'stream_options={"include_usage": True} to settle the real cost.',
+            adapter.vendor,
+            verdict.authorization_id,
+        )
+        try:
+            await capture_async(verdict)
+        except Exception:
+            _logger.exception(
+                "lucnt: streamed %s spend is UNBOOKED (authorization_id=%s).",
+                adapter.vendor,
+                verdict.authorization_id,
+            )
+        return
+    await _book_async(
+        adapter, verdict, usage_chunk, requested_model=requested_model
+    )
 
 
 class _MeteredStreamManager:
@@ -303,6 +462,102 @@ class _MeteredStreamManager:
         return getattr(self._inner, name)
 
 
+class _MeteredAsyncStreamManager:
+    """Proxy for an async vendor streaming context manager, metered on exit (T5-6).
+
+    Holds off on authorizing until `__aenter__`, unlike the sync
+    `_MeteredStreamManager` which is handed an already-authorized verdict. That
+    is forced rather than chosen: the wrapper this replaces is called
+    *synchronously* by `async with`, so there is no earlier await point.
+
+    It also happens to be the better shape — a manager that is constructed and
+    never entered mints no hold at all. The sync path does authorize eagerly, so
+    building a stream manager there and never entering it leaves a hold that only
+    the server-side TTL releases; that asymmetry is recorded rather than fixed
+    here, since changing the sync path is a behaviour change beyond T5-6.
+
+    Metering stays best-effort per T5-1: if the vendor's stream object does not
+    expose what we expect, the caller's stream still works and the authorized
+    estimate is booked instead.
+    """
+
+    def __init__(
+        self,
+        make_manager: Callable[[], Any],
+        adapter: MeterAdapter,
+        request_kwargs: Mapping[str, Any],
+        *,
+        agent: str | None,
+        entity: str | None,
+        intent: str | None,
+        project: str | None,
+    ) -> None:
+        """Store everything needed to authorize and enter on `__aenter__`."""
+        self._make_manager = make_manager
+        self._adapter = adapter
+        self._request_kwargs = request_kwargs
+        self._requested_model = request_kwargs.get("model")
+        self._agent = agent
+        self._entity = entity
+        self._intent = intent
+        self._project = project
+        self._inner: Any = None
+        self._stream: Any = None
+        self._verdict: Verdict | None = None
+
+    async def __aenter__(self) -> Any:
+        """Authorize, enter the vendor's stream, and return its stream object."""
+        adapter = self._adapter
+        model = self._requested_model
+        self._verdict = await authorize_async(
+            vendor=adapter.vendor,
+            amount=adapter.estimate_cost(self._request_kwargs),
+            currency=adapter.currency,
+            reason=f"{adapter.vendor} completion ({model}, streamed)",
+            agent=self._agent,
+            entity=self._entity,
+            intent=self._intent,
+            project=self._project,
+            model=model if isinstance(model, str) else None,
+            strict=True,
+        )
+        try:
+            self._inner = self._make_manager()
+            self._stream = await self._inner.__aenter__()
+        except BaseException as exc:
+            # Nothing streamed, so no money moved — release the hold and let the
+            # vendor's own error through untouched.
+            await _release_async(
+                self._verdict, f"{type(exc).__name__} entering {adapter.vendor} stream"
+            )
+            raise
+        return self._stream
+
+    async def __aexit__(self, *exc_info: Any) -> Any:
+        """Leave the vendor's stream, then book the completed message."""
+        result = await self._inner.__aexit__(*exc_info)
+        final = None
+        try:
+            final = await self._stream.get_final_message()
+        except Exception:
+            _logger.warning(
+                "lucnt: could not read the final message of a streamed %s call "
+                "(authorization_id=%s); booking the authorized estimate.",
+                self._adapter.vendor,
+                self._verdict.authorization_id if self._verdict else None,
+                exc_info=True,
+            )
+        if self._verdict is not None:
+            await _book_streamed_async(
+                self._adapter, self._verdict, final, self._requested_model
+            )
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate anything else to the wrapped manager."""
+        return getattr(self._inner, name)
+
+
 def _release(verdict: Verdict, reason: str) -> None:
     """Void a hold whose vendor call failed, never raising (T5-4).
 
@@ -322,6 +577,77 @@ def _release(verdict: Verdict, reason: str) -> None:
             reason,
             verdict.authorization_id,
             exc_info=True,
+        )
+
+
+async def _release_async(verdict: Verdict, reason: str) -> None:
+    """Void a hold whose async vendor call failed, never raising (T5-4).
+
+    Called from inside an `except` block, so it must not raise: replacing the
+    vendor's own error with a lucnt error would hide the only thing the caller
+    actually needs to see.
+    """
+    try:
+        await void_async(verdict, reason=reason)
+    except Exception:
+        _logger.warning(
+            "lucnt: could not release the hold for a failed %s call "
+            "(authorization_id=%s); it will stop reserving budget when the "
+            "server-side TTL expires it.",
+            reason,
+            verdict.authorization_id,
+            exc_info=True,
+        )
+
+
+async def _book_async(
+    adapter: MeterAdapter,
+    verdict: Verdict,
+    response: object,
+    *,
+    requested_model: object,
+) -> None:
+    """Capture the real cost, never raising — the response is already paid for.
+
+    The async twin of `_book`, degrading in the same three steps: settle with
+    actual usage, else capture the hold as authorized, else log the orphaned
+    hold with its authorization id. `Exception` and not `BaseException` so a
+    cancellation still propagates.
+    """
+    try:
+        usage = adapter.usage_from_response(response)
+        await capture_async(
+            verdict,
+            amount=adapter.cost(
+                usage,
+                fallback_model=requested_model
+                if isinstance(requested_model, str)
+                else None,
+            ),
+            model=usage.model,
+            tokens=usage.input_tokens + usage.output_tokens,
+        )
+        return
+    except Exception:
+        _logger.exception(
+            "lucnt: could not settle metered %s spend with actual usage "
+            "(authorization_id=%s, requested_model=%r); the vendor response was "
+            "returned to the caller unharmed. Falling back to booking the "
+            "authorized estimate.",
+            adapter.vendor,
+            verdict.authorization_id,
+            requested_model,
+        )
+    try:
+        await capture_async(verdict)
+    except Exception:
+        _logger.exception(
+            "lucnt: metered %s spend is UNBOOKED and its hold is orphaned "
+            "(authorization_id=%s, requested_model=%r). The vendor was paid and "
+            "the response was returned; this transaction needs reconciliation.",
+            adapter.vendor,
+            verdict.authorization_id,
+            requested_model,
         )
 
 
@@ -405,8 +731,20 @@ def meter(
     `agent`/`entity`/`intent`/`project` fall back to the ambient `task()`
     context (they are forwarded to `authorize()` unchanged).
 
+    Works on both client flavours — `OpenAI()` and `AsyncOpenAI()`,
+    `Anthropic()` and `AsyncAnthropic()` (T5-6). The returned proxy matches
+    whichever it was given, so an async client's metered methods stay awaitable
+    and its streams stay `async for` / `async with`.
+
+    **Turn off the vendor client's own retries.** A vendor SDK that retries
+    internally does so *inside* the wrapped call, so lucnt sees one authorize and
+    one capture while the vendor may have served — and charged for — more than
+    one request. Construct it with `max_retries=0` and retry at the lucnt layer
+    instead, wrapping the call in `lucnt.operation()` so the retry replays the
+    original hold rather than minting a second one (T5-10).
+
     Args:
-        client: The vendor LLM client to wrap (sync OpenAI or Anthropic).
+        client: The vendor LLM client to wrap (OpenAI or Anthropic, sync or async).
         agent: Agent handle to attribute metered spend to. Falls back to `task()`.
         entity: Legal entity handle. Falls back to `task()`.
         intent: Free-text purpose of the task. Falls back to `task()`.
@@ -433,13 +771,21 @@ def meter(
         raise LucntError(
             f"meter() has no adapter for client "
             f"{type(client).__module__}.{type(client).__qualname__} "
-            f"(supported: anthropic, openai; sync clients only)"
+            f"(supported: anthropic, openai — sync and async)"
         )
+    # One adapter serves both client flavours; only the wrapper differs (T5-6).
+    if adapter.is_async(client):
+        make_call = _make_async_metered_call
+        make_stream_call = _make_async_metered_stream_call
+    else:
+        make_call = _make_metered_call
+        make_stream_call = _make_metered_stream_call
+
     original = client
     for name in adapter.method_path:
         original = getattr(original, name)
     overrides: dict[tuple[str, ...], object] = {
-        adapter.method_path: _make_metered_call(
+        adapter.method_path: make_call(
             adapter,
             cast("Callable[..., Any]", original),
             agent=agent,
@@ -457,7 +803,7 @@ def meter(
             if stream_original is None:
                 break
         if stream_original is not None:
-            overrides[adapter.stream_method_path] = _make_metered_stream_call(
+            overrides[adapter.stream_method_path] = make_stream_call(
                 adapter,
                 cast("Callable[..., Any]", stream_original),
                 agent=agent,

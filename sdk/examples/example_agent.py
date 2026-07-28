@@ -157,7 +157,8 @@ def main() -> None:
         agent="research",
         entity="in",
         vendor="openai",
-        amount=1.83,
+        # Quoted, not 1.83 — money arguments reject `float` (T5-10).
+        amount="1.83",
         currency="USD",  # paid in USD by the INR entity -> imported (RCM)
         reason="600pg contract, needs 128K",
         model="gpt-5",

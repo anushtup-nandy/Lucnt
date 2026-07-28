@@ -2,7 +2,10 @@
   "version": "2026-07-28",
   "estimation": {
     "chars_per_token": 4,
-    "default_output_tokens": 1024
+    "default_output_tokens": 1024,
+    "image_tokens": 4800,
+    "document_page_tokens": 2000,
+    "default_document_pages": 5
   },
   "vendors": {
     "anthropic": {

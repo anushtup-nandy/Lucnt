@@ -28,9 +28,8 @@ class AnthropicAdapter(MeterAdapter):
 
     @classmethod
     def matches(cls, client: object) -> bool:
-        """Match a synchronous `anthropic.Anthropic` client by module + class."""
-        module = type(client).__module__.split(".", 1)[0]
-        return module == "anthropic" and "Async" not in type(client).__qualname__
+        """Match any `anthropic` client — `Anthropic` or `AsyncAnthropic` (T5-6)."""
+        return type(client).__module__.split(".", 1)[0] == "anthropic"
 
     def usage_from_response(self, response: object) -> Usage:
         """Read `.model` + `.usage.{input,output}_tokens` off a Messages response."""

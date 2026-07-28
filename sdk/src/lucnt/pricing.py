@@ -11,9 +11,9 @@ audited before the package goes public (T5-7d).
 in the customer's working directory behaves differently depending on where their
 process was started, and reading arbitrary files off their filesystem is a
 security smell in a dependency. The pack is read from the installed package
-only; per-process overrides arrive as arguments (`meter(pricing=...)`). The
-config-*file* tier stays the backend's (`SCALABILITY_PLAN.md` §3), and a
-server-fetched feed replaces this pack later (§3 tier iii).
+only; per-process overrides arrive as arguments (`meter(pricing=...)`). Reading
+configuration from a file stays the server's job, not a client library's, and a
+server-fetched pricing feed is intended to replace this pack.
 
 **Money is encoded as strings and parsed to `Decimal` here, at the boundary.**
 A JSON number would arrive as a `float` and reintroduce exactly the binary
@@ -62,12 +62,28 @@ class PricingPack:
             estimate. Estimate-only — never used to price actual usage.
         default_output_tokens: Assumed output length when the request sets no
             explicit cap.
+        image_tokens: Tokens charged per image in the pre-call estimate (T5-10).
+            A flat figure because the request cannot be priced properly without
+            decoding the image: vendors bill roughly by pixel area, which is not
+            knowable from a base64 payload without parsing it, and a client
+            library has no business doing that on a money path. Set near the
+            high-resolution ceiling so the hold never *under*-reserves — an
+            over-reservation is released at capture, whereas an under-reservation
+            lets a spend through a budget the policy engine believed had room.
+        document_page_tokens: Tokens charged per PDF/document page in the
+            estimate.
+        default_document_pages: Assumed page count for an attached document.
+            Page count is genuinely unknowable pre-call, so this is a stated
+            assumption rather than a measurement.
         vendors: Per-vendor currency and model prices, keyed by vendor name.
     """
 
     version: str
     chars_per_token: int
     default_output_tokens: int
+    image_tokens: int
+    document_page_tokens: int
+    default_document_pages: int
     vendors: Mapping[str, VendorPricing]
 
 
@@ -135,10 +151,28 @@ def _parse_pack(payload: object) -> PricingPack:
 
     return PricingPack(
         version=str(payload.get("version", "unknown")),
-        chars_per_token=int(estimation["chars_per_token"]),
-        default_output_tokens=int(estimation["default_output_tokens"]),
+        chars_per_token=_positive_int(estimation, "chars_per_token"),
+        default_output_tokens=_positive_int(estimation, "default_output_tokens"),
+        image_tokens=_positive_int(estimation, "image_tokens"),
+        document_page_tokens=_positive_int(estimation, "document_page_tokens"),
+        default_document_pages=_positive_int(estimation, "default_document_pages"),
         vendors=vendors,
     )
+
+
+def _positive_int(estimation: dict[str, object], key: str) -> int:
+    """Read one estimation knob, rejecting a missing or non-positive value.
+
+    A zero or negative token count would silently produce a zero-cost estimate,
+    so the authorize gate would approve an unbounded spend. Fail on the pack
+    instead — a broken pack is a build problem, not something to guess around.
+    """
+    raw = estimation.get(key)
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
+        raise LucntError(
+            f"pricing pack estimation.{key} must be a positive integer, got {raw!r}"
+        )
+    return raw
 
 
 @lru_cache(maxsize=1)

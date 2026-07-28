@@ -76,6 +76,52 @@ with lucnt.task(agent="researcher", entity="acme-us"):
 This is convenience over the primitive, not a replacement for it — `meter()` covers the LLM/API
 subset, `authorize`/`capture` covers all spend.
 
+**Turn off the vendor client's own retries.** A vendor SDK that retries internally does so *inside*
+the wrapped call, so lucnt records one spend while the vendor may have served — and charged for —
+more than one request. Construct it with `max_retries=0` and retry at the lucnt layer instead:
+
+```python
+client = lucnt.meter(OpenAI(max_retries=0))
+```
+
+## Async
+
+Every function has an `_async` twin, and `meter()` accepts an async client:
+
+```python
+import asyncio, lucnt
+from openai import AsyncOpenAI
+
+async def main() -> None:
+    lucnt.configure(api_key="sk_live_...")
+    client = lucnt.meter(AsyncOpenAI(max_retries=0))
+
+    with lucnt.task(agent="researcher", entity="acme-us"):
+        # Metered, awaitable, and safe to run concurrently.
+        await asyncio.gather(*(
+            client.chat.completions.create(
+                model="gpt-4o", messages=[{"role": "user", "content": q}],
+            )
+            for q in questions
+        ))
+
+        tx = await lucnt.spend_async(
+            vendor="AWS", amount="120.00", currency="USD", reason="nightly batch",
+        )
+
+    await lucnt.aclose()          # optional: release sockets deterministically
+
+asyncio.run(main())
+```
+
+`task()` and `operation()` need no async variant — they are contextvars, so they propagate across
+`await` unchanged. Streaming works on both flavours (`async for` over `stream=True`, `async with`
+over `messages.stream()`).
+
+Calling a **synchronous** function from inside a running event loop raises `ConfigurationError`
+naming the async twin, rather than blocking the loop for the request duration. To use the sync API
+from async code deliberately, put it on a thread: `await asyncio.to_thread(lucnt.spend, ...)`.
+
 ## Letting an agent regulate itself
 
 ```python
@@ -96,16 +142,36 @@ All exceptions derive from `LucntError`:
 | `PolicyBlocked` | A policy rule refused the spend (`strict=True` only) |
 | `BudgetExhausted` | Subclass of `PolicyBlocked` — the block was a budget cap |
 | `AuthError` | Bad or missing API key |
-| `ConfigurationError` | SDK used before `configure()`, or an invalid base URL |
-| `TransportError` | Network failure reaching the API |
+| `ConflictError` | The request collided with resource state (e.g. voiding a captured hold) |
+| `InvalidRequestError` | Malformed request (400/422) — never retry it |
+| `NotFoundError` | No such agent, entity, authorization, or transaction |
+| `RateLimitError` | Rate limited; carries `retry_after` |
+| `IdempotencyConflict` | One `operation()` scope was used for two different spends |
+| `ContractError` | The API returned a success body this SDK version cannot read |
+| `ConfigurationError` | SDK used before `configure()`, an invalid base URL, inexact money, or a sync call from inside an event loop |
+| `TransportError` | Network failure, timeout, or 5xx — after retries are exhausted |
+
+Transient failures (network errors, timeouts, 5xx, 429) are retried automatically with jittered
+exponential backoff. Retries are conservative by design: a request is only repeated when it is a
+safe method or carries an idempotency key, so an unkeyed write is never sent twice.
+
+### Retrying at your own layer
+
+The SDK's automatic retries are transport-level. If *your* code retries, name the operation so the
+retry replays the original hold instead of minting a second one:
+
+```python
+with lucnt.operation(f"order-{order.id}"):        # one scope = one logical spend
+    lucnt.spend(vendor="Acme", amount="49.00", currency="USD", reason="seat upgrade")
+```
 
 ## Status
 
 Pre-1.0 and versioned accordingly — the public surface is stable in practice but not yet under a
-semver 1.0 promise. Known gaps being closed before 1.0.0: the transport is **synchronous only**
-(`meter()` does not yet accept `AsyncOpenAI`), streaming responses are not metered, and there are
-no automatic retries. Money amounts accept `str`/`int`/`Decimal`/`float` today; **`float` will be
-rejected in 1.0.0** — pass `Decimal` or `str` for money.
+semver 1.0 promise.
+
+**Money must be exact.** `amount` accepts `Decimal`, `int`, or `str`. `float` is **rejected** — this
+is a ledger, and `Decimal(1.83)` is not `Decimal("1.83")`. (Accepted in 0.1.x; removed since.)
 
 Requires Python 3.10+.
 

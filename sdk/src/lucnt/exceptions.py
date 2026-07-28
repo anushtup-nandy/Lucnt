@@ -23,6 +23,31 @@ class TransportError(LucntError):
     """
 
 
+class ContractError(LucntError):
+    """Raised when a 2xx response does not match the contract the SDK expects (T5-10).
+
+    Sits between the two neighbours it is deliberately *not*: `APIError` is the
+    API refusing on purpose, and `TransportError` is retryable. This is neither.
+    A body that failed to parse, lacked an expected key, or failed model
+    validation will fail identically on a retry, so it must never be retried —
+    it means this SDK version and the backend disagree about the wire contract.
+
+    Before this existed, those three failures escaped as a raw
+    `json.JSONDecodeError`, `KeyError`, or `pydantic.ValidationError` — outside
+    the hierarchy, so `except LucntError` missed them and a caller's money-path
+    error handling did not cover the case where the SDK could not read the
+    verdict it had just been given.
+
+    Attributes:
+        path: The API path whose response could not be read, when known.
+    """
+
+    def __init__(self, message: str, *, path: str | None = None) -> None:
+        """Store the path alongside the message."""
+        super().__init__(message)
+        self.path = path
+
+
 class APIError(LucntError):
     """Base for 4xx responses the API returned deliberately (T5-9).
 

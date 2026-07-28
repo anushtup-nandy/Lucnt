@@ -6,6 +6,13 @@ Public surface: `configure()`, `task()`, `operation()`, `authorize()`,
 self-regulation read), `meter()` (Phase 3.5 auto-instrumentation for LLM/vendor
 clients), `mark_failed_delivery()` (Phase 4 recovery hook), and `query()` (Phase 5
 living financial memory), their typed models, and the SDK's exception hierarchy.
+
+**Every call has an `_async` twin** (T5-6) — `spend_async()`, `authorize_async()`,
+`capture_async()`, `void_async()`, `check_budget_async()`, `query_async()`,
+`mark_failed_delivery_async()` — plus `aclose()` for deterministic shutdown.
+`meter()` detects an async vendor client and returns an async-aware proxy, so
+the same call wraps `OpenAI()` and `AsyncOpenAI()`. Calling a synchronous
+function from inside a running event loop raises rather than stalling the loop.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ from lucnt.exceptions import (
     BudgetExhausted,
     ConfigurationError,
     ConflictError,
+    ContractError,
     IdempotencyConflict,
     InvalidRequestError,
     LucntError,
@@ -28,13 +36,21 @@ from lucnt.exceptions import (
     TransportError,
 )
 from lucnt.ledger import (
+    aclose,
     authorize,
+    authorize_async,
     capture,
+    capture_async,
     check_budget,
+    check_budget_async,
     mark_failed_delivery,
+    mark_failed_delivery_async,
     query,
+    query_async,
     spend,
+    spend_async,
     void,
+    void_async,
 )
 from lucnt.meter import meter
 from lucnt.models import (
@@ -43,6 +59,7 @@ from lucnt.models import (
     CostPerOutput,
     FinancialMemory,
     JournalLine,
+    Money,
     ReconException,
     SpendFingerprint,
     SpendProjection,
@@ -62,12 +79,14 @@ __all__ = [
     "BudgetSummary",
     "ConfigurationError",
     "ConflictError",
+    "ContractError",
     "CostPerOutput",
     "FinancialMemory",
     "IdempotencyConflict",
     "InvalidRequestError",
     "JournalLine",
     "LucntError",
+    "Money",
     "NotFoundError",
     "PolicyBlocked",
     "RateLimitError",
@@ -82,16 +101,24 @@ __all__ = [
     "Verdict",
     "VoidResult",
     "__version__",
+    "aclose",
     "authorize",
+    "authorize_async",
     "bind_context",
     "capture",
+    "capture_async",
     "check_budget",
+    "check_budget_async",
     "configure",
     "mark_failed_delivery",
+    "mark_failed_delivery_async",
     "meter",
     "operation",
     "query",
+    "query_async",
     "spend",
+    "spend_async",
     "task",
     "void",
+    "void_async",
 ]

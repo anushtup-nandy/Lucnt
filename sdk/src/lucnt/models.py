@@ -8,13 +8,29 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+# What the SDK accepts on a money argument (T5-10).
+#
+# `float` is deliberately absent. It was accepted through 0.x and is **rejected
+# from 1.0.0**: this is a ledger, and `Decimal(1.83)` is not `Decimal("1.83")`.
+# Accepting a float meant the SDK either propagated that error into a booked
+# amount or silently repaired it via `str()` — and a caller who never saw a
+# complaint had no reason to learn which. Pass `Decimal("1.83")`, `"1.83"`, or
+# an exact integer of the currency's major unit.
+#
+# `int` stays because an integer is exact; `bool` is rejected at the boundary
+# even though it is an `int` subclass, because `amount=True` booking 1.00 is
+# never what anyone meant.
+Money = Decimal | int | str
+
 
 class LucntConfig(BaseModel):
     """Resolved SDK configuration: credentials, endpoint, timeouts, retry policy.
 
-    Every field here is an *operator knob* (T5-12 bucket a) — settable via
-    `configure()` or a `LUCNT_*` env var. Constants that are protocol contract
-    or a safety control deliberately do not appear here; see `sdk/PLAN.md` §4.
+    Every field here is an *operator knob* — settable via `configure()` or a
+    `LUCNT_*` env var. Constants that are protocol contract (a status code the
+    server also defines) or a safety control (the TLS-enforcement host
+    allowlist) deliberately do not appear here: making either configurable turns
+    a guarantee into a setting someone can switch off.
     """
 
     model_config = ConfigDict(frozen=True)
