@@ -10,6 +10,9 @@ API/LLM subset only).
 
 from __future__ import annotations
 
+import atexit
+import contextlib
+import threading
 import uuid
 from decimal import Decimal
 from typing import Literal
@@ -35,20 +38,55 @@ from lucnt.models import (
 
 _BUDGET_EXHAUSTED_CODE = "budget_exhausted"
 
+_transport_lock = threading.Lock()
 _transport: Transport | None = None
 _transport_config: LucntConfig | None = None
+# Pools displaced by a genuine reconfigure. Never closed inline — see below.
+_retired_transports: list[Transport] = []
 
 
 def _get_transport() -> Transport:
-    """Return the process-wide pooled Transport, rebuilding it if reconfigured."""
+    """Return the process-wide pooled Transport, rebuilding it if reconfigured.
+
+    Thread-safe on three counts (T5-8):
+
+    1. The check-and-build is under a lock. Unsynchronized, two threads racing
+       the first call each build a pool and one is silently leaked.
+    2. Configs are compared **by value**, not identity. `configure()` returns a
+       fresh object every call, so an identity check rebuilt the pool on any
+       re-`configure()` — even one passing identical settings.
+    3. A displaced pool is **retired, not closed**. Closing inline would pull
+       the socket out from under a request in flight on another thread; httpx
+       raises a bare `RuntimeError` for that, which is outside the SDK's
+       exception hierarchy and — now that retries exist — is not something the
+       transport would recognise as retryable. Retired pools are closed at
+       interpreter exit instead. Reconfiguring is a startup-time operation, so
+       the bounded cost is a handful of idle pools in the rare process that
+       does it repeatedly; the alternative is a torn request in a money path.
+    """
     global _transport, _transport_config
     config = get_config()
-    if _transport is None or _transport_config is not config:
+    with _transport_lock:
+        if _transport is not None and _transport_config == config:
+            return _transport
         if _transport is not None:
-            _transport.close()
+            _retired_transports.append(_transport)
         _transport = Transport(config)
         _transport_config = config
-    return _transport
+        return _transport
+
+
+@atexit.register
+def _close_transports() -> None:
+    """Close the live pool and every retired one at interpreter exit."""
+    with _transport_lock:
+        pools = [*_retired_transports, *([_transport] if _transport else [])]
+        _retired_transports.clear()
+    for pool in pools:
+        # Never raise during interpreter exit — a failed close here would
+        # surface as a confusing shutdown traceback and hide the real work.
+        with contextlib.suppress(Exception):
+            pool.close()
 
 
 def _resolve_required(explicit: str | None, ambient: str | None, field: str) -> str:
@@ -229,7 +267,13 @@ def capture(
     if tokens is not None:
         body["tokens"] = tokens
     response = _get_transport().request(
-        "POST", "/transactions/capture", json=body
+        "POST",
+        "/transactions/capture",
+        json=body,
+        # Safe to retry without a key: the backend dedupes on the
+        # authorization_id unique constraint and replays the original
+        # transaction, so a repeat can never double-book.
+        retry_safe=True,
     )
     return Transaction.model_validate(response.json())
 
@@ -432,6 +476,10 @@ def mark_failed_delivery(
     if amount_at_stake is not None:
         body["amount_at_stake"] = str(_as_decimal(amount_at_stake))
     response = _get_transport().request(
-        "POST", "/recon/failed-delivery", json=body
+        "POST",
+        "/recon/failed-delivery",
+        json=body,
+        # Safe to retry: the server dedupes the exception per transaction (P4).
+        retry_safe=True,
     )
     return ReconException.model_validate(response.json())

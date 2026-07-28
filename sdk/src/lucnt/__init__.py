@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from lucnt._version import __version__
 from lucnt.config import configure
-from lucnt.context import task
+from lucnt.context import bind_context, task
 from lucnt.exceptions import (
     APIError,
     AuthError,
@@ -77,6 +77,7 @@ __all__ = [
     "Verdict",
     "__version__",
     "authorize",
+    "bind_context",
     "capture",
     "check_budget",
     "configure",

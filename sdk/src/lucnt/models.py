@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class LucntConfig(BaseModel):
-    """Resolved SDK configuration: API key, base URL, and transport timeout."""
+    """Resolved SDK configuration: credentials, endpoint, timeouts, retry policy.
+
+    Every field here is an *operator knob* (T5-12 bucket a) — settable via
+    `configure()` or a `LUCNT_*` env var. Constants that are protocol contract
+    or a safety control deliberately do not appear here; see `sdk/PLAN.md` §4.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -17,7 +22,18 @@ class LucntConfig(BaseModel):
     # plaintext with `api_key.get_secret_value()` only where it is actually sent.
     api_key: SecretStr
     base_url: str
+    # Overall per-request budget, and the default for phases without their own
+    # value. `connect`/`read` split out because they fail for different reasons:
+    # a dead host should give up fast, a slow policy evaluation should not (T5-10).
     timeout: float
+    connect_timeout: float | None = None
+    read_timeout: float | None = None
+    # Retry policy (T5-3). `max_retries` counts retries, not attempts: 2 means up
+    # to 3 requests. Backoff is exponential with full jitter, capped.
+    max_retries: int = Field(default=2, ge=0)
+    backoff_base: float = Field(default=0.25, gt=0)
+    backoff_max: float = Field(default=8.0, gt=0)
+    respect_retry_after: bool = True
 
 
 class TaskContext(BaseModel):

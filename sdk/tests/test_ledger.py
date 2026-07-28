@@ -7,7 +7,9 @@ needs a live server, per sdk/PLAN.md §6 ("Unit: mock transport").
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 import httpx
@@ -15,7 +17,7 @@ import pytest
 
 from lucnt import config, ledger
 from lucnt.client import Transport
-from lucnt.context import task
+from lucnt.context import bind_context, get_current_task, task
 from lucnt.exceptions import (
     BudgetExhausted,
     ConfigurationError,
@@ -477,6 +479,123 @@ def test_get_transport_rebuilds_after_reconfigure() -> None:
     config.configure(api_key="sk_other", base_url="https://api.test")
     second = ledger._get_transport()
     assert first is not second
+
+
+# --- T5-8: transport singleton thread safety ---------------------------------
+
+
+def test_identical_reconfigure_does_not_rebuild_the_pool() -> None:
+    """Configs compare by value: re-configure() with the same settings is a no-op.
+
+    Under the old identity check this rebuilt the pool, because configure()
+    returns a fresh object every call.
+    """
+    first = ledger._get_transport()
+    config.configure(api_key="sk_test", base_url="https://api.test")
+    assert ledger._get_transport() is first
+
+
+def test_concurrent_first_call_builds_exactly_one_pool() -> None:
+    """The check-then-act race: unsynchronized, N threads build N pools."""
+    built: list[Transport] = []
+    real_transport_cls = ledger.Transport
+
+    def counting_transport(cfg: object) -> Transport:
+        instance = real_transport_cls(cfg)  # type: ignore[arg-type]
+        built.append(instance)
+        return instance
+
+    ledger.Transport = counting_transport  # type: ignore[assignment,misc]
+    barrier = threading.Barrier(8)
+
+    def worker() -> Transport:
+        barrier.wait()  # maximize the overlap on the check-then-act
+        return ledger._get_transport()
+
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = [f.result() for f in [pool.submit(worker) for _ in range(8)]]
+    finally:
+        ledger.Transport = real_transport_cls  # type: ignore[misc]
+
+    assert len(built) == 1
+    assert all(r is results[0] for r in results)
+
+
+def test_reconfigure_retires_the_old_pool_without_closing_it() -> None:
+    """Closing inline would tear a request in flight on another thread."""
+    first = ledger._get_transport()
+    config.configure(api_key="sk_other", base_url="https://api.test")
+    second = ledger._get_transport()
+
+    assert second is not first
+    assert first in ledger._retired_transports
+    assert not first._client.is_closed  # still usable by an in-flight caller
+
+
+# --- T5-8: task() context across a thread hop --------------------------------
+
+
+def test_task_context_is_lost_in_a_worker_thread_without_binding() -> None:
+    """The bug bind_context() exists for — documented so it can't silently return."""
+    with task(agent="research", entity="in"), ThreadPoolExecutor(1) as pool:
+        seen = pool.submit(get_current_task).result()
+    assert seen is None
+
+
+def test_bind_context_carries_task_into_a_worker_thread() -> None:
+    with (
+        task(agent="research", entity="in", project="atlas"),
+        ThreadPoolExecutor(1) as pool,
+    ):
+        seen = pool.submit(bind_context(get_current_task)).result()
+    assert seen is not None
+    assert (seen.agent, seen.entity, seen.project) == ("research", "in", "atlas")
+
+
+def test_bound_callable_is_safe_to_run_concurrently() -> None:
+    """Reusing one contextvars.Context object would raise here; snapshots don't."""
+    with task(agent="research", entity="in"):
+        bound = bind_context(get_current_task)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = [f.result() for f in [pool.submit(bound) for _ in range(16)]]
+    assert len(results) == 16
+    assert all(r is not None and r.agent == "research" for r in results)
+
+
+def test_bind_context_restores_the_workers_prior_state() -> None:
+    with task(agent="outer", entity="in"):
+        bound = bind_context(get_current_task)
+
+    with task(agent="caller", entity="in"):
+        assert bound() is not None
+        after = get_current_task()
+    assert after is not None
+    assert after.agent == "caller"  # the wrapper reset what it set
+
+
+def test_authorize_in_a_bound_worker_attributes_the_right_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: the fan-out books against the parent's agent, not nothing."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content)["agent"])
+        return _approved("auth_bound")
+
+    _stub(monkeypatch, handler)
+
+    def work() -> None:
+        ledger.authorize(
+            vendor="openai", amount="1.00", currency="USD", reason="fan-out"
+        )
+
+    with task(agent="research", entity="in"), ThreadPoolExecutor(3) as pool:
+        for future in [pool.submit(bind_context(work)) for _ in range(3)]:
+            future.result()
+
+    assert seen == ["research"] * 3
 
 
 # --- T0-6: the SDK half of idempotency ---------------------------------------
