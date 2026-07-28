@@ -28,6 +28,7 @@ __all__ = [
     "period_starts",
     "committed_spend",
     "reserved_spend",
+    "company_reserved_spend",
     "recent_activity_count",
     "period_committed_spend",
     "company_period_committed_spend",
@@ -90,6 +91,29 @@ def committed_spend(db: Session, agent_id: uuid.UUID, since: datetime) -> Decima
     return Decimal(total)
 
 
+def _reservation_filters(now: datetime) -> list[ColumnElement[bool]]:
+    """The gate's exact definition of a live reservation, in one place (F-10).
+
+    Both the authorize gate (via ``reserved_spend``) and the budget read (via
+    ``company_reserved_spend``) measure reservations with these filters, so the
+    number an agent reads is the number the gate enforces — a fork here is the
+    check-then-blocked inconsistency F-10 describes.
+
+    * `status == APPROVED` — only an approved hold reserves.
+    * `released_at IS NULL` — an explicit `void()` stops reservation (T5-4).
+    * unexpired, where a NULL expiry never expires — rows written before the
+      TTL column existed keep the old fail-closed behaviour rather than being
+      released wholesale by the migration.
+    * not yet captured into a transaction.
+    """
+    return [
+        Authorization.status == VerdictStatus.APPROVED,
+        Authorization.released_at.is_(None),
+        or_(Authorization.expires_at.is_(None), Authorization.expires_at > now),
+        ~_captured_hold_exists(),
+    ]
+
+
 def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
     """Budget reserved by this agent's approved-but-uncaptured holds (T0-1).
 
@@ -97,15 +121,8 @@ def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
     period, so counting it now is correct and stops a stale hold from being
     captured to bust a later period's budget.
 
-    Two releases stop a hold reserving (T5-4), because otherwise a hold orphaned
-    by a vendor error — or by a crash between authorize and capture — shrinks the
-    agent's budget permanently and silently:
-
-    * `released_at` — an explicit `void()`: the caller stated the spend did not
-      happen.
-    * `expires_at` — the TTL from `settings.authorization_ttl_hours`, evaluated
-      at read time so no sweep job is needed and a restarted backend cannot leave
-      a backlog of stale reservations behind.
+    The definition of "still reserving" lives in ``_reservation_filters`` and
+    is shared with the batched budget read (F-10).
 
     Sums `local_amount` (the hold's functional-currency snapshot from authorize)
     so reservation is measured in the same currency as the budget (T1-2).
@@ -114,18 +131,39 @@ def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
     total = db.execute(
         select(func.coalesce(func.sum(Authorization.local_amount), 0)).where(
             Authorization.agent_id == agent_id,
-            Authorization.status == VerdictStatus.APPROVED,
-            Authorization.released_at.is_(None),
-            # A NULL expiry never expires — rows written before this column
-            # existed keep the old fail-closed behaviour rather than being
-            # released wholesale by the migration.
-            or_(Authorization.expires_at.is_(None), Authorization.expires_at > now),
-            ~_captured_hold_exists(),
+            *_reservation_filters(now),
         )
     ).scalar_one()
     # coalesce guarantees non-null at SQL level; the guard is for the type checker
     # (local_amount is a nullable column).
     return Decimal(total if total is not None else 0)
+
+
+def company_reserved_spend(
+    db: Session, company_id: uuid.UUID
+) -> dict[uuid.UUID, Decimal]:
+    """Live reservations for every agent in a company, in one aggregate (F-10).
+
+    The batched read-path counterpart to ``reserved_spend`` — `GET /budgets`
+    reports what the authorize gate will actually grant, so it must measure
+    reservations with the gate's own predicate, and batched so the read does
+    not cost a query per agent (T3-3, same reasoning as
+    ``company_period_committed_spend``).
+
+    Returns:
+        `{agent_id: reserved}` in each agent's functional currency. An agent
+        with no live holds is **absent**, not zero — callers must default it.
+    """
+    now = datetime.now(timezone.utc)
+    rows = db.execute(
+        select(
+            Authorization.agent_id,
+            func.coalesce(func.sum(Authorization.local_amount), 0),
+        )
+        .where(Authorization.company_id == company_id, *_reservation_filters(now))
+        .group_by(Authorization.agent_id)
+    ).all()
+    return {agent_id: Decimal(total) for agent_id, total in rows}
 
 
 def period_committed_spend(

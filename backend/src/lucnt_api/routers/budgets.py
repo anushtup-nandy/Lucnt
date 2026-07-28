@@ -35,7 +35,9 @@ from lucnt_api.schemas.budget import (
 from lucnt_api.services.audit import record as record_audit
 from lucnt_api.services.spend_window import (
     company_period_committed_spend,
+    company_reserved_spend,
     period_committed_spend,
+    reserved_spend,
 )
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
@@ -65,8 +67,15 @@ def _rollup(spent: Decimal, budget: Decimal) -> tuple[Decimal, Decimal, str]:
     return remaining, pct_used, status_label
 
 
-def _agent_budget(agent: Agent, spent: Decimal, spent_today: Decimal) -> AgentBudget:
-    """Build the budget view for a single agent from its current-month spend."""
+def _agent_budget(
+    agent: Agent, spent: Decimal, spent_today: Decimal, reserved: Decimal
+) -> AgentBudget:
+    """Build the budget view for a single agent from its current-month spend.
+
+    `reserved`/`available` mirror the authorize gate's arithmetic (F-10): the
+    gate subtracts live holds from headroom, so the read reports them too —
+    otherwise an agent self-regulating on this read sees room the gate refuses.
+    """
     remaining, pct_used, status_label = _rollup(spent, agent.monthly_budget)
     return AgentBudget(
         id=agent.id,
@@ -77,6 +86,8 @@ def _agent_budget(agent: Agent, spent: Decimal, spent_today: Decimal) -> AgentBu
         spent=spent,
         spent_today=spent_today,
         remaining=remaining,
+        reserved=reserved,
+        available=remaining - reserved,
         pct_used=pct_used,
         status=status_label,
     )
@@ -133,6 +144,8 @@ def get_budgets(
     # the per-agent form cost two queries each (T3-3), and because the workflow
     # rollups below need members that the current page may not contain.
     month_spend = company_period_committed_spend(db, company.id, entities)
+    # Live holds per agent, measured with the gate's own predicate (F-10).
+    reserved = company_reserved_spend(db, company.id)
 
     workflow_rollups: list[WorkflowBudget] = []
     for workflow in workflows:
@@ -155,7 +168,12 @@ def get_budgets(
         )
 
     return BudgetsResponse(
-        agents=[_agent_budget(a, *month_spend.get(a.id, _NO_SPEND)) for a in agents],
+        agents=[
+            _agent_budget(
+                a, *month_spend.get(a.id, _NO_SPEND), reserved.get(a.id, Decimal("0"))
+            )
+            for a in agents
+        ],
         workflows=workflow_rollups,
         total=total,
     )
@@ -193,4 +211,4 @@ def update_agent_budget(
     if entity is None:  # FK guarantees it; guard for the type checker
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent entity not found")
     spent, spent_today = period_committed_spend(db, agent.id, entity)
-    return _agent_budget(agent, spent, spent_today)
+    return _agent_budget(agent, spent, spent_today, reserved_spend(db, agent.id))

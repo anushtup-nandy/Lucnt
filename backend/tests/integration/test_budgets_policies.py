@@ -391,3 +391,90 @@ def test_created_policy_blocks_authorize_end_to_end(
     ).json()
     assert verdict["status"] == "blocked"
     assert verdict["code"] == "merchant_blocked"
+
+
+# ------------------------------ F-10: reserved/available ---------------------
+
+
+def _authorize(client: TestClient, key: str, amount: str) -> dict[str, object]:
+    verdict = client.post(
+        "/transactions/authorize",
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "openai",
+            "amount": amount,
+            "currency": "SGD",
+            "reason": "metered hold",
+        },
+        headers=_headers(key),
+    ).json()
+    assert verdict["status"] == "approved"
+    return verdict
+
+
+def test_budget_reports_reserved_holds_and_available(
+    client: TestClient, db_session: Session
+) -> None:
+    """F-10: `check_budget()` must see what the authorize gate sees.
+
+    The gate subtracts outstanding holds; `remaining` never did. An agent
+    self-regulating on the read saw headroom the gate would refuse — so the
+    read now carries `reserved` and `available = remaining - reserved`.
+    """
+    company, key = _company(db_session)
+    entity = _entity(db_session, company)
+    _agent(db_session, company, entity, monthly_budget=Decimal("100"))
+    _authorize(client, key, "30")  # held, never captured
+
+    row = client.get(
+        "/budgets", params={"agent": "ops"}, headers=_headers(key)
+    ).json()["agents"][0]
+    assert Decimal(row["spent"]) == Decimal("0")
+    assert Decimal(row["remaining"]) == Decimal("100")
+    assert Decimal(row["reserved"]) == Decimal("30")
+    assert Decimal(row["available"]) == Decimal("70")
+
+
+def test_captured_hold_moves_from_reserved_to_spent(
+    client: TestClient, db_session: Session
+) -> None:
+    company, key = _company(db_session)
+    entity = _entity(db_session, company)
+    _agent(db_session, company, entity, monthly_budget=Decimal("100"))
+    verdict = _authorize(client, key, "30")
+    captured = client.post(
+        "/transactions/capture",
+        json={"authorization_id": verdict["authorization_id"], "source": "sdk"},
+        headers=_headers(key),
+    )
+    assert captured.status_code == 200
+
+    row = client.get(
+        "/budgets", params={"agent": "ops"}, headers=_headers(key)
+    ).json()["agents"][0]
+    assert Decimal(row["spent"]) == Decimal("30")
+    assert Decimal(row["reserved"]) == Decimal("0")
+    assert Decimal(row["remaining"]) == Decimal("70")
+    assert Decimal(row["available"]) == Decimal("70")
+
+
+def test_voided_hold_stops_reserving_budget(
+    client: TestClient, db_session: Session
+) -> None:
+    company, key = _company(db_session)
+    entity = _entity(db_session, company)
+    _agent(db_session, company, entity, monthly_budget=Decimal("100"))
+    verdict = _authorize(client, key, "30")
+    released = client.post(
+        "/transactions/void",
+        json={"authorization_id": verdict["authorization_id"], "reason": "test"},
+        headers=_headers(key),
+    )
+    assert released.status_code == 200
+
+    row = client.get(
+        "/budgets", params={"agent": "ops"}, headers=_headers(key)
+    ).json()["agents"][0]
+    assert Decimal(row["reserved"]) == Decimal("0")
+    assert Decimal(row["available"]) == Decimal("100")
