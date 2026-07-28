@@ -60,6 +60,15 @@ authorize_verdicts_total = Counter(
     ("verdict",),
 )
 
+# F-7: the rate limiter fails open on a Redis outage — a defensible choice, but
+# a silent one until this counter existed. Any increase means brute-force
+# protection is OFF and must page (alert rule: infra/prometheus/alerts.yml).
+rate_limiter_fail_open_total = Counter(
+    "lucnt_rate_limiter_fail_open_total",
+    "Requests admitted without rate limiting because Redis was unreachable.",
+    ("bucket",),
+)
+
 
 def render() -> bytes:
     """Serialise the current metrics, aggregating across workers if configured."""

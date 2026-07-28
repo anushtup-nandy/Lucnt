@@ -20,6 +20,7 @@ import redis
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from lucnt_api import metrics
 from lucnt_api.config import settings
 from lucnt_api.database import get_db
 from lucnt_api.main import app
@@ -168,12 +169,22 @@ def test_unreachable_redis_admits_the_request() -> None:
         )
         broken = RateLimiter(dead)
         identity = _identity()
+        # F-7: the fail-open itself is a defensible choice; the silence is not.
+        # Every admitted-without-counting request must increment the metric an
+        # alert can fire on.
+        counter = metrics.rate_limiter_fail_open_total.labels(
+            bucket=Bucket.EXPENSIVE.value
+        )
+        before = counter._value.get()
         # Far beyond every configured limit — all admitted, because the limiter
         # cannot count and refuses to guess.
         for _ in range(settings.rate_limit_expensive_per_minute + 10):
             broken.check(Bucket.EXPENSIVE, identity)
         broken.guard_auth_attempt(identity)
         broken.record_auth_failure(identity)
+        assert counter._value.get() - before >= (
+            settings.rate_limit_expensive_per_minute + 10
+        )
     finally:
         settings.rate_limit_enabled = original
 

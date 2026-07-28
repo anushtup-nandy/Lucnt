@@ -39,6 +39,7 @@ from functools import lru_cache
 import redis
 from fastapi import HTTPException, Request, status
 
+from lucnt_api import metrics
 from lucnt_api.config import settings
 
 __all__ = [
@@ -141,8 +142,9 @@ class RateLimiter:
                 raw = self._client.get(key)
                 count = int(raw) if raw is not None else 0
         except redis.RedisError:
-            # Logged so a silent loss of limiting is visible rather than
-            # inferred from an incident.
+            # Logged AND counted (F-7): a log line alone left the fail-open
+            # unalerted — the metric is what a monitoring rule can page on.
+            metrics.rate_limiter_fail_open_total.labels(bucket=bucket.value).inc()
             logger.warning(
                 "rate limiter unavailable; admitting request",
                 extra={"bucket": bucket.value},
