@@ -18,7 +18,7 @@ from datetime import datetime, timezone, tzinfo
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import ColumnElement, case, func, select
+from sqlalchemy import ColumnElement, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from lucnt_api.models import Agent, Authorization, Entity, Transaction, VerdictStatus
@@ -95,16 +95,31 @@ def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
 
     Not period-filtered: an old hold, if ever captured, stamps the *current*
     period, so counting it now is correct and stops a stale hold from being
-    captured to bust a later period's budget. Holds that never capture keep
-    reserving (fail-closed) until a TTL / `void()` releases them (Tier 5, T5-4).
+    captured to bust a later period's budget.
+
+    Two releases stop a hold reserving (T5-4), because otherwise a hold orphaned
+    by a vendor error — or by a crash between authorize and capture — shrinks the
+    agent's budget permanently and silently:
+
+    * `released_at` — an explicit `void()`: the caller stated the spend did not
+      happen.
+    * `expires_at` — the TTL from `settings.authorization_ttl_hours`, evaluated
+      at read time so no sweep job is needed and a restarted backend cannot leave
+      a backlog of stale reservations behind.
 
     Sums `local_amount` (the hold's functional-currency snapshot from authorize)
     so reservation is measured in the same currency as the budget (T1-2).
     """
+    now = datetime.now(timezone.utc)
     total = db.execute(
         select(func.coalesce(func.sum(Authorization.local_amount), 0)).where(
             Authorization.agent_id == agent_id,
             Authorization.status == VerdictStatus.APPROVED,
+            Authorization.released_at.is_(None),
+            # A NULL expiry never expires — rows written before this column
+            # existed keep the old fail-closed behaviour rather than being
+            # released wholesale by the migration.
+            or_(Authorization.expires_at.is_(None), Authorization.expires_at > now),
             ~_captured_hold_exists(),
         )
     ).scalar_one()
@@ -198,6 +213,13 @@ def recent_activity_count(db: Session, agent_id: uuid.UUID, since: datetime) -> 
     Counting holds makes velocity catch an agent authorizing in a tight loop
     without ever capturing — the exact runaway M5 promises to stop, which a
     committed-only count silently misses.
+
+    An explicitly `void()`ed hold is excluded (T5-4): the caller has stated that
+    spend did not happen, so charging it against velocity would throttle an agent
+    for activity it correctly cleaned up. Expiry is deliberately *not* excluded
+    here — the TTL is far longer than any velocity window, and an agent hammering
+    authorize without capturing is precisely the runaway this gate exists to
+    catch, so letting age release it would reopen the hole.
     """
     committed = db.execute(
         select(func.count())
@@ -214,6 +236,7 @@ def recent_activity_count(db: Session, agent_id: uuid.UUID, since: datetime) -> 
             Authorization.agent_id == agent_id,
             Authorization.status == VerdictStatus.APPROVED,
             Authorization.created_at >= since,
+            Authorization.released_at.is_(None),
             ~_captured_hold_exists(),
         )
     ).scalar_one()

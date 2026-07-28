@@ -1,6 +1,7 @@
 """lucnt: financial infrastructure that attaches to your existing agents.
 
-Public surface: `configure()`, `task()`, `authorize()`, `capture()`, `spend()`
+Public surface: `configure()`, `task()`, `operation()`, `authorize()`,
+`capture()`, `spend()`
 — the universal spend-type-agnostic primitive — plus `check_budget()` (Phase 3
 self-regulation read), `meter()` (Phase 3.5 auto-instrumentation for LLM/vendor
 clients), `mark_failed_delivery()` (Phase 4 recovery hook), and `query()` (Phase 5
@@ -11,13 +12,14 @@ from __future__ import annotations
 
 from lucnt._version import __version__
 from lucnt.config import configure
-from lucnt.context import bind_context, task
+from lucnt.context import bind_context, operation, task
 from lucnt.exceptions import (
     APIError,
     AuthError,
     BudgetExhausted,
     ConfigurationError,
     ConflictError,
+    IdempotencyConflict,
     InvalidRequestError,
     LucntError,
     NotFoundError,
@@ -32,6 +34,7 @@ from lucnt.ledger import (
     mark_failed_delivery,
     query,
     spend,
+    void,
 )
 from lucnt.meter import meter
 from lucnt.models import (
@@ -48,6 +51,7 @@ from lucnt.models import (
     Transaction,
     VendorShare,
     Verdict,
+    VoidResult,
 )
 
 __all__ = [
@@ -60,6 +64,7 @@ __all__ = [
     "ConflictError",
     "CostPerOutput",
     "FinancialMemory",
+    "IdempotencyConflict",
     "InvalidRequestError",
     "JournalLine",
     "LucntError",
@@ -75,6 +80,7 @@ __all__ = [
     "TransportError",
     "VendorShare",
     "Verdict",
+    "VoidResult",
     "__version__",
     "authorize",
     "bind_context",
@@ -83,7 +89,9 @@ __all__ = [
     "configure",
     "mark_failed_delivery",
     "meter",
+    "operation",
     "query",
     "spend",
     "task",
+    "void",
 ]

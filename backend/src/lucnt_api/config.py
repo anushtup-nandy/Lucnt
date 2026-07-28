@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     # a true cost beyond this tolerance must be re-authorized, not silently
     # settled. 1.25 = allow up to 125% of the estimate.
     settlement_buffer: Decimal = Decimal("1.25")
+    # T5-4: how long an approved-but-uncaptured hold keeps reserving budget.
+    # Past this, `reserved_spend` stops counting it, so a hold orphaned by a
+    # vendor error or a crash between authorize and capture cannot shrink an
+    # agent's budget forever. Expiry releases the *reservation* only — a capture
+    # arriving later is still booked, because losing a real spend from the ledger
+    # is worse than a stale forecast. Generous by default: the window must
+    # comfortably cover the slowest legitimate authorize→capture gap.
+    authorization_ttl_hours: int = 24
     # India s.195 withholding on payments to non-residents (TE-3). PROVISIONAL —
     # confirm with a CA before a pilot: the DTAA treaty rate (with a valid TRC +
     # Form 10F) vs the domestic default (incl. surcharge/cess), and the ₹5-lakh

@@ -17,14 +17,15 @@ import pytest
 
 from lucnt import config, ledger
 from lucnt.client import Transport
-from lucnt.context import bind_context, get_current_task, task
+from lucnt.context import bind_context, get_current_task, operation, task
 from lucnt.exceptions import (
     BudgetExhausted,
     ConfigurationError,
+    IdempotencyConflict,
     LucntError,
     PolicyBlocked,
 )
-from lucnt.models import BudgetStatus, Transaction, Verdict
+from lucnt.models import BudgetStatus, SpendRequest, Transaction, Verdict
 
 
 @pytest.fixture(autouse=True)
@@ -707,3 +708,249 @@ def test_capture_sends_no_idempotency_key(monkeypatch: pytest.MonkeyPatch) -> No
     _keys_seen(monkeypatch, seen)
     ledger.capture(Verdict(authorization_id="auth_idem", status="approved"))
     assert seen["/transactions/capture"] == [None]
+
+
+# --- T5-11: operation() drives the key, with a payload guardrail -------------
+
+
+def _spend_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "vendor": "openai",
+        "amount": "1.00",
+        "currency": "USD",
+        "reason": "t",
+        "agent": "a",
+        "entity": "e",
+    }
+    return {**base, **overrides}
+
+
+def test_operation_scope_supplies_the_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-42"):
+        ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["order-42"]
+
+
+def test_retrying_the_operation_block_reuses_the_same_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of T5-11: the caller's own retry replays the original
+    hold instead of minting a second one."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    for _ in range(3):
+        with operation("order-43"):
+            ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["order-43"] * 3
+
+
+def test_explicit_key_outranks_the_operation_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-44"):
+        ledger.authorize(**_spend_kwargs(idempotency_key="explicit"))  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["explicit"]
+
+
+def test_auto_key_is_used_outside_any_operation_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+    (key,) = seen["/transactions/authorize"]
+    assert key is not None and len(key) == 32
+
+
+def test_spend_inherits_the_operation_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-45"):
+        ledger.spend(**_spend_kwargs())  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["order-45"]
+
+
+def test_repeated_identical_authorize_in_one_scope_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An in-process retry of the *same* spend inside the scope is the intended
+    use, so it must not trip the guardrail."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-46"):
+        ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+        ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["order-46"] * 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("vendor", "stripe"),
+        ("amount", "2.00"),
+        ("currency", "EUR"),
+        ("agent", "other-agent"),
+        ("entity", "other-entity"),
+        ("category", "travel"),
+        ("tax_category", "gst_5"),
+        ("tax_inclusive", False),
+        ("supply_type", "goods"),
+    ],
+)
+def test_a_different_spend_in_one_scope_raises(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-47"):
+        ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+        with pytest.raises(IdempotencyConflict, match=field):
+            ledger.authorize(**_spend_kwargs(**{field: value}))  # type: ignore[arg-type]
+    # The second spend never reached the server.
+    assert seen["/transactions/authorize"] == ["order-47"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reason", "a different explanation"),
+        ("intent", "some intent"),
+        ("project", "Q3"),
+        ("model", "gpt-4o"),
+        ("tokens", 512),
+    ],
+)
+def test_descriptive_fields_do_not_trip_the_guardrail(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    """Excluded deliberately: none of these can turn an unapproved spend into an
+    approved one, and a guardrail that fires on cosmetic drift gets routed
+    around by not using operation() at all."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-48"):
+        ledger.authorize(**_spend_kwargs())  # type: ignore[arg-type]
+        ledger.authorize(**_spend_kwargs(**{field: value}))  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["order-48"] * 2
+
+
+def test_equal_amounts_written_differently_do_not_trip_the_guardrail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fingerprinted in python mode so amount stays a Decimal: 10 and "10.00"
+    are the same money and must compare equal."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with operation("order-49"):
+        ledger.authorize(**_spend_kwargs(amount=10))  # type: ignore[arg-type]
+        ledger.authorize(**_spend_kwargs(amount="10.00"))  # type: ignore[arg-type]
+        ledger.authorize(**_spend_kwargs(amount=Decimal("10.000")))  # type: ignore[arg-type]
+    assert seen["/transactions/authorize"] == ["order-49"] * 3
+
+
+def test_a_new_spend_request_field_is_fingerprinted_by_default() -> None:
+    """The exclusion set is an allowlist of *exemptions*, so a field added to
+    SpendRequest later is covered unless someone deliberately exempts it."""
+    request = SpendRequest(
+        agent="a",
+        entity="e",
+        vendor="v",
+        amount=Decimal("1"),
+        currency="USD",
+        reason="r",
+    )
+    expected = set(SpendRequest.model_fields) - ledger._FINGERPRINT_EXCLUDED
+    assert set(ledger._operation_fingerprint(request)) == expected
+
+
+@pytest.mark.parametrize("key", ["", "   ", "x" * 256])
+def test_a_blank_or_oversized_explicit_key_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """A blank key would either skip dedupe silently or collide every
+    blank-keyed request in the company against the first one."""
+    seen: dict[str, list[str | None]] = {}
+    _keys_seen(monkeypatch, seen)
+    with pytest.raises(ConfigurationError):
+        ledger.authorize(**_spend_kwargs(idempotency_key=key))  # type: ignore[arg-type]
+    assert seen == {}
+
+
+# --- T5-4: void() releases an orphaned hold -----------------------------------
+
+
+def _void_handler(
+    calls: list[dict[str, object]], *, already: bool = False
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/transactions/void"
+        calls.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "authorization_id": "auth_v",
+                "released_at": "2026-07-28T12:00:00Z",
+                "release_reason": "vendor failed",
+                "already_released": already,
+            },
+        )
+
+    return handler
+
+
+def test_void_releases_the_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    _stub(monkeypatch, _void_handler(calls))
+    result = ledger.void(
+        Verdict(authorization_id="auth_v", status="approved"),
+        reason="vendor failed",
+    )
+    assert calls == [{"authorization_id": "auth_v", "reason": "vendor failed"}]
+    assert result.authorization_id == "auth_v"
+    assert result.already_released is False
+
+
+def test_void_omits_an_absent_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    _stub(monkeypatch, _void_handler(calls))
+    ledger.void(Verdict(authorization_id="auth_v", status="approved"))
+    assert calls == [{"authorization_id": "auth_v"}]
+
+
+def test_void_reports_an_already_released_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Idempotent by design: void() is called from failure paths, so a retry must
+    not become a second failure to handle."""
+    _stub(monkeypatch, _void_handler([], already=True))
+    result = ledger.void(Verdict(authorization_id="auth_v", status="approved"))
+    assert result.already_released is True
+
+
+def test_void_is_retried_on_a_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) == 1:
+            return httpx.Response(500, text="down")
+        return httpx.Response(
+            200,
+            json={
+                "authorization_id": "auth_v",
+                "released_at": "2026-07-28T12:00:00Z",
+                "already_released": False,
+            },
+        )
+
+    _stub(monkeypatch, handler)
+    ledger.void(Verdict(authorization_id="auth_v", status="approved"))
+    assert len(attempts) == 2  # retry_safe=True: the server dedupes a repeat

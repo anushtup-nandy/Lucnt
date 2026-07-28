@@ -58,6 +58,8 @@ from lucnt_api.schemas.transaction import (
     TransactionDetail,
     TransactionListResponse,
     Verdict,
+    VoidRequest,
+    VoidResult,
 )
 from lucnt_api.schemas.transaction import Transaction as TransactionSchema
 from lucnt_api.services.audit import record as record_audit
@@ -502,8 +504,14 @@ def _persist_authorization(
     The FX snapshot (`exchange_rate`/`local_amount`/`local_currency`) is the
     hold's value in the entity's functional currency (T1-2); left None for a
     controls-blocked hold, which never reserves budget.
+
+    `expires_at` bounds how long an approved hold can reserve budget (T5-4).
+    Stamped on every hold, approved or not, so the column is never
+    retrospectively meaningful only for some rows.
     """
     authorization = Authorization(
+        expires_at=datetime.now(timezone.utc)
+        + timedelta(hours=settings.authorization_ttl_hours),
         company_id=company.id,
         agent_id=agent.id,
         entity_id=entity.id,
@@ -715,6 +723,19 @@ def capture(
             status.HTTP_409_CONFLICT,
             f"Cannot capture a {authorization.status.value} authorization",
         )
+    # T5-4: an explicit void() is the caller stating the spend did not happen, so
+    # capturing it afterwards is a contradiction the server must refuse. Note
+    # `expires_at` is deliberately NOT checked: a slow-but-real spend arriving
+    # after the TTL is still a real spend, and refusing to book it would lose
+    # money from the ledger — strictly worse than the stale reservation the TTL
+    # already released.
+    if authorization.released_at is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Authorization was voided at {authorization.released_at.isoformat()} "
+            f"({authorization.release_reason or 'no reason given'}) and cannot be "
+            f"captured; re-authorize the spend instead.",
+        )
 
     agent = db.get(Agent, authorization.agent_id)
     if agent is None:  # FK-guaranteed; explicit guard, not an assert (T0-18)
@@ -879,6 +900,74 @@ def capture(
     result = _capture_response(transaction, tax, journal_lines)
     db.commit()
     return result
+
+
+@router.post("/void", response_model=VoidResult)
+def void(
+    request: VoidRequest,
+    company: Company = Depends(require_live),
+    db: Session = Depends(get_db),
+) -> VoidResult:
+    """Release an approved hold whose spend never happened (T5-4).
+
+    Without this, a hold orphaned by a vendor error after `authorize()` — or by a
+    crash between authorize and capture — reserves the agent's budget forever
+    (`services/spend_window.py::reserved_spend`), silently and permanently
+    shrinking what the agent can spend. `meter()` calls this on its error path.
+
+    Idempotent: voiding an already-voided hold returns 200 with
+    `already_released=True`, describing the original release. The SDK invokes
+    this while already handling a failure, so a retry must not become a second
+    error to handle.
+
+    A captured hold cannot be voided — the money moved and the ledger says so.
+    Reverse the transaction instead (`POST /transactions/{id}/reverse`).
+    """
+    authorization = db.execute(
+        select(Authorization).where(
+            Authorization.id == request.authorization_id,
+            Authorization.company_id == company.id,
+        )
+    ).scalar_one_or_none()
+    if authorization is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown authorization")
+
+    if authorization.released_at is not None:
+        return VoidResult(
+            authorization_id=authorization.id,
+            released_at=authorization.released_at,
+            release_reason=authorization.release_reason,
+            already_released=True,
+        )
+
+    captured = db.execute(
+        select(Transaction.id).where(
+            Transaction.authorization_id == authorization.id,
+            Transaction.company_id == company.id,
+        )
+    ).scalar_one_or_none()
+    if captured is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Authorization is already captured and cannot be voided; reverse the "
+            f"transaction instead (transaction_id={captured}).",
+        )
+
+    authorization.released_at = datetime.now(timezone.utc)
+    authorization.release_reason = request.reason
+    db.commit()
+    db.refresh(authorization)
+    # released_at was just assigned a non-None value; the guard is for the type
+    # checker (the column is nullable).
+    if authorization.released_at is None:  # pragma: no cover - defensive
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "void did not persist"
+        )
+    return VoidResult(
+        authorization_id=authorization.id,
+        released_at=authorization.released_at,
+        release_reason=authorization.release_reason,
+    )
 
 
 @router.post("/{transaction_id}/reverse", response_model=TransactionSchema)

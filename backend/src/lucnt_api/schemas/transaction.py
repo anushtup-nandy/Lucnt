@@ -223,3 +223,34 @@ class TransactionListResponse(BaseModel):
 
     items: list[TransactionDetail]
     total: int
+
+
+class VoidRequest(BaseModel):
+    """Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.
+
+    Releases an approved-but-uncaptured hold so it stops reserving the agent's
+    budget (T5-4). Used when the spend the hold was taken for did not happen —
+    the vendor call failed after `authorize()` returned, say.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    authorization_id: uuid.UUID
+    # Free-text explanation stored on the hold, for the recovery inbox (M7).
+    reason: str | None = Field(default=None, max_length=REASON_MAX)
+
+
+class VoidResult(BaseModel):
+    """Result of releasing a hold via `POST /transactions/void`.
+
+    `already_released` makes the endpoint idempotent: a retried void (the SDK
+    calls it from an error path, so retries are expected) returns 200 describing
+    the original release rather than conflicting with it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    authorization_id: uuid.UUID
+    released_at: datetime
+    release_reason: str | None = None
+    already_released: bool = False

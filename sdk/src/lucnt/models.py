@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -105,6 +106,22 @@ class Verdict(BaseModel):
     def approved(self) -> bool:
         """True only when `status == "approved"`; every other status blocks it."""
         return self.status == "approved"
+
+
+class VoidResult(BaseModel):
+    """Result of releasing a hold via `void()` (T5-4).
+
+    `already_released` is True when the hold had already been voided, which makes
+    a retried `void()` a safe no-op rather than an error to handle — it is called
+    from failure paths, where a second failure is the last thing the caller needs.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    authorization_id: str
+    released_at: datetime
+    release_reason: str | None = None
+    already_released: bool = False
 
 
 class BudgetStatus(BaseModel):

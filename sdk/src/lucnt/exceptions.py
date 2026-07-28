@@ -101,6 +101,20 @@ class RateLimitError(APIError):
         self.retry_after = retry_after
 
 
+class IdempotencyConflict(LucntError):
+    """Raised when one `operation()` scope is used for two different spends (T5-11).
+
+    The server replays the first hold for a repeated idempotency key *without
+    comparing the payload*, so a second, materially different spend under the
+    same op id would be handed a verdict belonging to the first one. That is a
+    silent double-book in the opposite direction — an unapproved spend reported
+    as approved — so the SDK refuses locally instead.
+
+    One `operation()` scope is one logical spend. Open a separate scope per
+    spend, or pass an explicit `idempotency_key=` to opt out.
+    """
+
+
 class PolicyBlocked(LucntError):
     """Raised by `authorize()`/`spend()` in strict mode on a non-approved verdict.
 

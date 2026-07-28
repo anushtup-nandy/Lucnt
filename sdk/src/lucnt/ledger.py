@@ -17,9 +17,9 @@ import uuid
 from decimal import Decimal
 from typing import Literal
 
-from lucnt.client import Transport
+from lucnt.client import Transport, check_idempotency_key
 from lucnt.config import get_config
-from lucnt.context import get_current_task
+from lucnt.context import get_current_operation, get_current_task
 from lucnt.exceptions import (
     BudgetExhausted,
     ConfigurationError,
@@ -34,6 +34,7 @@ from lucnt.models import (
     SpendRequest,
     Transaction,
     Verdict,
+    VoidResult,
 )
 
 _BUDGET_EXHAUSTED_CODE = "budget_exhausted"
@@ -115,10 +116,50 @@ def _new_idempotency_key() -> str:
     key goes out on every attempt, so a request that reached the server before
     the connection dropped replays instead of minting a second hold. It does
     *not* cover an application-level retry — calling `authorize()` again is a
-    new logical spend and gets a new key — which is why callers who retry at
-    their own layer must thread their own `idempotency_key` through.
+    new logical spend and gets a new key. `lucnt.operation()` (T5-11) is the
+    mechanism for that case; an explicit `idempotency_key=` still overrides both.
     """
     return uuid.uuid4().hex
+
+
+# Fields excluded from an operation scope's payload guardrail: free-text labels
+# and LLM attribution metadata. Everything else is included **by default**, so a
+# field added to `SpendRequest` later is fingerprinted unless someone
+# deliberately exempts it — the fail-safe direction for a correctness check.
+# The excluded fields cannot cause a wrong *approval*: the verdict and the
+# booked money follow agent/entity/vendor/amount/currency and the tax fields,
+# all of which are compared. Keeping cosmetic drift out of the check is what
+# stops it becoming a nuisance customers route around by not using operation().
+_FINGERPRINT_EXCLUDED = frozenset({"intent", "model", "project", "reason", "tokens"})
+
+
+def _operation_fingerprint(request: SpendRequest) -> dict[str, object]:
+    """Reduce a request to the fields that decide which spend it is.
+
+    Dumped in python mode, not JSON: it keeps `amount` a `Decimal`, so
+    `amount=10` and `amount="10.00"` compare equal instead of tripping the
+    guardrail on a difference that isn't one.
+    """
+    return {
+        field: value
+        for field, value in request.model_dump().items()
+        if field not in _FINGERPRINT_EXCLUDED
+    }
+
+
+def _resolve_idempotency_key(explicit: str | None, request: SpendRequest) -> str:
+    """Pick the key for one authorize: explicit → ambient `operation()` → auto.
+
+    An explicit key opts out of the ambient scope entirely, guardrail included —
+    the caller has taken over responsibility for the replay semantics.
+    """
+    if explicit is not None:
+        return check_idempotency_key(explicit, "idempotency_key")
+    op = get_current_operation()
+    if op is None:
+        return _new_idempotency_key()
+    op.claim(_operation_fingerprint(request))
+    return op.op_id
 
 
 def _raise_for_verdict(verdict: Verdict) -> None:
@@ -182,9 +223,11 @@ def authorize(
         tokens: Tokens consumed, for LLM/API spend only.
         strict: Raise on a non-approved verdict instead of returning it.
         idempotency_key: Reuse the same key to make a retry replay the original
-            hold instead of minting a second one (T0-6). One is generated per
-            call when omitted, which covers transport-level retries; supply your
-            own if *your* code retries `authorize()` after a failure.
+            hold instead of minting a second one (T0-6). Resolution order is
+            this argument, then an ambient `lucnt.operation()` scope, then a key
+            generated for this call alone. The auto key covers the SDK's own
+            transport retries; if *your* code retries, wrap the call in
+            `lucnt.operation()` or pass a key here.
 
     Returns:
         A `Verdict`. With `strict=False` (default) a blocking verdict is
@@ -193,6 +236,10 @@ def authorize(
     Raises:
         PolicyBlocked: `strict=True` and the verdict was not approved.
         BudgetExhausted: `strict=True` and the block was a budget cap.
+        IdempotencyConflict: An ambient `operation()` scope is already bound to
+            a materially different spend.
+        ConfigurationError: `idempotency_key` is blank or over 255 characters,
+            or `agent`/`entity` is resolvable from neither argument nor `task()`.
     """
     ctx = get_current_task()
     request = SpendRequest(
@@ -215,7 +262,7 @@ def authorize(
         "POST",
         "/transactions/authorize",
         json=request.model_dump(mode="json"),
-        idempotency_key=idempotency_key or _new_idempotency_key(),
+        idempotency_key=_resolve_idempotency_key(idempotency_key, request),
     )
     verdict = Verdict.model_validate(response.json())
     if strict and not verdict.approved:
@@ -278,6 +325,56 @@ def capture(
     return Transaction.model_validate(response.json())
 
 
+def void(verdict: Verdict, *, reason: str | None = None) -> VoidResult:
+    """Release an approved hold whose spend never happened (T5-4).
+
+    An approved-but-uncaptured authorization reserves the agent's budget until it
+    is captured or released. So a vendor call that fails *after* `authorize()`
+    returned — or a crash between authorize and capture — permanently and
+    silently shrinks what that agent may spend. Call this whenever you took a
+    hold and then did not spend:
+
+        verdict = lucnt.authorize(vendor="OpenAI", amount="2.00",
+                                  currency="USD", reason="batch embed")
+        try:
+            result = do_the_purchase()
+        except VendorError:
+            lucnt.void(verdict, reason="vendor rejected the request")
+            raise
+        lucnt.capture(verdict, amount=result.actual_cost)
+
+    `meter()` does this for you on its own error path.
+
+    Idempotent and safe to retry: voiding an already-voided hold returns the
+    original release with `already_released=True` rather than raising.
+
+    Args:
+        verdict: The `Verdict` returned by `authorize()`.
+        reason: Why the spend did not happen, stored on the hold for the
+            recovery inbox (M7).
+
+    Returns:
+        A `VoidResult` carrying when the hold was released.
+
+    Raises:
+        NotFoundError: No such authorization for this API key.
+        ConflictError: The hold was already captured — the money moved, so it
+            cannot be voided. Reverse the transaction instead.
+    """
+    body: dict[str, object] = {"authorization_id": verdict.authorization_id}
+    if reason is not None:
+        body["reason"] = reason
+    response = _get_transport().request(
+        "POST",
+        "/transactions/void",
+        json=body,
+        # Safe to retry: the server returns the original release for an
+        # already-voided hold rather than acting twice.
+        retry_safe=True,
+    )
+    return VoidResult.model_validate(response.json())
+
+
 def spend(
     *,
     vendor: str,
@@ -322,9 +419,10 @@ def spend(
         tokens: Tokens consumed, for LLM/API spend only.
         invoice_url: Optional evidence link attached to the transaction.
         strict: Raise on a non-approved verdict instead of returning it.
-        idempotency_key: Forwarded to `authorize()`. Supply your own if your
-            code retries `spend()` itself — otherwise the retry mints a second
-            hold and captures it, which is the double-book T0-6 describes.
+        idempotency_key: Forwarded to `authorize()`. If your code retries
+            `spend()` itself, wrap it in `lucnt.operation()` (or pass a key
+            here) — otherwise the retry mints a second hold and captures it,
+            which is the double-book T0-6 describes.
 
     Returns:
         The booked `Transaction` if approved. With `strict=False`, a blocking

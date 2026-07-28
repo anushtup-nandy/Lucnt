@@ -21,6 +21,7 @@ from lucnt._version import __version__
 from lucnt.exceptions import (
     APIError,
     AuthError,
+    ConfigurationError,
     ConflictError,
     InvalidRequestError,
     NotFoundError,
@@ -30,6 +31,12 @@ from lucnt.exceptions import (
 from lucnt.models import LucntConfig
 
 _USER_AGENT = f"lucnt-python/{__version__}"
+
+# The backend persists the key in a String(255) column with a partial unique
+# index on (company_id, idempotency_key). Declared here, beside the header that
+# carries it, and read by every producer of a key — a second copy of this number
+# is a copy that eventually disagrees with the column.
+MAX_IDEMPOTENCY_KEY_CHARS = 255
 
 # A 4xx from an edge proxy is often an HTML error page. Cap what reaches the
 # exception message so a traceback never carries a screenful of markup (T5-9).
@@ -48,6 +55,37 @@ _STATUS_EXCEPTIONS: dict[int, type[APIError]] = {
     422: InvalidRequestError,
     429: RateLimitError,
 }
+
+
+def check_idempotency_key(value: str, source: str) -> str:
+    """Validate a key against the server's column before it can silently collide.
+
+    A blank key is the dangerous case: it is falsy server-side, so it would
+    either be ignored (no dedupe at all, and the caller believes they have it) or
+    dedupe *every* blank-keyed request in the company against the first one. An
+    over-long key would be truncated into a collision with whatever shares its
+    first 255 characters.
+
+    Args:
+        value: The candidate key.
+        source: What produced it, named in the error message — e.g.
+            `"operation() op_id"` or `"idempotency_key"`.
+
+    Returns:
+        The key, whitespace-stripped.
+
+    Raises:
+        ConfigurationError: The key is blank or longer than the column.
+    """
+    cleaned = value.strip()
+    if not cleaned:
+        raise ConfigurationError(f"{source} must not be blank.")
+    if len(cleaned) > MAX_IDEMPOTENCY_KEY_CHARS:
+        raise ConfigurationError(
+            f"{source} is {len(cleaned)} characters; the maximum is "
+            f"{MAX_IDEMPOTENCY_KEY_CHARS}."
+        )
+    return cleaned
 
 
 def _sleep(seconds: float) -> None:

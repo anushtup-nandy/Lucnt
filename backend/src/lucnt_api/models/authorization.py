@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import enum
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
+    DateTime,
     Enum,
     ForeignKey,
     Index,
@@ -73,6 +75,16 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             "created_at",
         ),
         Index("ix_authorizations_company_id_status", "company_id", "status"),
+        # T5-4: `reserved_spend` now also filters released_at/expires_at, so the
+        # reservation scan stays index-only instead of falling back to a seq scan
+        # on the two new predicates.
+        Index(
+            "ix_authorizations_agent_id_status_released_at_expires_at",
+            "agent_id",
+            "status",
+            "released_at",
+            "expires_at",
+        ),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
@@ -122,3 +134,26 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # Client-supplied idempotency key: a retried authorize with the same key
     # returns this hold instead of minting a new one (T0-6).
     idempotency_key: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    # --- T5-4: orphaned-hold release ----------------------------------------
+    # An approved-but-uncaptured hold reserves budget forever (see
+    # `services/spend_window.py::reserved_spend`), so a vendor error after
+    # authorize — or a crash between authorize and capture — silently and
+    # permanently shrinks the agent's budget. Two independent releases:
+    #
+    # `released_at` — an explicit `void()` from the caller: "this spend did not
+    # happen." Stops reserving *and* makes a later capture a 409, because the
+    # caller has stated the money never moved.
+    #
+    # `expires_at` — a TTL stamped at authorize. Stops reserving once passed, but
+    # deliberately does **not** block a later capture: a slow-but-real spend
+    # arriving after the TTL is a real spend, and refusing to book it would lose
+    # money from the ledger, which is strictly worse than a stale reservation.
+    # Reservation is a forecast; the ledger is the truth.
+    released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    release_reason: Mapped[str | None] = mapped_column(String(255), default=None)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
