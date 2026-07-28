@@ -11,9 +11,15 @@ audited before the package goes public (T5-7d).
 in the customer's working directory behaves differently depending on where their
 process was started, and reading arbitrary files off their filesystem is a
 security smell in a dependency. The pack is read from the installed package
-only; per-process overrides arrive as arguments (`meter(pricing=...)`). Reading
-configuration from a file stays the server's job, not a client library's, and a
-server-fetched pricing feed is intended to replace this pack.
+only; per-process overrides arrive as arguments (`meter(pricing=...)`).
+
+**The server feed is the authority; the pack is the offline fallback (F-2).**
+`load_active_pack()` fetches `GET /pricing/feed` — where date-ranged rates are
+resolved server-side against *today*, so a lapsing introductory rate never
+requires a client release — merges it over the packaged pack (feed wins per
+model), and caches the result for `pricing_feed_ttl` seconds. Any failure falls
+back to the pack with a warning; the money path never breaks on a feed outage.
+Precedence end to end: `meter(pricing=...)` > feed > packaged pack.
 
 **Money is encoded as strings and parsed to `Decimal` here, at the boundary.**
 A JSON number would arrive as a `float` and reintroduce exactly the binary
@@ -23,7 +29,11 @@ non-string price is rejected rather than coerced.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -33,8 +43,11 @@ from typing import Final
 
 from lucnt.exceptions import LucntError
 
+_logger = logging.getLogger("lucnt.pricing")
+
 _PACK_PACKAGE: Final = "lucnt.data"
 _PACK_FILENAME: Final = "pricing.json"
+_FEED_PATH: Final = "/pricing/feed"
 
 # (input, output) price per 1M tokens, in the vendor's billing currency.
 ModelPrices = tuple[Decimal, Decimal]
@@ -203,6 +216,162 @@ def load_pricing_pack() -> PricingPack:
     except json.JSONDecodeError as exc:
         raise LucntError(f"pricing pack is not valid JSON: {exc}") from exc
     return _parse_pack(payload)
+
+
+# --------------------------------------------------------------------------- #
+# The server-fetched feed (F-2)
+# --------------------------------------------------------------------------- #
+
+_feed_lock = threading.Lock()
+# (monotonic timestamp of the attempt, parsed feed or None when it failed).
+_feed_state: tuple[float, PricingPack | None] | None = None
+_feed_warned = False
+
+
+def _reset_feed_cache() -> None:
+    """Clear the feed cache and warning latch. Test-only."""
+    global _feed_state, _feed_warned
+    with _feed_lock:
+        _feed_state = None
+        _feed_warned = False
+
+
+def _fetch_feed() -> PricingPack:
+    """Fetch and validate `GET /pricing/feed` through the pooled transport.
+
+    Imported late: `ledger` is a heavier module than `pricing`, and importing
+    it at module scope would create an import cycle through `adapters`.
+
+    Raises:
+        LucntError: The SDK is unconfigured, the request failed, or the body
+            does not validate as a pricing pack.
+    """
+    from lucnt.ledger import _get_transport
+
+    try:
+        response = _get_transport().request("GET", _FEED_PATH)
+        payload = json.loads(response.text)
+    except LucntError:
+        raise
+    except Exception as exc:
+        raise LucntError(f"pricing feed fetch failed: {exc}") from exc
+    return _parse_pack(payload)
+
+
+def _merge_feed(pack: PricingPack, feed: PricingPack) -> PricingPack:
+    """Merge the feed over the packaged pack — feed wins, per model.
+
+    Model-level so a feed that only carries corrections still leaves every
+    pack-only model priced; a feed-only vendor is added whole. The estimation
+    knobs come from the feed (it always carries them — `_parse_pack` requires
+    the block), so the server can also tune estimate heuristics fleet-wide.
+    """
+    vendors: dict[str, VendorPricing] = dict(pack.vendors)
+    for name, feed_vendor in feed.vendors.items():
+        base = vendors.get(name)
+        if base is None:
+            vendors[name] = feed_vendor
+        else:
+            vendors[name] = VendorPricing(
+                currency=feed_vendor.currency,
+                models={**dict(base.models), **dict(feed_vendor.models)},
+            )
+    return PricingPack(
+        version=feed.version,
+        chars_per_token=feed.chars_per_token,
+        default_output_tokens=feed.default_output_tokens,
+        image_tokens=feed.image_tokens,
+        document_page_tokens=feed.document_page_tokens,
+        default_document_pages=feed.default_document_pages,
+        vendors=vendors,
+    )
+
+
+def _feed_enabled() -> tuple[bool, float]:
+    """Read `(enabled, ttl)` from the active config; disabled when unconfigured."""
+    from lucnt.config import _active_config
+
+    if _active_config is None:
+        return (False, 0.0)
+    return (_active_config.pricing_feed, _active_config.pricing_feed_ttl)
+
+
+def load_active_pack() -> PricingPack:
+    """The pricing every adapter prices against: feed-merged, pack-fallback (F-2).
+
+    Fetches the feed at most once per `pricing_feed_ttl` (a failed fetch is
+    cached for the same TTL, so a feed outage costs one connect error per TTL,
+    not one per call). Inside a running event loop no blocking fetch is made —
+    the cached feed or the pack is used; async applications that want the feed
+    warm call `refresh_pricing_async()` at startup. Never raises on the feed's
+    account: any failure degrades to the packaged pack with one warning per
+    process.
+    """
+    global _feed_state, _feed_warned
+    pack = load_pricing_pack()
+    enabled, ttl = _feed_enabled()
+    if not enabled:
+        return pack
+    with _feed_lock:
+        state = _feed_state
+        if state is not None and time.monotonic() - state[0] < ttl:
+            feed = state[1]
+            return _merge_feed(pack, feed) if feed is not None else pack
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            # A blocking fetch would stall every coroutine in the process
+            # (the T5-6 rule). Use what we have; do not poison the TTL cache.
+            feed = state[1] if state is not None else None
+            return _merge_feed(pack, feed) if feed is not None else pack
+        try:
+            feed = _fetch_feed()
+        except Exception:
+            feed = None
+            if not _feed_warned:
+                _feed_warned = True
+                _logger.warning(
+                    "lucnt: could not fetch the pricing feed from %s; using the "
+                    "packaged pricing pack (version %s) until the next retry.",
+                    _FEED_PATH,
+                    pack.version,
+                    exc_info=True,
+                )
+        _feed_state = (time.monotonic(), feed)
+        return _merge_feed(pack, feed) if feed is not None else pack
+
+
+def refresh_pricing() -> PricingPack:
+    """Force-fetch the pricing feed now, replacing the cached copy.
+
+    Unlike the implicit fetch inside `meter()`, an explicit refresh **raises**
+    on failure — the caller asked for fresh prices and needs to know they did
+    not arrive. Async applications call this (or the `_async` twin) at startup
+    so adapters constructed inside a running loop find a warm feed.
+
+    Returns:
+        The feed-merged pack now in effect.
+
+    Raises:
+        LucntError: The SDK is unconfigured, the fetch failed, or the feed
+            body is invalid.
+    """
+    global _feed_state
+    feed = _fetch_feed()
+    with _feed_lock:
+        _feed_state = (time.monotonic(), feed)
+    return _merge_feed(load_pricing_pack(), feed)
+
+
+async def refresh_pricing_async() -> PricingPack:
+    """Force-fetch the pricing feed without blocking the running loop.
+
+    The fetch runs in a worker thread (`asyncio.to_thread`), so it is safe to
+    await at application startup. Same semantics as `refresh_pricing()`.
+    """
+    return await asyncio.to_thread(refresh_pricing)
 
 
 def normalize_prices(

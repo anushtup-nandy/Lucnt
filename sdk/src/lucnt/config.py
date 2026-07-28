@@ -82,6 +82,10 @@ _DEFAULT_BACKOFF_MAX: float = LucntConfig.model_fields["backoff_max"].default
 _DEFAULT_RESPECT_RETRY_AFTER: bool = LucntConfig.model_fields[
     "respect_retry_after"
 ].default
+_DEFAULT_PRICING_FEED: bool = LucntConfig.model_fields["pricing_feed"].default
+_DEFAULT_PRICING_FEED_TTL: float = LucntConfig.model_fields[
+    "pricing_feed_ttl"
+].default
 
 
 def _require_secure_base_url(base_url: str) -> None:
@@ -111,6 +115,8 @@ def configure(
     backoff_base: float | None = None,
     backoff_max: float | None = None,
     respect_retry_after: bool | None = None,
+    pricing_feed: bool | None = None,
+    pricing_feed_ttl: float | None = None,
 ) -> LucntConfig:
     """Configure the SDK's credentials, endpoint, timeouts, and retry policy.
 
@@ -136,6 +142,11 @@ def configure(
             from `Retry-After`. Env: `LUCNT_BACKOFF_MAX`.
         respect_retry_after: Honour a server `Retry-After` header in place of
             computed backoff. Env: `LUCNT_RESPECT_RETRY_AFTER`.
+        pricing_feed: Fetch vendor pricing from the backend's `/pricing/feed`
+            (F-2), merging it over the packaged pack; the pack alone is used
+            when disabled or unreachable. Env: `LUCNT_PRICING_FEED`.
+        pricing_feed_ttl: Seconds a fetched feed (or a failed fetch) is cached
+            before re-fetching. Env: `LUCNT_PRICING_FEED_TTL`.
 
     Returns:
         The resolved, now-active `LucntConfig`.
@@ -184,6 +195,14 @@ def configure(
                 respect_retry_after,
                 _env_bool("LUCNT_RESPECT_RETRY_AFTER"),
                 _DEFAULT_RESPECT_RETRY_AFTER,
+            ),
+            pricing_feed=_resolve(
+                pricing_feed, _env_bool("LUCNT_PRICING_FEED"), _DEFAULT_PRICING_FEED
+            ),
+            pricing_feed_ttl=_resolve(
+                pricing_feed_ttl,
+                _env_float("LUCNT_PRICING_FEED_TTL"),
+                _DEFAULT_PRICING_FEED_TTL,
             ),
         )
     except ValidationError as exc:

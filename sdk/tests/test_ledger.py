@@ -21,6 +21,7 @@ from lucnt.context import bind_context, get_current_task, operation, task
 from lucnt.exceptions import (
     BudgetExhausted,
     ConfigurationError,
+    ContractError,
     IdempotencyConflict,
     LucntError,
     PolicyBlocked,
@@ -188,6 +189,7 @@ def test_capture_sends_the_authorization_id_and_returns_the_transaction(
                 "vendor": "singapore_airlines",
                 "amount": 1240,
                 "currency": "SGD",
+                "invoice_url": "https://example.test/invoice/1",
             },
         )
 
@@ -196,6 +198,37 @@ def test_capture_sends_the_authorization_id_and_returns_the_transaction(
     tx = ledger.capture(verdict, invoice_url="https://example.test/invoice/1")
     assert tx.id == "tx_1"
     assert tx.approved
+    assert tx.estimated is False  # F-8: absent on the wire means settled truth
+    # F-12: the evidence link round-trips instead of being silently dropped.
+    assert tx.invoice_url == "https://example.test/invoice/1"
+
+
+def test_capture_marks_an_estimate_booked_amount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-8: when meter()'s T5-1 fallback books the hold's estimate, the wire
+    says so, and the backend echoes it back on the booked transaction."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["estimated"] is True
+        return httpx.Response(
+            200,
+            json={
+                "id": "tx_est",
+                "authorization_id": "auth_1",
+                "status": "completed",
+                "vendor": "openai",
+                "amount": 2,
+                "currency": "USD",
+                "estimated": True,
+            },
+        )
+
+    _stub(monkeypatch, handler)
+    verdict = Verdict(authorization_id="auth_1", status="approved", reason=None)
+    tx = ledger.capture(verdict, estimated=True)
+    assert tx.estimated is True
 
 
 def test_capture_parses_journal_and_tax(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,6 +472,8 @@ def test_check_budget_filters_server_side(
                         "spent": 900,
                         "spent_today": 50,
                         "remaining": 100,
+                        "reserved": 30,
+                        "available": 70,
                         "pct_used": 90.0,
                         "status": "warning",
                     },
@@ -454,8 +489,46 @@ def test_check_budget_filters_server_side(
     assert isinstance(status, BudgetStatus)
     assert status.agent == "ops"
     assert status.remaining == Decimal("100")
+    # F-10: the read reports what the gate enforces — holds included.
+    assert status.reserved == Decimal("30")
+    assert status.available == Decimal("70")
     assert status.status == "warning"
     assert status.exhausted is False
+
+
+def test_check_budget_requires_the_reserved_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-10: a money read must not silently degrade. A backend too old to
+    report holds raises `ContractError` naming the mismatch, rather than
+    handing the agent a headroom figure the gate would refuse."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "agents": [
+                    {
+                        "id": "a2",
+                        "name": "Ops",
+                        "slug": "ops",
+                        "entity_id": "e1",
+                        "monthly_budget": 1000,
+                        "spent": 900,
+                        "spent_today": 50,
+                        "remaining": 100,
+                        "pct_used": 90.0,
+                        "status": "warning",
+                    },
+                ],
+                "workflows": [],
+                "total": 1,
+            },
+        )
+
+    _stub(monkeypatch, handler)
+    with pytest.raises(ContractError):
+        ledger.check_budget(agent="ops")
 
 
 def test_check_budget_raises_when_agent_not_found(
