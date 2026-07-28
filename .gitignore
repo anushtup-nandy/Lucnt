@@ -111,3 +111,9 @@ temp/
 # `CLAUDE.md`. NOTE: history still contains the old blobs, so `.gitleaks.toml`
 # must keep allowlisting this path (`gitleaks detect` scans commits, not the tree).
 graphify-out/
+.venv-realclient/
+
+# `uv run` regenerates this; the COMMITTED lockfile for this repo is
+# `backend/requirements.lock` (hashed, what the image and CI install from).
+# Tracking both would give two sources of truth that drift.
+backend/uv.lock
