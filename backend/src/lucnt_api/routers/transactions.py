@@ -24,10 +24,10 @@ from lucnt_api.config import settings
 from lucnt_api.dependencies import (
     AuthContext,
     get_auth_context,
-    get_current_company,
     get_db,
     require_admin,
     require_live,
+    require_nav,
 )
 from lucnt_api.models import (
     Agent,
@@ -56,6 +56,7 @@ from lucnt_api.schemas.transaction import (
     SpendRequest,
     TaxInfo,
     TransactionDetail,
+    TransactionFull,
     TransactionListResponse,
     Verdict,
     VoidRequest,
@@ -66,6 +67,8 @@ from lucnt_api.services.audit import record as record_audit
 from lucnt_api.services.chart_of_accounts import ensure_default_accounts
 from lucnt_api.services.fx import FxRateUnavailableError, convert
 from lucnt_api.services.journal_generator import generate_journal
+from lucnt_api.services.lookups import entity_or_404
+from lucnt_api.services.permissions import scope_agents
 from lucnt_api.services.policy_engine import SpendContext, evaluate_spend
 from lucnt_api.services.self_invoice import build_self_invoice
 from lucnt_api.services.spend_window import (
@@ -89,7 +92,14 @@ from lucnt_api.services.vendors import (
 )
 from lucnt_api.services.withholding import WithholdingOutcome, determine_withholding
 
-router = APIRouter(prefix="/transactions", tags=["transactions"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/transactions",
+    tags=["transactions"],
+    dependencies=[Depends(require_nav("transactions"))],
+)
 
 # Verdict severity for combining the withholding gate with the policy verdict
 # (TE-3), most-restrictive-wins — mirrors the policy engine's own ordering.
@@ -116,16 +126,6 @@ def _resolve_agent(
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown agent: {slug}")
     return agent
-
-
-def _resolve_entity(db: Session, company: Company, code: str) -> Entity:
-    """Look up a legal entity by code, scoped to the current company."""
-    entity = db.execute(
-        select(Entity).where(Entity.company_id == company.id, Entity.code == code)
-    ).scalar_one_or_none()
-    if entity is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown entity: {code}")
-    return entity
 
 
 def _fetch_active_policies(db: Session, company: Company, agent: Agent) -> list[Policy]:
@@ -585,7 +585,7 @@ def authorize(
     # hold in the reservation sum before it decides (T0-1). The lock is released
     # when this request's transaction commits.
     agent = _resolve_agent(db, company, request.agent, for_update=True)
-    entity = _resolve_entity(db, company, request.entity)
+    entity = entity_or_404(db, company, request.entity)
 
     # T0-9/T0-10: a paused/disabled/non-live agent or an inactive entity cannot
     # spend — short-circuit to a blocked hold before running the policy engine.
@@ -1127,7 +1127,7 @@ def reverse_transaction(
 
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="transaction.reverse",
         entity_type="transaction",
         entity_id=reversal.id,
@@ -1142,25 +1142,48 @@ def reverse_transaction(
 
 @router.get("", response_model=TransactionListResponse)
 def list_transactions(
-    company: Company = Depends(get_current_company),
+    ctx: AuthContext = Depends(require_nav("transactions")),
     db: Session = Depends(get_db),
     agent: str | None = Query(default=None, description="Filter by agent slug"),
     vendor: str | None = Query(default=None, description="Filter by vendor"),
+    entity: str | None = Query(default=None, description="Filter by entity code"),
     estimated: bool | None = Query(
         default=None,
         description="Filter to estimate-booked (true) or settled (false) rows (F-8)",
     ),
+    reversed_only: bool | None = Query(
+        default=None,
+        alias="reversed",
+        description="Filter to reversed (true) or live (false) rows",
+    ),
     page: Page = Depends(paginate()),
 ) -> TransactionListResponse:
-    """List committed transactions for the current company, filterable/paginated."""
+    """List committed transactions for the current company, filterable/paginated.
+
+    `reversed=` exists as a server-side filter rather than a client-side one for
+    the reason D5 gives: filtering a paginated response in the browser reports
+    "3 of 3" while the next page holds four more.
+    """
+    company = ctx.company
     stmt = select(Transaction).where(Transaction.company_id == company.id)
+    if ctx.perms is not None and ctx.perms.agent_scope == "owned":
+        stmt = scope_agents(
+            stmt.join(Agent, Agent.id == Transaction.agent_id),
+            ctx.perms,
+            ctx.user.id if ctx.user else None,
+        )
     if agent is not None:
         agent_row = _resolve_agent(db, company, agent)
         stmt = stmt.where(Transaction.agent_id == agent_row.id)
     if vendor is not None:
         stmt = stmt.where(Transaction.vendor == vendor)
+    if entity is not None:
+        entity_row = entity_or_404(db, company, entity)
+        stmt = stmt.where(Transaction.entity_id == entity_row.id)
     if estimated is not None:
         stmt = stmt.where(Transaction.estimated == estimated)
+    if reversed_only is not None:
+        stmt = stmt.where(Transaction.is_reversed == reversed_only)
 
     total = count_total(db, stmt)
     rows = (
@@ -1177,18 +1200,74 @@ def list_transactions(
     )
 
 
-@router.get("/{transaction_id}", response_model=TransactionDetail)
+@router.get("/{transaction_id}", response_model=TransactionFull)
 def get_transaction(
     transaction_id: uuid.UUID,
-    company: Company = Depends(get_current_company),
+    ctx: AuthContext = Depends(require_nav("transactions")),
     db: Session = Depends(get_db),
-) -> TransactionDetail:
-    """Full detail for a single transaction."""
-    transaction = db.execute(
-        select(Transaction).where(
-            Transaction.id == transaction_id, Transaction.company_id == company.id
+) -> TransactionFull:
+    """Full detail for one transaction: the row, its tax treatment, its journal.
+
+    The journal and the tax record are joins, so they are on the single-row
+    endpoint and deliberately not on the list — there they would be an N+1 per
+    page. Here they are two queries, and they are what makes the page worth
+    opening: the balanced double entry is the product's central claim.
+    """
+    stmt = select(Transaction).where(
+        Transaction.id == transaction_id, Transaction.company_id == ctx.company.id
+    )
+    if ctx.perms is not None and ctx.perms.agent_scope == "owned":
+        stmt = scope_agents(
+            stmt.join(Agent, Agent.id == Transaction.agent_id),
+            ctx.perms,
+            ctx.user.id if ctx.user else None,
         )
-    ).scalar_one_or_none()
+    transaction = db.execute(stmt).scalar_one_or_none()
     if transaction is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown transaction")
-    return TransactionDetail.model_validate(transaction)
+
+    lines = (
+        db.execute(
+            select(JournalEntry)
+            .where(JournalEntry.transaction_id == transaction.id)
+            # Debits before credits, then by account code, so the rendered entry
+            # reads the way an accountant writes one.
+            .order_by(JournalEntry.credit, JournalEntry.account_code)
+        )
+        .scalars()
+        .all()
+    )
+    tax_record = db.execute(
+        select(TaxRecord).where(TaxRecord.transaction_id == transaction.id)
+    ).scalars().first()
+
+    return TransactionFull(
+        **TransactionDetail.model_validate(transaction).model_dump(),
+        tax=(
+            TaxInfo(
+                tax_type=tax_record.tax_type,
+                jurisdiction=tax_record.jurisdiction,
+                rate=tax_record.rate,
+                tax_amount=tax_record.tax_amount,
+                is_reclaimable=tax_record.is_reclaimable,
+                reclaim_amount=tax_record.reclaim_amount,
+                currency=tax_record.currency,
+                legal_reference=tax_record.legal_reference,
+                reverse_charge=tax_record.tax_type.upper().startswith("RCM"),
+                self_invoice_generated=tax_record.self_invoice_generated,
+            )
+            if tax_record is not None
+            else None
+        ),
+        journal=[
+            JournalLine(
+                account_name=line.account_name,
+                account_code=line.account_code,
+                debit=line.debit,
+                credit=line.credit,
+                ledger=line.ledger,
+                currency=line.currency,
+            )
+            for line in lines
+        ],
+    )

@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session, selectinload
 from lucnt_api.dependencies import (
     AuthContext,
     get_auth_context,
-    get_current_company,
     get_db,
-    require_admin,
+    require_nav,
+    require_write,
 )
 from lucnt_api.models import Agent, Company, Entity, Workflow
 from lucnt_api.pagination import Page, count_total, paginate
@@ -33,6 +33,8 @@ from lucnt_api.schemas.budget import (
     WorkflowBudget,
 )
 from lucnt_api.services.audit import record as record_audit
+from lucnt_api.services.lookups import entity_or_404
+from lucnt_api.services.permissions import scope_agents
 from lucnt_api.services.spend_window import (
     company_period_committed_spend,
     company_reserved_spend,
@@ -40,7 +42,14 @@ from lucnt_api.services.spend_window import (
     reserved_spend,
 )
 
-router = APIRouter(prefix="/budgets", tags=["budgets"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/budgets",
+    tags=["budgets"],
+    dependencies=[Depends(require_nav("budgets"))],
+)
 
 _WARNING_PCT = Decimal("80")  # utilisation at/above which a budget reads "warning"
 _ONE_PLACE = Decimal("0.1")
@@ -95,12 +104,13 @@ def _agent_budget(
 
 @router.get("", response_model=BudgetsResponse)
 def get_budgets(
-    company: Company = Depends(get_current_company),
+    ctx: AuthContext = Depends(require_nav("budgets")),
     db: Session = Depends(get_db),
     page: Page = Depends(paginate()),
     agent: str | None = Query(
         default=None, max_length=SLUG_MAX_LENGTH, description="Filter to one slug"
     ),
+    entity: str | None = Query(default=None, description="Filter by entity code"),
 ) -> BudgetsResponse:
     """Per-agent budget utilisation plus per-workflow rollups for the company.
 
@@ -111,10 +121,20 @@ def get_budgets(
 
     `agent` narrows to a single slug — the SDK's `check_budget()` path, which
     would otherwise download every agent's budget to read one row.
+
+    An `agent_owner` sees only their own agents, narrowed in the SQL, and gets
+    **no workflow rollups at all**: a rollup sums across every member of a
+    workflow, so returning one to a scoped principal would report other owners'
+    spend under a different name. An empty list is the honest answer.
     """
+    company = ctx.company
+    owned_only = ctx.perms is not None and ctx.perms.agent_scope == "owned"
     stmt = select(Agent).where(Agent.company_id == company.id)
+    stmt = scope_agents(stmt, ctx.perms, ctx.user.id if ctx.user else None)
     if agent is not None:
         stmt = stmt.where(Agent.slug == agent)
+    if entity is not None:
+        stmt = stmt.where(Agent.entity_id == entity_or_404(db, company, entity).id)
     total = count_total(db, stmt)
     agents = (
         db.execute(stmt.order_by(Agent.name).offset(page.offset).limit(page.limit))
@@ -122,7 +142,9 @@ def get_budgets(
         .all()
     )
     workflows = (
-        db.execute(
+        []
+        if owned_only
+        else db.execute(
             select(Workflow)
             .where(Workflow.company_id == company.id)
             # Eager-load members: the rollup below reads `workflow.agents` for
@@ -183,7 +205,7 @@ def get_budgets(
 def update_agent_budget(
     agent_id: uuid.UUID,
     payload: BudgetUpdate,
-    company: Company = Depends(require_admin),
+    company: Company = Depends(require_write("can_write_budgets")),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> AgentBudget:
@@ -198,7 +220,7 @@ def update_agent_budget(
     agent.monthly_budget = payload.monthly_budget
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="budget.update",
         entity_type="agent",
         entity_id=agent.id,

@@ -20,7 +20,8 @@ from lucnt_api.dependencies import (
     get_auth_context,
     get_current_company,
     get_db,
-    require_admin,
+    require_nav,
+    require_write,
 )
 from lucnt_api.models import Agent, Authorization, Company, Entity, VerdictStatus
 from lucnt_api.pagination import Page, count_total, paginate
@@ -37,7 +38,14 @@ from lucnt_api.services.spend_window import (
     reserved_spend,
 )
 
-router = APIRouter(prefix="/approvals", tags=["approvals"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/approvals",
+    tags=["approvals"],
+    dependencies=[Depends(require_nav("approvals"))],
+)
 
 _PENDING = (VerdictStatus.REVIEW, VerdictStatus.HUMAN_HOLD)
 
@@ -95,7 +103,7 @@ def list_approvals(
 @router.post("/{approval_id}/approve", response_model=ApprovalActionResponse)
 def approve(
     approval_id: uuid.UUID,
-    company: Company = Depends(require_admin),
+    company: Company = Depends(require_write("can_approve")),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApprovalActionResponse:
@@ -134,7 +142,7 @@ def approve(
     authorization.verdict_code = "ok"
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="approval.approve",
         entity_type="authorization",
         entity_id=authorization.id,
@@ -150,7 +158,7 @@ def approve(
 @router.post("/{approval_id}/reject", response_model=ApprovalActionResponse)
 def reject(
     approval_id: uuid.UUID,
-    company: Company = Depends(require_admin),
+    company: Company = Depends(require_write("can_approve")),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApprovalActionResponse:
@@ -162,7 +170,7 @@ def reject(
     authorization.reason_text = "rejected by approver"
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="approval.reject",
         entity_type="authorization",
         entity_id=authorization.id,

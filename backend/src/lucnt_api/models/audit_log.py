@@ -25,9 +25,17 @@ class AuditLog(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __table_args__ = (Index("ix_audit_logs_company_id", "company_id"),)
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
-    # The API key that performed the action. No FK: a revoked/deleted key's
-    # history must survive it (an audit trail that a delete can erase is no trail).
+    # Exactly one of the two actor columns is set, matching `AuthContext`'s own
+    # invariant. Neither carries an FK: a revoked key or a deleted user's history
+    # must survive them (an audit trail that a delete can erase is no trail).
+    #
+    # `actor_user_id` is the one column P7.0 adds (migration `c5d6e7f8a9b0`). The
+    # phase was scoped "no migration", and this is the deliberate exception: with
+    # the dashboard, humans mutate budgets, policies and approvals, and a
+    # governance product that records those changes with a NULL actor is not
+    # recording them. Additive and nullable, so every existing row stays valid.
     actor_api_key_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
     action: Mapped[str] = mapped_column(String(100))
     entity_type: Mapped[str] = mapped_column(String(50))
     entity_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)

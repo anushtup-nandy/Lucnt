@@ -1,4 +1,4 @@
-"""Dev-only seed: a company, its entities, and mockup agents, plus one API key.
+"""Dev-only seed: a company, entities, mockup agents, persona logins, one API key.
 
 Unblocks `sdk/examples/example_agent.py` end-to-end, which needs `agent=ops` /
 `entity=sg` and `agent=research` / `entity=in` to exist. Agent identity/roster
@@ -33,7 +33,8 @@ from lucnt_api.models import (
     PolicyScopeType,
     Vendor,
 )
-from lucnt_api.security import generate_api_key, hash_api_key
+from lucnt_api.models.user import User, UserRole
+from lucnt_api.security import generate_api_key, hash_api_key, hash_password
 from lucnt_api.services.chart_of_accounts import ensure_default_accounts
 from lucnt_api.services.vendors import normalize_vendor_name
 
@@ -208,6 +209,64 @@ def _get_or_create_agents(
     db.flush()
 
 
+
+# --- Dashboard personas (P7.0) ---------------------------------------------
+# One user per role in `UserRole`, so the persona switch in `docs/DEMO.md` demos
+# against real server-side scoping rather than a UI toggle. `owner` names the
+# agent slugs assigned to that user's `agents.owner_user_id` — all seven were
+# NULL before this, which made `agent_scope="owned"` untestable.
+#
+# The password is DEV-ONLY and identical for all five, deliberately: it is
+# printed by the seed, typed on stage, and the whole company lives in a
+# throwaway database. `ENVIRONMENT != development` is not a supported target for
+# this script.
+_DEV_PASSWORD = "lucnt-demo-2026"
+
+# (email local part, name, role, owned agent slugs)
+_USERS: list[tuple[str, str, UserRole, tuple[str, ...]]] = [
+    ("arvind", "Arvind Sharma", UserRole.CFO, ()),
+    ("dev", "Priya Nair", UserRole.ENGINEER, ()),
+    ("owner", "Rahul Menon", UserRole.AGENT_OWNER, ("research", "legal")),
+    ("approver", "Sneha Iyer", UserRole.APPROVER, ()),
+    ("auditor", "Vikram Rao", UserRole.AUDITOR, ()),
+]
+
+
+def _get_or_create_users(db: Session, company: Company) -> list[tuple[str, str]]:
+    """Create the five persona logins and assign agent ownership.
+
+    Returns:
+        `(email, role)` pairs for the credentials block the seed prints.
+    """
+    credentials: list[tuple[str, str]] = []
+    for local, name, role, owned in _USERS:
+        email = f"{local}@acme.dev"
+        user = db.execute(
+            select(User).where(User.email == email)
+        ).scalar_one_or_none()
+        if user is None:
+            user = User(
+                company_id=company.id,
+                email=email,
+                name=name,
+                role=role,
+                password_hash=hash_password(_DEV_PASSWORD),
+            )
+            db.add(user)
+            db.flush()
+        for slug in owned:
+            agent = db.execute(
+                select(Agent).where(
+                    Agent.company_id == company.id, Agent.slug == slug
+                )
+            ).scalar_one_or_none()
+            if agent is not None:
+                agent.owner_user_id = user.id
+        credentials.append((email, role.value))
+    db.flush()
+    return credentials
+
+
 def _get_or_create_vendors(db: Session, company: Company) -> None:
     """Seed the demo vendors with their place of supply (TE-1)."""
     for name, country, registered in _VENDORS:
@@ -293,6 +352,7 @@ def main() -> None:
         company = _get_or_create_company(db)
         entities = _get_or_create_entities(db, company)
         _get_or_create_agents(db, company, entities)
+        credentials = _get_or_create_users(db, company)
         _get_or_create_vendors(db, company)
         _get_or_create_policies(db, company)
         # Default Chart of Accounts so the Books layer has accounts to post to
@@ -312,6 +372,10 @@ def main() -> None:
     print()
     print(f"LUCNT_API_KEY={plaintext}")
     print("(shown once -- only its hash is stored)")
+    print()
+    print("Dashboard logins (dev only):")
+    for email, role in credentials:
+        print(f"  {email:<20} {role:<12} password: {_DEV_PASSWORD}")
 
 
 if __name__ == "__main__":

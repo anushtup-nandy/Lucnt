@@ -221,9 +221,28 @@ class TransactionDetail(BaseModel):
     # F-12: the evidence link supplied at capture, if any.
     invoice_url: str | None
     status: str
+    # `transactions.status` has exactly one member (`completed`), so `is_reversed`
+    # is what actually distinguishes a live capture from a reversed one — and the
+    # `reversed=` filter (P7.0) would otherwise return rows the client cannot
+    # label. Mirrors why F-8 added `estimated` to this schema.
+    is_reversed: bool
     reason_text: str | None
     failure_reason: str | None
     transaction_date: datetime
+
+
+class TransactionFull(TransactionDetail):
+    """`GET /transactions/{id}` — the detail row plus what only it can afford.
+
+    The tax treatment and the journal are a join each. On the *list* they would
+    be an N+1 per page; on a single row they are two queries, and the dashboard's
+    transaction detail is meaningless without them: the balanced double entry is
+    the product's central claim, and a page that asserts it without showing it is
+    the façade `docs/production/plan2.md` F-3 says not to build.
+    """
+
+    tax: TaxInfo | None = None
+    journal: list[JournalLine] = []
 
 
 class TransactionListResponse(BaseModel):
@@ -264,3 +283,41 @@ class VoidResult(BaseModel):
     released_at: datetime
     release_reason: str | None = None
     already_released: bool = False
+
+
+class AuthorizationSummary(BaseModel):
+    """One policy verdict, as `GET /authorizations` returns it (D5).
+
+    Carries the agent's name and glyph inline: the dashboard renders a glyph per
+    row, and a lookup per row is the N+1 that `/transactions` already avoids by
+    the same means.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: uuid.UUID
+    agent_id: uuid.UUID
+    agent_name: str
+    agent_glyph: str
+    entity_id: uuid.UUID
+    vendor: str
+    amount: Decimal
+    currency: str | None
+    reason: str
+    intent: str | None
+    project: str | None
+    status: Literal["approved", "blocked", "review", "human_hold"]
+    # Open string, not an enum, for the same reason `Verdict.code` is: a new
+    # rule adds a code, and a new code must never break an older client.
+    verdict_code: str | None
+    reason_text: str | None
+    created_at: datetime
+
+
+class AuthorizationListResponse(BaseModel):
+    """Response body for `GET /authorizations`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[AuthorizationSummary]
+    total: int

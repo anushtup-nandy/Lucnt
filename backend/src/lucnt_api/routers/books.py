@@ -30,6 +30,7 @@ from lucnt_api.dependencies import (
     get_current_company,
     get_db,
     require_admin,
+    require_nav,
 )
 from lucnt_api.models import (
     Account,
@@ -74,7 +75,14 @@ from lucnt_api.services.chart_of_accounts import (
     ensure_default_accounts,
 )
 
-router = APIRouter(prefix="/books", tags=["books"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/books",
+    tags=["books"],
+    dependencies=[Depends(require_nav("books"))],
+)
 
 _ZERO = Decimal("0")
 _RETAINED_EARNINGS_NAME = "Retained Earnings"
@@ -749,7 +757,7 @@ def create_manual_journal(
     )
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="books.manual_journal",
         entity_type="journal",
         before=None,
@@ -801,7 +809,7 @@ def create_funding(
     )
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="books.funding",
         entity_type="journal",
         before=None,
@@ -902,7 +910,7 @@ def settle_taxes(
         )
         record_audit(
             db,
-            ctx.api_key,
+            ctx,
             action="books.tax_settlement",
             entity_type="journal",
             before=None,

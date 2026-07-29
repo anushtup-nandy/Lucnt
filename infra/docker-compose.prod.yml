@@ -48,6 +48,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      # P7.0: required, and validated — outside development it must be >=32 chars
+      # and must not be the committed example. `:?` so a missing one fails at
+      # `compose up`, not at the first login.
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (>=32 chars, not the committed example)}
+      # Exact dashboard origins. Never a wildcard: allow_credentials is on.
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS to the dashboard origin(s)}
       LOG_FORMAT: json
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Raise only together with Postgres `max_connections`: the ceiling is
@@ -79,6 +85,9 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      # `Settings()` is constructed at import by `alembic/env.py`, so every
+      # required setting must be present even for a migration-only container.
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (>=32 chars, not the committed example)}
     restart: "no"
 
   redis:

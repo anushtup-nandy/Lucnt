@@ -28,6 +28,7 @@ from lucnt_api.dependencies import (
     get_db,
     require_admin,
     require_cheap_enough,
+    require_nav,
 )
 from lucnt_api.models import (
     Company,
@@ -46,9 +47,17 @@ from lucnt_api.schemas.recon import (
 )
 from lucnt_api.services.audit import record as record_audit
 from lucnt_api.services.detectors import TxnView, recurring_identity, run_detectors
+from lucnt_api.services.lookups import entity_or_404
 from lucnt_api.services.recovery_agent import plan_recovery
 
-router = APIRouter(prefix="/recon", tags=["reconciliation"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/recon",
+    tags=["reconciliation"],
+    dependencies=[Depends(require_nav("recon"))],
+)
 
 # Non-terminal statuses — an exception in one of these is still "in the inbox".
 _ACTIVE_STATUSES = (ReconExceptionStatus.OPEN, ReconExceptionStatus.RECOVERING)
@@ -116,6 +125,7 @@ def list_exceptions(
     exception_type: ReconExceptionType | None = Query(
         default=None, description="Filter by exception type"
     ),
+    entity: str | None = Query(default=None, description="Filter by entity code"),
     page: Page = Depends(paginate()),
 ) -> ReconListResponse:
     """List reconciliation exceptions, grouped by currency, highest stake first.
@@ -131,6 +141,14 @@ def list_exceptions(
         stmt = stmt.where(ReconciliationException.status == status_filter)
     if exception_type is not None:
         stmt = stmt.where(ReconciliationException.exception_type == exception_type)
+    if entity is not None:
+        # An exception has no entity of its own; it inherits the entity of the
+        # transaction it was raised against. Joined rather than denormalised so
+        # the two can never disagree.
+        entity_row = entity_or_404(db, company, entity)
+        stmt = stmt.join(
+            Transaction, Transaction.id == ReconciliationException.transaction_id
+        ).where(Transaction.entity_id == entity_row.id)
 
     total = count_total(db, stmt)
     rows = (
@@ -407,7 +425,7 @@ def resolve_exception(
     exc.resolved_at = datetime.now(timezone.utc)
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action=f"recon.{payload.action}",
         entity_type="reconciliation_exception",
         entity_id=exc.id,

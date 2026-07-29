@@ -19,7 +19,8 @@ from lucnt_api.dependencies import (
     get_auth_context,
     get_current_company,
     get_db,
-    require_admin,
+    require_nav,
+    require_write,
 )
 from lucnt_api.models import Agent, Company, Policy, PolicyRuleType, PolicyScopeType
 from lucnt_api.pagination import (
@@ -38,7 +39,14 @@ from lucnt_api.schemas.policy import (
 from lucnt_api.services.audit import record as record_audit
 from lucnt_api.services.policy_engine import parse_config
 
-router = APIRouter(prefix="/policies", tags=["policies"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/policies",
+    tags=["policies"],
+    dependencies=[Depends(require_nav("policies"))],
+)
 
 
 def _to_response(policy: Policy) -> PolicyResponse:
@@ -120,7 +128,7 @@ def list_policies(
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
 def create_policy(
     payload: PolicyCreate,
-    company: Company = Depends(require_admin),
+    company: Company = Depends(require_write("can_write_policies")),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> PolicyResponse:
@@ -142,7 +150,7 @@ def create_policy(
     db.flush()
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="policy.create",
         entity_type="policy",
         entity_id=policy.id,
@@ -162,7 +170,7 @@ def create_policy(
 def update_policy(
     policy_id: uuid.UUID,
     payload: PolicyUpdate,
-    company: Company = Depends(require_admin),
+    company: Company = Depends(require_write("can_write_policies")),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> PolicyResponse:
@@ -190,7 +198,7 @@ def update_policy(
 
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="policy.update",
         entity_type="policy",
         entity_id=policy.id,

@@ -11,15 +11,28 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from lucnt_api.dependencies import get_current_company, get_db, require_admin
-from lucnt_api.models import Company, Insight, InsightType
+from lucnt_api.dependencies import (
+    get_current_company,
+    get_db,
+    require_admin,
+    require_nav,
+)
+from lucnt_api.models import Agent, Company, Insight, InsightType
 from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.intelligence import InsightResponse, InsightsListResponse
+from lucnt_api.services.lookups import entity_or_404
 
-router = APIRouter(prefix="/insights", tags=["insights"])
+# Router-level nav gate (P7.0): a human principal may only reach a domain
+# present in `perms.nav` — the same tuple the sidebar renders from, so a
+# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
+router = APIRouter(
+    prefix="/insights",
+    tags=["insights"],
+    dependencies=[Depends(require_nav("insights"))],
+)
 
 
 def _to_response(insight: Insight) -> InsightResponse:
@@ -54,6 +67,7 @@ def list_insights(
     include_dismissed: bool = Query(
         default=False, description="Include dismissed insights"
     ),
+    entity: str | None = Query(default=None, description="Filter by entity code"),
     page: Page = Depends(paginate()),
 ) -> InsightsListResponse:
     """List the company's insights, newest first, with an unapplied headline count.
@@ -68,6 +82,15 @@ def list_insights(
         stmt = stmt.where(Insight.is_applied.is_(False))
     if not include_dismissed:
         stmt = stmt.where(Insight.is_dismissed.is_(False))
+    if entity is not None:
+        # `insights.agent_id` is nullable: a company-wide insight belongs to no
+        # agent and therefore to no entity. Those are kept in every entity's view
+        # rather than vanishing when the switcher moves — they are true of the
+        # company regardless of which entity you are looking at.
+        entity_row = entity_or_404(db, company, entity)
+        stmt = stmt.outerjoin(Agent, Agent.id == Insight.agent_id).where(
+            or_(Insight.agent_id.is_(None), Agent.entity_id == entity_row.id)
+        )
 
     total = count_total(db, stmt)
     rows = (

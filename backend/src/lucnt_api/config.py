@@ -8,9 +8,14 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The value shipped in `.env.example` since the first commit, therefore identical
-# in every checkout and effectively public. Rejected outside development (T4-9).
-_EXAMPLE_SECRET_KEY = "dev_secret_change_me"
+# The values shipped in `.env.example`, therefore identical in every checkout and
+# effectively public. Rejected outside development (T4-9). Both the original
+# 20-char form and the current padded one are listed: the padding exists only so
+# a dev run does not trip PyJWT's InsecureKeyLengthWarning on every token, and a
+# deployment that still carries the old value must keep failing.
+_EXAMPLE_SECRET_KEYS = frozenset(
+    {"dev_secret_change_me", "dev_secret_change_me_before_deploying_lucnt"}
+)
 _MIN_SECRET_KEY_LENGTH = 32
 
 
@@ -31,12 +36,26 @@ class Settings(BaseSettings):
     # round-trip runs `alembic downgrade base`, which does not. Set this and both
     # the suite and its Alembic setup target a throwaway database instead.
     test_database_url: str | None = None
-    # T4-9: declared `str` (required) but read by nothing — there is no session or
-    # JWT auth yet; API keys are hashed in `dependencies.py`. Now optional so a
-    # deployment isn't forced to invent a secret for a feature that doesn't exist,
-    # and validated below so that when one *is* supplied outside development it
-    # cannot be the committed example.
-    secret_key: str | None = None
+    # P7.0: REQUIRED again, and now actually load-bearing — it is the HS256 key
+    # that signs dashboard access and refresh tokens (`security.py`). T4-9 made it
+    # optional precisely because nothing read it ("Reinstate them only alongside
+    # the auth feature that needs them"); that feature is here, so rather than
+    # inventing a second `JWT_SECRET` alongside an unused `SECRET_KEY`, the
+    # existing setting is promoted. Fail-loud with no default, matching the T4-12
+    # `ENVIRONMENT` precedent: a signing key with a dev default is how dev secrets
+    # reach production. The validator below still rejects the committed example
+    # value and anything under 32 chars outside development.
+    secret_key: str
+    # Dashboard session lifetimes (P7.0). Short access token, held in memory by
+    # the SPA; longer refresh token in an httpOnly SameSite=Strict cookie.
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
+    # Browsers only. The SDK is not a browser and never sends an Origin, so this
+    # is not an authorization boundary — it is what lets the dashboard's fetch see
+    # the response at all. Comma-separated; `cors_origin_list` splits it.
+    # NEVER a wildcard: `allow_credentials=True` is required for the refresh
+    # cookie, and the two combined are rejected by the CORS spec anyway.
+    cors_origins: str = "http://localhost:5173"
     # T4-12/docs/scale/SCALABILITY.md §501: this used to default to "development", so an
     # unset ENVIRONMENT in production served `/docs`, `/redoc` and `/openapi.json`
     # — the entire financial API surface — to the internet. Required and closed:
@@ -139,8 +158,8 @@ class Settings(BaseSettings):
                     "TEST_DATABASE_URL must not be set outside development — the "
                     "suite truncates and downgrades whatever it points at."
                 )
-            if self.secret_key is not None and (
-                self.secret_key == _EXAMPLE_SECRET_KEY
+            if (
+                self.secret_key in _EXAMPLE_SECRET_KEYS
                 or len(self.secret_key) < _MIN_SECRET_KEY_LENGTH
             ):
                 raise ValueError(
@@ -156,6 +175,11 @@ class Settings(BaseSettings):
                 "the point of having a separate test database."
             )
         return self
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """`CORS_ORIGINS` split into exact origins, blanks discarded."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def resolved_log_format(self) -> Literal["json", "console"]:

@@ -82,6 +82,10 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lucnt}
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+      # P7.0: required — it signs dashboard JWTs (`backend/src/lucnt_api/config.py`).
+      # The committed example is accepted only because ENVIRONMENT is development.
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_change_me_before_deploying_lucnt}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       LOG_FORMAT: ${LOG_FORMAT:-console}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     depends_on:

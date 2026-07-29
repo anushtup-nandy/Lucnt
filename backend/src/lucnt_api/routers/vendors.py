@@ -126,7 +126,7 @@ def create_vendor(
     db.flush()
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="vendor.create",
         entity_type="vendor",
         entity_id=vendor.id,
@@ -171,7 +171,7 @@ def update_vendor(
         reflag_divergent_history(db, company.id, vendor)
     record_audit(
         db,
-        ctx.api_key,
+        ctx,
         action="vendor.update",
         entity_type="vendor",
         entity_id=vendor.id,

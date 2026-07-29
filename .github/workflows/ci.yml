@@ -71,6 +71,11 @@ jobs:
       TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/lucnt_test
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: development
+      # P7.0 made SECRET_KEY required — it signs dashboard JWTs, so an unset one
+      # is a startup failure by design (`config.py`). CI is `development`, where
+      # the committed example value is accepted.
+      SECRET_KEY: dev_secret_change_me_before_deploying_lucnt
+      CORS_ORIGINS: http://localhost:5173
     defaults:
       run:
         working-directory: backend
@@ -160,9 +165,23 @@ jobs:
       - name: Lint (ruff)
         # `tests/` and the gunicorn config are linted too: the original job only
         # covered `src/`, so a lint error in either was invisible to CI.
-        run: ruff check src/ tests/ gunicorn.conf.py alembic/env.py
+        run: ruff check src/ tests/ scripts/ gunicorn.conf.py alembic/env.py
       - name: Types (mypy)
-        run: mypy src/ gunicorn.conf.py
+        run: mypy src/ scripts/ gunicorn.conf.py
+
+      - name: API contract is current (X-6a)
+        # Gates `docs/api-contract.json` (a normalized projection of every path,
+        # field, type, required flag and enum) and `docs/verdict-codes.json`.
+        #
+        # A *projection*, not a byte-diff of `openapi.json`, deliberately: the raw
+        # document moves with fastapi/pydantic bumps ($ref naming, anyOf ordering,
+        # generated titles) with zero repo change — the `370fc21` failure mode.
+        #
+        # `verdict-codes.json` is separate because `Verdict.code` is an open string
+        # on the wire, so `VerdictCode` never reaches OpenAPI, while the SDK
+        # branches on the literal "budget_exhausted". No schema gate can see that
+        # move; this one can. See docs/scale/repo_split.md §4.
+        run: python scripts/export_contract.py --check
 
       - name: Migrations round-trip (upgrade → downgrade → upgrade)
         # Against the throwaway database, deliberately: `downgrade base` drops

@@ -9,6 +9,7 @@ from typing import Any
 
 import anyio.to_thread
 from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -20,8 +21,11 @@ from lucnt_api.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from lucnt_api.routers import (
     agents,
     approvals,
+    auth,
+    authorizations,
     books,
     budgets,
+    developers,
     insights,
     intelligence,
     memory,
@@ -30,6 +34,7 @@ from lucnt_api.routers import (
     recon,
     transactions,
     vendors,
+    workspace,
 )
 from lucnt_api.startup import check_readiness, verify_ready_or_raise
 
@@ -116,9 +121,26 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     app.add_middleware(RequestContextMiddleware)
+    # P7.0. The dashboard is a separate origin in development (Vite on :5173) and
+    # may be one in production. `allow_credentials=True` is required for the
+    # refresh cookie — which is exactly why the origin list must stay exact:
+    # the CORS spec forbids a wildcard alongside credentials, and a browser that
+    # accepted one would let any site drive an authenticated session.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
+        expose_headers=[REQUEST_ID_HEADER],
+    )
 
+    app.include_router(auth.router)
     app.include_router(transactions.router)
+    app.include_router(authorizations.router)
     app.include_router(approvals.router)
+    app.include_router(workspace.router)
+    app.include_router(developers.router)
     app.include_router(agents.router)
     app.include_router(vendors.router)
     app.include_router(books.router)
