@@ -82,6 +82,9 @@ addopts = "-q"
 target-version = "py312"
 line-length = 88
 src = ["src"]
+# Same guard as sdk/pyproject.toml: ruff ≥0.16 formats code blocks in markdown;
+# docs are prose, not gated code.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [

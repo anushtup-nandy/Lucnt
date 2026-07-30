@@ -251,6 +251,12 @@ jobs:
       # The SDK is a customer-facing library: `requires-python = ">=3.10"` is a
       # promise, so 3.10 stays in the matrix (the floor customers may run) while
       # 3.12 matches the backend's runtime (F-23).
+      #
+      # fail-fast off: a failure on one Python must not cancel the other leg —
+      # "does this break on 3.10, 3.12, or both?" is exactly the signal a
+      # version matrix exists to give (learned 30 Jul: a format failure on the
+      # 3.10 leg cancelled 3.12 and hid whether the failure was version-bound).
+      fail-fast: false
       matrix:
         python: ["3.10", "3.12"]
     defaults:
