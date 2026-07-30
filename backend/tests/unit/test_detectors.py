@@ -8,7 +8,7 @@ by the integration tests (Phase 4c).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from lucnt_api.models.reconciliation_exception import ReconExceptionType
@@ -20,7 +20,7 @@ from lucnt_api.services.detectors import (
     run_detectors,
 )
 
-_BASE = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+_BASE = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 _AGENT_A = uuid.UUID(int=0xA)
 _AGENT_B = uuid.UUID(int=0xB)
 

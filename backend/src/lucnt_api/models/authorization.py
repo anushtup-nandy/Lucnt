@@ -27,7 +27,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class VerdictStatus(str, enum.Enum):
+class VerdictStatus(enum.StrEnum):
     """Policy verdict on a spend, before money moves. Mirrors `sdk.Verdict.status`."""
 
     APPROVED = "approved"

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -121,7 +121,7 @@ def _spend(
             paid_currency=entity.currency,
             local_amount=amount,
             local_currency=entity.currency,
-            transaction_date=datetime.now(timezone.utc),
+            transaction_date=datetime.now(UTC),
         )
     )
     db.flush()
@@ -248,7 +248,7 @@ def test_budget_spend_resets_at_month_boundary(
             paid_currency=entity.currency,
             local_amount=Decimal("900"),
             local_currency=entity.currency,
-            transaction_date=datetime.now(timezone.utc) - timedelta(days=45),
+            transaction_date=datetime.now(UTC) - timedelta(days=45),
         )
     )
     db_session.flush()
@@ -333,9 +333,7 @@ def test_list_policies_scoped_to_company(
     assert body["total"] == 2
 
 
-def test_patch_policy_toggles_active(
-    client: TestClient, db_session: Session
-) -> None:
+def test_patch_policy_toggles_active(client: TestClient, db_session: Session) -> None:
     _company_row, key = _company(db_session)
     created = client.post(
         "/policies",
@@ -427,9 +425,9 @@ def test_budget_reports_reserved_holds_and_available(
     _agent(db_session, company, entity, monthly_budget=Decimal("100"))
     _authorize(client, key, "30")  # held, never captured
 
-    row = client.get(
-        "/budgets", params={"agent": "ops"}, headers=_headers(key)
-    ).json()["agents"][0]
+    row = client.get("/budgets", params={"agent": "ops"}, headers=_headers(key)).json()[
+        "agents"
+    ][0]
     assert Decimal(row["spent"]) == Decimal("0")
     assert Decimal(row["remaining"]) == Decimal("100")
     assert Decimal(row["reserved"]) == Decimal("30")
@@ -450,9 +448,9 @@ def test_captured_hold_moves_from_reserved_to_spent(
     )
     assert captured.status_code == 200
 
-    row = client.get(
-        "/budgets", params={"agent": "ops"}, headers=_headers(key)
-    ).json()["agents"][0]
+    row = client.get("/budgets", params={"agent": "ops"}, headers=_headers(key)).json()[
+        "agents"
+    ][0]
     assert Decimal(row["spent"]) == Decimal("30")
     assert Decimal(row["reserved"]) == Decimal("0")
     assert Decimal(row["remaining"]) == Decimal("70")
@@ -473,8 +471,8 @@ def test_voided_hold_stops_reserving_budget(
     )
     assert released.status_code == 200
 
-    row = client.get(
-        "/budgets", params={"agent": "ops"}, headers=_headers(key)
-    ).json()["agents"][0]
+    row = client.get("/budgets", params={"agent": "ops"}, headers=_headers(key)).json()[
+        "agents"
+    ][0]
     assert Decimal(row["reserved"]) == Decimal("0")
     assert Decimal(row["available"]) == Decimal("100")

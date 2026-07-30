@@ -166,6 +166,7 @@ def test_bound_workers_share_one_guardrail_across_threads() -> None:
     """A fan-out of *different* spends under one op id must be detected, not
     silently collapsed into the first one's hold."""
     with operation("order-9"):
+
         def claim(amount: int) -> None:
             scope = get_current_operation()
             assert scope is not None
@@ -175,9 +176,7 @@ def test_bound_workers_share_one_guardrail_across_threads() -> None:
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = [pool.submit(bound, amount) for amount in range(4)]
-        refused = [
-            r for r in results if isinstance(r.exception(), IdempotencyConflict)
-        ]
+        refused = [r for r in results if isinstance(r.exception(), IdempotencyConflict)]
     assert len(refused) == 3  # first claim wins, the other three are refused
 
 
@@ -186,4 +185,3 @@ def test_bind_context_restores_the_workers_prior_operation_state() -> None:
         bound = bind_context(lambda: None)
     bound()
     assert get_current_operation() is None
-

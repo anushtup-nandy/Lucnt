@@ -111,8 +111,12 @@ def _authorize(
     return client.post(  # type: ignore[no-any-return]
         "/transactions/authorize",
         json={
-            "agent": "research", "entity": "in", "vendor": vendor,
-            "amount": amount, "currency": "INR", "reason": "remittance",
+            "agent": "research",
+            "entity": "in",
+            "vendor": vendor,
+            "amount": amount,
+            "currency": "INR",
+            "reason": "remittance",
         },
         headers=_headers(key),
     ).json()

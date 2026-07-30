@@ -106,9 +106,7 @@ def _resolve_model(
     return resolved
 
 
-def resolve_feed(
-    today: date, document: dict[str, Any] | None = None
-) -> dict[str, Any]:
+def resolve_feed(today: date, document: dict[str, Any] | None = None) -> dict[str, Any]:
     """Produce the flat, client-facing feed effective on `today`.
 
     Args:

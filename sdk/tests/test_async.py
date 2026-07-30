@@ -663,15 +663,23 @@ def test_concurrent_async_spends_each_get_their_own_key(
         (
             "spend",
             lambda: ledger.spend(
-                vendor="v", amount="1", currency="USD", reason="r",
-                agent="a", entity="e",
+                vendor="v",
+                amount="1",
+                currency="USD",
+                reason="r",
+                agent="a",
+                entity="e",
             ),
         ),
         (
             "authorize",
             lambda: ledger.authorize(
-                vendor="v", amount="1", currency="USD", reason="r",
-                agent="a", entity="e",
+                vendor="v",
+                amount="1",
+                currency="USD",
+                reason="r",
+                agent="a",
+                entity="e",
             ),
         ),
         (
@@ -843,9 +851,7 @@ def _record_requests(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
             return _approved("auth_x")
         return _transaction("tx_x", "auth_x")
 
-    transport = Transport(
-        config.get_config(), transport=httpx.MockTransport(handler)
-    )
+    transport = Transport(config.get_config(), transport=httpx.MockTransport(handler))
     monkeypatch.setattr(ledger, "_get_transport", lambda: transport)
     return seen
 
@@ -899,8 +905,15 @@ def test_spend_and_spend_async_issue_byte_identical_requests(
 
 @pytest.mark.parametrize(
     "operation_name",
-    ["authorize", "capture", "void", "spend", "check_budget", "query",
-     "mark_failed_delivery"],
+    [
+        "authorize",
+        "capture",
+        "void",
+        "spend",
+        "check_budget",
+        "query",
+        "mark_failed_delivery",
+    ],
 )
 def test_every_sync_function_has_an_async_twin(operation_name: str) -> None:
     """A new ledger function must not ship sync-only.

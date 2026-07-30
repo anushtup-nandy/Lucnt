@@ -123,9 +123,7 @@ def _vendor_net() -> httpx.Client:
     client always carries, so meter() can install the governor (F-1)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError(
-            f"unexpected wire request: {request.method} {request.url}"
-        )
+        raise AssertionError(f"unexpected wire request: {request.method} {request.url}")
 
     return httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -134,9 +132,7 @@ def _vendor_net_async() -> httpx.AsyncClient:
     """Async twin of `_vendor_net` for the `Async...` fakes."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError(
-            f"unexpected wire request: {request.method} {request.url}"
-        )
+        raise AssertionError(f"unexpected wire request: {request.method} {request.url}")
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
@@ -738,9 +734,7 @@ def test_the_sync_adapter_still_meters_a_sync_client(
             },
         )
 
-    transport = Transport(
-        config.get_config(), transport=httpx.MockTransport(handler)
-    )
+    transport = Transport(config.get_config(), transport=httpx.MockTransport(handler))
     monkeypatch.setattr(ledger, "_get_transport", lambda: transport)
 
     class _Messages:

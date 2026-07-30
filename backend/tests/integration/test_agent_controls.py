@@ -115,18 +115,14 @@ def test_non_active_agent_is_blocked(
     assert verdict["code"] == "agent_inactive"
 
 
-def test_non_live_agent_is_blocked(
-    client: TestClient, db_session: Session
-) -> None:
+def test_non_live_agent_is_blocked(client: TestClient, db_session: Session) -> None:
     key = _seed(db_session, is_live=False)
     verdict = _authorize(client, key)
     assert verdict["status"] == "blocked"
     assert verdict["code"] == "agent_inactive"
 
 
-def test_inactive_entity_is_blocked(
-    client: TestClient, db_session: Session
-) -> None:
+def test_inactive_entity_is_blocked(client: TestClient, db_session: Session) -> None:
     key = _seed(db_session, entity_active=False)
     verdict = _authorize(client, key)
     assert verdict["status"] == "blocked"

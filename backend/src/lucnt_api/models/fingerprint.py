@@ -17,7 +17,7 @@ resets to zero on any competitor (`docs/Ledgr-Master-Document.md` M8).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -50,11 +50,9 @@ class Fingerprint(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # Max z-score among the agent's recent spends vs its own baseline — a rolling
     # "how out of pattern is it lately" health signal. NUMERIC, never FLOAT
     # (sdk/PLAN.md: Decimal not float).
-    anomaly_score: Mapped[Decimal] = mapped_column(
-        Numeric(10, 4), default=Decimal("0")
-    )
+    anomaly_score: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"))
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

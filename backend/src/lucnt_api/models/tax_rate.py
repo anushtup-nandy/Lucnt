@@ -43,9 +43,7 @@ class TaxRate(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         ),
         # A rate is a non-negative fraction. Unlike an FX rate it may be exactly 0
         # (a zero-rated/exempt slab, or the US no-self-assessed-tax MVP row).
-        CheckConstraint(
-            "rate >= 0 AND rate <= 1", name="ck_tax_rates_rate_fraction"
-        ),
+        CheckConstraint("rate >= 0 AND rate <= 1", name="ck_tax_rates_rate_fraction"),
     )
 
     # The tax regime the rate belongs to (e.g. "IN-GST", "SG-GST", "US-Sales-Tax").

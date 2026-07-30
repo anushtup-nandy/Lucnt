@@ -26,7 +26,7 @@ import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import jwt
@@ -116,7 +116,7 @@ class TokenClaims:
 
 
 def _mint(user_id: uuid.UUID, company_id: uuid.UUID, token_type: TokenType) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lifetime = (
         timedelta(minutes=settings.access_token_ttl_minutes)
         if token_type == "access"

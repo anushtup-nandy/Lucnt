@@ -19,7 +19,7 @@ endpoint is the cheapest password-guessing oracle in the product.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -119,7 +119,7 @@ def login(
         limiter.record_auth_failure(request_ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
-    user.last_login = datetime.now(timezone.utc)
+    user.last_login = datetime.now(UTC)
     db.commit()
     return _issue(response, user)
 

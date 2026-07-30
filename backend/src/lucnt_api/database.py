@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Generator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -51,7 +51,7 @@ class CreatedAtMixin:
     """`created_at` audit column, present on every table (backend/PLAN.md §3)."""
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
 

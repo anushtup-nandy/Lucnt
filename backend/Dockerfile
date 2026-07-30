@@ -8,24 +8,23 @@
 # the image runs as a non-root user, it carries no build toolchain into
 # production, and it declares its own health.
 #
-# PYTHON VERSION: pinned to 3.10 to match `requires-python`, the CI matrix and
-# the development environment exactly — an image on a Python the suite never runs
-# is an untested deployment. Moving to 3.12 is a deliberate follow-up that must
-# bump pyproject, CI and this line in one commit.
+# PYTHON VERSION: pinned to 3.12 to match `requires-python`, the CI backend job
+# and the regenerated lockfile — bumped from 3.10 in one commit (F-23), exactly
+# as the previous version of this comment demanded. The SDK keeps a 3.10 floor
+# (it is a customer-facing library); only this application moved.
 #
-# DIGEST PINNING: the tags below are pinned to a patch release, which is the
-# reproducibility floor. To pin all the way to a digest — recommended before a
-# pilot — resolve it in the registry and architecture you actually deploy to:
+# DIGEST PINNING (F-25): the digest below is the manifest-list digest, valid
+# across architectures. Re-pin deliberately on upgrades with:
 #
-#     docker buildx imagetools inspect python:3.10.15-slim-bookworm
+#     docker buildx imagetools inspect python:<tag>
 #
-# and append `@sha256:…`. Digests are deliberately not hardcoded here: a digest
-# copied from another architecture or a stale registry fails the build outright.
+# and update the `@sha256:…` suffix — the tag stays for humans, the digest is
+# what the build actually gets.
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder: compile wheels into a self-contained virtualenv.
 # ---------------------------------------------------------------------------
-FROM python:3.10.15-slim-bookworm AS builder
+FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -76,7 +75,7 @@ RUN pip install --no-cache-dir --no-deps .
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime: the venv, the app, and nothing that can compile code.
 # ---------------------------------------------------------------------------
-FROM python:3.10.15-slim-bookworm AS runtime
+FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

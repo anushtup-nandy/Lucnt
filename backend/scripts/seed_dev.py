@@ -43,15 +43,30 @@ _COMPANY_SLUG = "acme-dev"
 # (code, name, full_name, currency, accounting_std, tax_regime, timezone)
 _ENTITIES = [
     (
-        "sg", "LUCNT SG", "LUCNT Singapore Pte Ltd", "SGD", "SFRS", "SG-GST",
+        "sg",
+        "LUCNT SG",
+        "LUCNT Singapore Pte Ltd",
+        "SGD",
+        "SFRS",
+        "SG-GST",
         "Asia/Singapore",
     ),
     (
-        "in", "LUCNT IN", "LUCNT India Pvt Ltd", "INR", "Ind AS", "IN-GST",
+        "in",
+        "LUCNT IN",
+        "LUCNT India Pvt Ltd",
+        "INR",
+        "Ind AS",
+        "IN-GST",
         "Asia/Kolkata",
     ),
     (
-        "us", "LUCNT US", "LUCNT US Inc", "USD", "US-GAAP", "US-Sales-Tax",
+        "us",
+        "LUCNT US",
+        "LUCNT US Inc",
+        "USD",
+        "US-GAAP",
+        "US-Sales-Tax",
         "America/Los_Angeles",
     ),
 ]
@@ -76,47 +91,95 @@ class _AgentSeed:
 
 _AGENTS = [
     _AgentSeed(
-        slug="research", entity="in", glyph="◑", name="Research Agent",
-        role="Vendor and market research", wallet_ref="Razorpay corporate",
+        slug="research",
+        entity="in",
+        glyph="◑",
+        name="Research Agent",
+        role="Vendor and market research",
+        wallet_ref="Razorpay corporate",
         models_list=["GPT-5", "Claude", "Perplexity"],
         vendors_list=["OpenAI", "Anthropic", "Perplexity"],
-        monthly_budget=Decimal("600000"), confidence_pct=94, is_live=True,
+        monthly_budget=Decimal("600000"),
+        confidence_pct=94,
+        is_live=True,
     ),
     _AgentSeed(
-        slug="legal", entity="in", glyph="§", name="Legal Agent",
-        role="Contract review and compliance", wallet_ref="Razorpay corporate",
-        models_list=["Claude"], vendors_list=["Anthropic", "Westlaw"],
-        monthly_budget=Decimal("60000"), confidence_pct=97, is_live=True,
+        slug="legal",
+        entity="in",
+        glyph="§",
+        name="Legal Agent",
+        role="Contract review and compliance",
+        wallet_ref="Razorpay corporate",
+        models_list=["Claude"],
+        vendors_list=["Anthropic", "Westlaw"],
+        monthly_budget=Decimal("60000"),
+        confidence_pct=97,
+        is_live=True,
     ),
     _AgentSeed(
-        slug="marketing", entity="in", glyph="◆", name="Marketing Agent",
-        role="Content and brand", wallet_ref="Razorpay corporate",
-        models_list=["Claude", "Midjourney"], vendors_list=["Canva", "Meta", "Google"],
-        monthly_budget=Decimal("200000"), confidence_pct=99, is_live=True,
+        slug="marketing",
+        entity="in",
+        glyph="◆",
+        name="Marketing Agent",
+        role="Content and brand",
+        wallet_ref="Razorpay corporate",
+        models_list=["Claude", "Midjourney"],
+        vendors_list=["Canva", "Meta", "Google"],
+        monthly_budget=Decimal("200000"),
+        confidence_pct=99,
+        is_live=True,
     ),
     _AgentSeed(
-        slug="coding", entity="us", glyph="⌘", name="Coding Agent",
-        role="Engineering automation", wallet_ref="Stripe Issuing",
-        models_list=["Claude", "GPT-5"], vendors_list=["Cursor", "Anthropic", "AWS"],
-        monthly_budget=Decimal("5500"), confidence_pct=91, is_live=True,
+        slug="coding",
+        entity="us",
+        glyph="⌘",
+        name="Coding Agent",
+        role="Engineering automation",
+        wallet_ref="Stripe Issuing",
+        models_list=["Claude", "GPT-5"],
+        vendors_list=["Cursor", "Anthropic", "AWS"],
+        monthly_budget=Decimal("5500"),
+        confidence_pct=91,
+        is_live=True,
     ),
     _AgentSeed(
-        slug="sales", entity="us", glyph="▲", name="Sales Agent",
-        role="Outbound and prospecting", wallet_ref="Stripe Issuing",
-        models_list=["Claude"], vendors_list=["Clay", "Apollo"],
-        monthly_budget=Decimal("3000"), confidence_pct=96, is_live=True,
+        slug="sales",
+        entity="us",
+        glyph="▲",
+        name="Sales Agent",
+        role="Outbound and prospecting",
+        wallet_ref="Stripe Issuing",
+        models_list=["Claude"],
+        vendors_list=["Clay", "Apollo"],
+        monthly_budget=Decimal("3000"),
+        confidence_pct=96,
+        is_live=True,
     ),
     _AgentSeed(
-        slug="support", entity="sg", glyph="◈", name="Support Agent",
-        role="Customer support", wallet_ref="Airwallex",
-        models_list=["Claude", "ElevenLabs"], vendors_list=["ElevenLabs", "Intercom"],
-        monthly_budget=Decimal("2000"), confidence_pct=98, is_live=True,
+        slug="support",
+        entity="sg",
+        glyph="◈",
+        name="Support Agent",
+        role="Customer support",
+        wallet_ref="Airwallex",
+        models_list=["Claude", "ElevenLabs"],
+        vendors_list=["ElevenLabs", "Intercom"],
+        monthly_budget=Decimal("2000"),
+        confidence_pct=98,
+        is_live=True,
     ),
     _AgentSeed(
-        slug="ops", entity="sg", glyph="✦", name="Ops Agent",
-        role="Operations and travel", wallet_ref="Airwallex",
-        models_list=["Claude"], vendors_list=["Singapore Airlines", "Booking"],
-        monthly_budget=Decimal("9000"), confidence_pct=86, is_live=True,
+        slug="ops",
+        entity="sg",
+        glyph="✦",
+        name="Ops Agent",
+        role="Operations and travel",
+        wallet_ref="Airwallex",
+        models_list=["Claude"],
+        vendors_list=["Singapore Airlines", "Booking"],
+        monthly_budget=Decimal("9000"),
+        confidence_pct=86,
+        is_live=True,
     ),
 ]
 
@@ -132,10 +195,10 @@ _AGENTS = [
 # it never needs a row.
 _VENDORS: list[tuple[str, str, list[str]]] = [
     ("singapore_airlines", "SG", ["SG"]),  # domestic SG -> forward-charge GST
-    ("openai", "US", []),                  # foreign, unregistered -> RCM (IGST)
-    ("anthropic", "US", []),               # foreign -> RCM (the metered call)
-    ("dataprovider", "US", []),            # foreign -> RCM
-    ("flakyapi", "US", []),                # foreign -> RCM
+    ("openai", "US", []),  # foreign, unregistered -> RCM (IGST)
+    ("anthropic", "US", []),  # foreign -> RCM (the metered call)
+    ("dataprovider", "US", []),  # foreign -> RCM
+    ("flakyapi", "US", []),  # foreign -> RCM
 ]
 
 
@@ -209,7 +272,6 @@ def _get_or_create_agents(
     db.flush()
 
 
-
 # --- Dashboard personas (P7.0) ---------------------------------------------
 # One user per role in `UserRole`, so the persona switch in `docs/DEMO.md` demos
 # against real server-side scoping rather than a UI toggle. `owner` names the
@@ -241,9 +303,7 @@ def _get_or_create_users(db: Session, company: Company) -> list[tuple[str, str]]
     credentials: list[tuple[str, str]] = []
     for local, name, role, owned in _USERS:
         email = f"{local}@acme.dev"
-        user = db.execute(
-            select(User).where(User.email == email)
-        ).scalar_one_or_none()
+        user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
         if user is None:
             user = User(
                 company_id=company.id,
@@ -256,9 +316,7 @@ def _get_or_create_users(db: Session, company: Company) -> list[tuple[str, str]]
             db.flush()
         for slug in owned:
             agent = db.execute(
-                select(Agent).where(
-                    Agent.company_id == company.id, Agent.slug == slug
-                )
+                select(Agent).where(Agent.company_id == company.id, Agent.slug == slug)
             ).scalar_one_or_none()
             if agent is not None:
                 agent.owner_user_id = user.id

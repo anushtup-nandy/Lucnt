@@ -70,7 +70,10 @@ def test_mark_failed_delivery_with_transaction_object(
 
     _stub(monkeypatch, handler)
     tx = Transaction(
-        id="tx_1", authorization_id="auth_1", status="completed", vendor="dataco",
+        id="tx_1",
+        authorization_id="auth_1",
+        status="completed",
+        vendor="dataco",
         amount=Decimal("50.00"),
     )
     exc = ledger.mark_failed_delivery(transaction=tx, reason="corrupt dataset")

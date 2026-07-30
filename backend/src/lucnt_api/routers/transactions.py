@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -512,7 +512,7 @@ def _persist_authorization(
     retrospectively meaningful only for some rows.
     """
     authorization = Authorization(
-        expires_at=datetime.now(timezone.utc)
+        expires_at=datetime.now(UTC)
         + timedelta(hours=settings.authorization_ttl_hours),
         company_id=company.id,
         agent_id=agent.id,
@@ -787,7 +787,7 @@ def capture(
         request.tokens if request.tokens is not None else authorization.tokens_consumed
     )
 
-    capture_date = datetime.now(timezone.utc)
+    capture_date = datetime.now(UTC)
     # Convert the paid amount into the entity's functional currency and snapshot
     # the rate on the ledger row (T1-1/T1-4). Fail closed if no rate exists,
     # rather than silently booking at 1.0 (which corrupts tax + the budget).
@@ -964,7 +964,7 @@ def void(
             f"transaction instead (transaction_id={captured}).",
         )
 
-    authorization.released_at = datetime.now(timezone.utc)
+    authorization.released_at = datetime.now(UTC)
     authorization.release_reason = request.reason
     db.commit()
     db.refresh(authorization)
@@ -1025,11 +1025,9 @@ def reverse_transaction(
     # BEFORE inserting the reversal, whose FK would otherwise grab a KEY SHARE
     # that the spend-counter UPDATE below then upgrades — the lock-upgrade
     # cycle that deadlocked against a concurrent authorize() FOR UPDATE.
-    db.execute(
-        select(Agent.id).where(Agent.id == original.agent_id).with_for_update()
-    )
+    db.execute(select(Agent.id).where(Agent.id == original.agent_id).with_for_update())
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     reversal = Transaction(
         company_id=company.id,
         agent_id=original.agent_id,
@@ -1237,9 +1235,11 @@ def get_transaction(
         .scalars()
         .all()
     )
-    tax_record = db.execute(
-        select(TaxRecord).where(TaxRecord.transaction_id == transaction.id)
-    ).scalars().first()
+    tax_record = (
+        db.execute(select(TaxRecord).where(TaxRecord.transaction_id == transaction.id))
+        .scalars()
+        .first()
+    )
 
     return TransactionFull(
         **TransactionDetail.model_validate(transaction).model_dump(),

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class UserRole(str, enum.Enum):
+class UserRole(enum.StrEnum):
     """Presets-now RBAC role, resolved through a single `resolve_perms(user)` seam.
 
     See `CLAUDE.local.md` "Design decision on RBAC": presets now, full

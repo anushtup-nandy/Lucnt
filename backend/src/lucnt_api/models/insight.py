@@ -26,7 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class InsightType(str, enum.Enum):
+class InsightType(enum.StrEnum):
     """The kind of recommendation an insight carries.
 
     All three are honestly computable from ledger data alone:

@@ -8,7 +8,7 @@ tolerance is needed anywhere.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from lucnt_api.services.intelligence import (
@@ -20,7 +20,7 @@ from lucnt_api.services.intelligence import (
     score_anomaly,
 )
 
-_NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
 _AGENT = uuid.uuid4()
 
 
@@ -229,7 +229,7 @@ def test_project_spend_over_budget() -> None:
     # day 10 of a 30-day month, $300 so far -> run-rate $30/day -> $900 projected.
     proj = project_spend(
         month_to_date=Decimal("300"),
-        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 10, tzinfo=UTC),
         monthly_budget=Decimal("600"),
     )
     assert proj.day_of_month == 10
@@ -242,7 +242,7 @@ def test_project_spend_over_budget() -> None:
 def test_project_spend_on_track() -> None:
     proj = project_spend(
         month_to_date=Decimal("300"),
-        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 10, tzinfo=UTC),
         monthly_budget=Decimal("1000"),
     )
     assert proj.on_track is True
@@ -257,7 +257,7 @@ def test_project_spend_dampens_early_month() -> None:
     """
     proj = project_spend(
         month_to_date=Decimal("300"),
-        now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 1, tzinfo=UTC),
         monthly_budget=Decimal("310"),
     )
     assert proj.day_of_month == 1
@@ -267,7 +267,7 @@ def test_project_spend_dampens_early_month() -> None:
 def test_project_spend_no_budget_never_over() -> None:
     proj = project_spend(
         month_to_date=Decimal("300"),
-        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 10, tzinfo=UTC),
         monthly_budget=Decimal("0"),
     )
     assert proj.on_track is True

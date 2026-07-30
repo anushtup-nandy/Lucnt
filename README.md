@@ -60,18 +60,18 @@ Full design docs: [`PLAN.md`](PLAN.md) (master plan), [`sdk/PLAN.md`](sdk/PLAN.m
 
 | Layer | Stack |
 |---|---|
-| **SDK** (`lucnt`, ★ primary deliverable) | Python 3.10+, httpx, Pydantic v2 |
-| **Backend** | Python 3.10+, FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2 |
+| **SDK** (`lucnt`, ★ primary deliverable) | Python 3.10+ (library floor), httpx, Pydantic v2 |
+| **Backend** | Python 3.12 (F-23), FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2 |
 | **Database** | PostgreSQL 16 (Docker) |
 | **Rate limiting** | Redis 7 — a **runtime dependency** of the backend (`redis>=5.0` in `backend/pyproject.toml`), not just a compose service |
-| **Frontend** (P7 — next after Tier 5) | React 18, TypeScript, Vite, Tailwind CSS |
+| **Frontend** (P7 — built 29 Jul 2026) | React 19, TypeScript 5.9 strict, Vite 8, Tailwind 4, TanStack Query v5 |
 
 ---
 
 ## Quick Start (local dev)
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.12 for the backend (the SDK as a library supports 3.10+)
 - Docker (for Postgres/Redis/MailHog)
 - **Redis** — rate limiting is on by default (`RATE_LIMIT_ENABLED=true`) and its counters live in
   Redis, so it must be reachable at `REDIS_URL` for limits to be enforced. An unreachable Redis

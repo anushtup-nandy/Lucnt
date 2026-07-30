@@ -210,9 +210,7 @@ def test_an_anthropic_block_list_system_prompt_is_counted(
     tokens = _tokens(
         anthropic_adapter,
         model="claude-opus-5",
-        system=[
-            {"type": "text", "text": body, "cache_control": {"type": "ephemeral"}}
-        ],
+        system=[{"type": "text", "text": body, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": ""}],
     )
     assert tokens == len(body) // pack.chars_per_token

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -152,7 +152,7 @@ def test_void_records_when_and_why(client: TestClient, db_session: Session) -> N
     assert body["already_released"] is False
     # `Z` rather than `+00:00`; datetime.fromisoformat only accepts Z from 3.11.
     released_at = datetime.fromisoformat(body["released_at"].replace("Z", "+00:00"))
-    assert released_at <= datetime.now(timezone.utc)
+    assert released_at <= datetime.now(UTC)
 
 
 def test_void_is_idempotent(client: TestClient, db_session: Session) -> None:
@@ -227,7 +227,7 @@ def test_authorize_stamps_an_expiry(client: TestClient, db_session: Session) -> 
     hold = db_session.get(Authorization, uuid.UUID(auth_id))
     assert hold is not None
     assert hold.expires_at is not None
-    assert hold.expires_at > datetime.now(timezone.utc)
+    assert hold.expires_at > datetime.now(UTC)
 
 
 def test_an_expired_hold_stops_reserving(
@@ -242,7 +242,7 @@ def test_an_expired_hold_stops_reserving(
 
     hold = db_session.get(Authorization, uuid.UUID(first["authorization_id"]))
     assert hold is not None
-    hold.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    hold.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db_session.flush()
 
     assert _authorize(client, key, "60")["status"] == "approved"
@@ -259,7 +259,7 @@ def test_an_expired_hold_can_still_be_captured(
 
     hold = db_session.get(Authorization, uuid.UUID(auth_id))
     assert hold is not None
-    hold.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    hold.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db_session.flush()
 
     assert _capture(client, key, auth_id).status_code == 200

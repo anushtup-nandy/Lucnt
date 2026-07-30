@@ -27,7 +27,8 @@ def test_india_imported_service_is_reverse_charge() -> None:
         paid_currency="USD",
         entity_currency="INR",
         rate=_IN_RATE,
-        vendor_country="US", entity_country="IN",  # foreign vendor -> import
+        vendor_country="US",
+        entity_country="IN",  # foreign vendor -> import
     )
     assert t.tax_type == "GST_RCM"
     assert t.rate == Decimal("0.18")
@@ -47,7 +48,8 @@ def test_singapore_imported_service_is_reverse_charge() -> None:
         paid_currency="USD",
         entity_currency="SGD",
         rate=_SG_RATE,
-        vendor_country="US", entity_country="SG",  # foreign vendor -> import
+        vendor_country="US",
+        entity_country="SG",  # foreign vendor -> import
     )
     assert t.tax_type == "GST_RCM"
     assert t.rate == Decimal("0.09")
@@ -63,7 +65,9 @@ def test_domestic_gst_is_extracted_from_inclusive_amount() -> None:
         paid_currency="INR",
         entity_currency="INR",
         rate=_IN_RATE,
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
     )
     assert t.tax_type == "GST"
     assert t.tax_amount == Decimal("18.00")  # 118 * 0.18 / 1.18
@@ -92,9 +96,13 @@ def test_us_unconfigured_state_is_exception() -> None:
 def test_us_taxable_state_self_assesses_use_tax() -> None:
     """A taxable US state (rule standard) self-accrues use tax at the rate (TE-2)."""
     t = compute_tax(
-        tax_regime="US-Sales-Tax", functional_amount=Decimal("100"),
-        paid_currency="USD", entity_currency="USD", rate=Decimal("0.05"),
-        us_rule_type="standard", us_jurisdiction="US-TX",
+        tax_regime="US-Sales-Tax",
+        functional_amount=Decimal("100"),
+        paid_currency="USD",
+        entity_currency="USD",
+        rate=Decimal("0.05"),
+        us_rule_type="standard",
+        us_jurisdiction="US-TX",
     )
     assert t.tax_type == "SALES_TAX"
     assert t.tax_amount == Decimal("5.0000")  # 100 * 5%
@@ -109,9 +117,13 @@ def test_us_taxable_state_self_assesses_use_tax() -> None:
 def test_us_exempt_state_is_zero() -> None:
     """An exempt US state books no tax (TE-2)."""
     t = compute_tax(
-        tax_regime="US-Sales-Tax", functional_amount=Decimal("100"),
-        paid_currency="USD", entity_currency="USD", rate=_ZERO,
-        us_rule_type="exempt", us_jurisdiction="US-CA",
+        tax_regime="US-Sales-Tax",
+        functional_amount=Decimal("100"),
+        paid_currency="USD",
+        entity_currency="USD",
+        rate=_ZERO,
+        us_rule_type="exempt",
+        us_jurisdiction="US-CA",
     )
     assert t.tax_amount == _ZERO
     assert t.reverse_charge is False
@@ -121,9 +133,13 @@ def test_us_exempt_state_is_zero() -> None:
 def test_us_disputed_state_routes_to_exception() -> None:
     """A disputed US state (VT) is never auto-applied — routed to recon (TE-2)."""
     t = compute_tax(
-        tax_regime="US-Sales-Tax", functional_amount=Decimal("100"),
-        paid_currency="USD", entity_currency="USD", rate=Decimal("0.06"),
-        us_rule_type="disputed", us_jurisdiction="US-VT",
+        tax_regime="US-Sales-Tax",
+        functional_amount=Decimal("100"),
+        paid_currency="USD",
+        entity_currency="USD",
+        rate=Decimal("0.06"),
+        us_rule_type="disputed",
+        us_jurisdiction="US-VT",
     )
     assert t.tax_amount == _ZERO  # the 6% rate is NOT applied
     assert t.confidence == "exception"
@@ -133,9 +149,14 @@ def test_us_disputed_state_routes_to_exception() -> None:
 def test_imported_goods_route_to_customs_not_rcm() -> None:
     """A cross-border goods supply → customs, never services reverse charge (TE-4)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("100"),
-        paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="US", entity_country="IN", vendor_registered_in=(),
+        tax_regime="IN-GST",
+        functional_amount=Decimal("100"),
+        paid_currency="USD",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="US",
+        entity_country="IN",
+        vendor_registered_in=(),
         supply_type="goods",
     )
     assert t.tax_type == "CUSTOMS"
@@ -147,9 +168,14 @@ def test_imported_goods_route_to_customs_not_rcm() -> None:
 def test_domestic_goods_taxed_normally() -> None:
     """Domestic goods (same country) fall through to the normal treatment (TE-4)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
         supply_type="goods",
     )
     assert t.tax_type == "GST"  # domestic GST, not customs
@@ -164,7 +190,8 @@ def test_india_blocked_itc_for_travel() -> None:
         entity_currency="INR",
         rate=_IN_RATE,
         expense_category="travel",
-        vendor_country="US", entity_country="IN",  # foreign vendor -> import
+        vendor_country="US",
+        entity_country="IN",  # foreign vendor -> import
     )
     assert imported.reverse_charge is True  # output GST still self-assessed
     assert imported.tax_amount == Decimal("18.0000")
@@ -179,7 +206,9 @@ def test_india_blocked_itc_for_travel() -> None:
         entity_currency="INR",
         rate=_IN_RATE,
         expense_category="travel",
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
     )
     assert domestic.is_reclaimable is False
     assert domestic.reclaim_amount == Decimal("0")
@@ -194,7 +223,8 @@ def test_non_blocked_category_still_reclaims() -> None:
         entity_currency="INR",
         rate=_IN_RATE,
         expense_category="software",
-        vendor_country="US", entity_country="IN",  # foreign vendor -> import
+        vendor_country="US",
+        entity_country="IN",  # foreign vendor -> import
     )
     assert t.is_reclaimable is True
     assert t.reclaim_amount == Decimal("18.0000")
@@ -210,9 +240,14 @@ def test_full_s17_5_set_blocks_itc_beyond_travel() -> None:
         "works_contract",
     ):
         t = compute_tax(
-            tax_regime="IN-GST", functional_amount=Decimal("100"),
-            paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
-            vendor_country="US", entity_country="IN", vendor_registered_in=(),
+            tax_regime="IN-GST",
+            functional_amount=Decimal("100"),
+            paid_currency="USD",
+            entity_currency="INR",
+            rate=_IN_RATE,
+            vendor_country="US",
+            entity_country="IN",
+            vendor_registered_in=(),
             expense_category=category,
         )
         assert t.is_reclaimable is False, category  # GST owed but not reclaimable
@@ -240,7 +275,8 @@ def test_tax_is_carried_at_four_places() -> None:
         paid_currency="USD",
         entity_currency="INR",
         rate=_IN_RATE,
-        vendor_country="US", entity_country="IN",  # foreign vendor -> import
+        vendor_country="US",
+        entity_country="IN",  # foreign vendor -> import
     )
     assert t.tax_amount == Decimal("2.2221")
 
@@ -253,7 +289,8 @@ def test_injected_rate_overrides_regime_default() -> None:
         paid_currency="USD",
         entity_currency="SGD",
         rate=Decimal("0.08"),  # the pre-2024 SG rate
-        vendor_country="US", entity_country="SG",  # foreign vendor -> import
+        vendor_country="US",
+        entity_country="SG",  # foreign vendor -> import
     )
     assert t.rate == Decimal("0.08")
     assert t.tax_amount == Decimal("8.0000")
@@ -265,9 +302,13 @@ def test_injected_rate_overrides_regime_default() -> None:
 def test_place_of_supply_import_is_igst_rcm() -> None:
     """India entity, foreign vendor -> import -> RCM, single IGST component (T1-3)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("100"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="US", entity_country="IN",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("100"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="US",
+        entity_country="IN",
     )
     # Decided by place of supply, not currency (paid INR would say "domestic").
     assert t.reverse_charge is True
@@ -279,10 +320,16 @@ def test_place_of_supply_import_is_igst_rcm() -> None:
 def test_place_of_supply_intra_state_splits_cgst_sgst() -> None:
     """India intra-state domestic -> CGST + SGST, each half, summing to total (T1-9)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", vendor_state="KA", vendor_registered_in=("IN",),
-        entity_country="IN", entity_state="KA",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        vendor_state="KA",
+        vendor_registered_in=("IN",),
+        entity_country="IN",
+        entity_state="KA",
     )
     assert t.reverse_charge is False
     assert [c.head for c in t.components] == ["CGST", "SGST"]
@@ -294,10 +341,16 @@ def test_place_of_supply_intra_state_splits_cgst_sgst() -> None:
 def test_place_of_supply_inter_state_is_igst() -> None:
     """India inter-state domestic -> single IGST component (T1-9)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", vendor_state="MH", vendor_registered_in=("IN",),
-        entity_country="IN", entity_state="KA",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        vendor_state="MH",
+        vendor_registered_in=("IN",),
+        entity_country="IN",
+        entity_state="KA",
     )
     assert t.reverse_charge is False
     assert [c.head for c in t.components] == ["IGST"]
@@ -306,10 +359,16 @@ def test_place_of_supply_inter_state_is_igst() -> None:
 def test_domestic_unregistered_vendor_is_reverse_charge() -> None:
     """India domestic from an unregistered vendor -> RCM under CGST s.9(4) (T1-3)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("100"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", vendor_state="KA", vendor_registered_in=(),
-        entity_country="IN", entity_state="KA",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("100"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        vendor_state="KA",
+        vendor_registered_in=(),
+        entity_country="IN",
+        entity_state="KA",
     )
     assert t.reverse_charge is True  # buyer self-assesses
     assert t.tax_amount == Decimal("18.0000")  # on top (tax-exclusive), not embedded
@@ -326,9 +385,13 @@ def test_foreign_vendor_registered_in_buyer_country_is_forward_charge() -> None:
     ITC and no self-invoice.
     """
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="US", entity_country="IN",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="USD",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="US",
+        entity_country="IN",
         vendor_registered_in=("IN",),
     )
     assert t.reverse_charge is False
@@ -347,10 +410,16 @@ def test_domestic_vendor_registered_in_buyer_country_forward_charge() -> None:
     foreign invoice currency (which the old heuristic would have called an import).
     """
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", vendor_state="KA", vendor_registered_in=("IN",),
-        entity_country="IN", entity_state="KA",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="USD",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        vendor_state="KA",
+        vendor_registered_in=("IN",),
+        entity_country="IN",
+        entity_state="KA",
     )
     assert t.reverse_charge is False
     assert [c.head for c in t.components] == ["CGST", "SGST"]
@@ -363,9 +432,13 @@ def test_foreign_vendor_billing_local_currency_is_import_rcm() -> None:
     says imported → IGST reverse charge with a self-invoice.
     """
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("100"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="US", entity_country="IN",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("100"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="US",
+        entity_country="IN",
         vendor_registered_in=(),
     )
     assert t.reverse_charge is True
@@ -383,8 +456,11 @@ def test_unenriched_vendor_is_unclassified_not_guessed() -> None:
     money path flags it for enrichment.
     """
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("100"),
-        paid_currency="USD", entity_currency="INR", rate=_IN_RATE,
+        tax_regime="IN-GST",
+        functional_amount=Decimal("100"),
+        paid_currency="USD",
+        entity_currency="INR",
+        rate=_IN_RATE,
         entity_country="IN",  # entity known but vendor country unknown
     )
     assert t.confidence == "exception"
@@ -400,10 +476,16 @@ def test_unenriched_vendor_is_unclassified_not_guessed() -> None:
 def test_classified_treatment_is_auto_confidence() -> None:
     """A normally-classified supply carries confidence="auto" (TE-1b)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", vendor_state="KA", vendor_registered_in=("IN",),
-        entity_country="IN", entity_state="KA",
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        vendor_state="KA",
+        vendor_registered_in=("IN",),
+        entity_country="IN",
+        entity_state="KA",
     )
     assert t.confidence == "auto"
 
@@ -414,9 +496,14 @@ def test_classified_treatment_is_auto_confidence() -> None:
 def test_domestic_tax_inclusive_extracts_gross_is_amount() -> None:
     """The inclusive default extracts embedded GST; gross == the paid amount."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("118"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        tax_regime="IN-GST",
+        functional_amount=Decimal("118"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
     )
     assert t.tax_amount == Decimal("18.00")
     assert t.gross_amount == Decimal("118")
@@ -425,10 +512,15 @@ def test_domestic_tax_inclusive_extracts_gross_is_amount() -> None:
 def test_domestic_tax_exclusive_adds_gst_on_top() -> None:
     """A tax-exclusive amount adds GST on top — no phantom extraction (T1-10)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("100"),
-        paid_currency="INR", entity_currency="INR", rate=_IN_RATE,
+        tax_regime="IN-GST",
+        functional_amount=Decimal("100"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=_IN_RATE,
         tax_inclusive=False,
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
     )
     assert t.tax_amount == Decimal("18.0000")  # 100 * 0.18 on top, not extracted
     assert t.gross_amount == Decimal("118.0000")  # buyer paid net + GST
@@ -438,8 +530,13 @@ def test_domestic_tax_exclusive_adds_gst_on_top() -> None:
 def test_slab_rate_extracts_at_that_rate() -> None:
     """A 5% slab extracts 5% embedded GST, not 18% (T1-10 wrong-rate fix)."""
     t = compute_tax(
-        tax_regime="IN-GST", functional_amount=Decimal("105"),
-        paid_currency="INR", entity_currency="INR", rate=Decimal("0.05"),
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        tax_regime="IN-GST",
+        functional_amount=Decimal("105"),
+        paid_currency="INR",
+        entity_currency="INR",
+        rate=Decimal("0.05"),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
     )
     assert t.tax_amount == Decimal("5.0000")  # 105 * 0.05/1.05, vs ~16 at 18%

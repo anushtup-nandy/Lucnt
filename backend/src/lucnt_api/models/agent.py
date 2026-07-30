@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -23,7 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class AgentStatus(str, enum.Enum):
+class AgentStatus(enum.StrEnum):
     """Lifecycle status of an agent.
 
     Distinct from mockup display labels like "Budget exhausted", which are
@@ -82,6 +82,6 @@ class Agent(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     confidence_pct: Mapped[int] = mapped_column(default=100)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

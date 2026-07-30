@@ -38,13 +38,19 @@ def test_effective_to_closes_a_rate(db_session: Session) -> None:
     db_session.add_all(
         [
             TaxRate(
-                regime="XX-TEST", category="standard", rate=Decimal("0.10"),
-                effective_from=date(2020, 1, 1), effective_to=date(2024, 1, 1),
+                regime="XX-TEST",
+                category="standard",
+                rate=Decimal("0.10"),
+                effective_from=date(2020, 1, 1),
+                effective_to=date(2024, 1, 1),
                 source="test",
             ),
             TaxRate(
-                regime="XX-TEST", category="standard", rate=Decimal("0.20"),
-                effective_from=date(2024, 1, 1), source="test",
+                regime="XX-TEST",
+                category="standard",
+                rate=Decimal("0.20"),
+                effective_from=date(2024, 1, 1),
+                source="test",
             ),
         ]
     )

@@ -39,9 +39,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
     app.dependency_overrides.pop(get_db, None)
 
 
-def _seed(
-    db_session: Session, budget: str = "9000"
-) -> tuple[Company, Agent, str]:
+def _seed(db_session: Session, budget: str = "9000") -> tuple[Company, Agent, str]:
     company = Company(name="Acme", slug=f"acme-{uuid.uuid4().hex[:8]}")
     db_session.add(company)
     db_session.flush()

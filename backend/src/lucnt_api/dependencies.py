@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
@@ -124,7 +124,7 @@ def _resolve_api_key(request: Request, token: str, db: Session) -> AuthContext:
     limiter.check(Bucket.DEFAULT, str(api_key.id))
 
     # Throttled bookkeeping (T0-17): avoid a commit on the hot key row per request.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if api_key.last_used_at is None or now - api_key.last_used_at > _LAST_USED_THROTTLE:
         api_key.last_used_at = now
         db.commit()

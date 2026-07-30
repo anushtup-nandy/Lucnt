@@ -16,7 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class AccountCategory(str, enum.Enum):
+class AccountCategory(enum.StrEnum):
     """The five standard account categories. Determines the normal balance side."""
 
     ASSET = "asset"

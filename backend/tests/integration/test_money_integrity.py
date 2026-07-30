@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -243,7 +243,7 @@ def test_db_rejects_negative_transaction_amount(db_session: Session) -> None:
                 paid_currency="SGD",
                 local_amount=Decimal("-5"),
                 local_currency="SGD",
-                transaction_date=datetime.now(timezone.utc),
+                transaction_date=datetime.now(UTC),
             )
         )
         db_session.flush()
@@ -261,7 +261,7 @@ def test_db_rejects_two_sided_journal_line(db_session: Session) -> None:
         paid_currency="SGD",
         local_amount=Decimal("10"),
         local_currency="SGD",
-        transaction_date=datetime.now(timezone.utc),
+        transaction_date=datetime.now(UTC),
     )
     db_session.add(txn)
     db_session.flush()

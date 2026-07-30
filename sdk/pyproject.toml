@@ -103,6 +103,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "N"]
+"tests-realclient/**" = ["D", "N"]
 # PolicyBlocked / BudgetExhausted are the documented public exception names
 # (sdk/PLAN.md §2, §7) — no Error suffix by design.
 "src/lucnt/exceptions.py" = ["N818"]

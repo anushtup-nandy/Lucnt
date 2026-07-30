@@ -64,7 +64,11 @@ def _chat_sse(model: str) -> bytes:
         "created": 1753660800,
         "model": model,
         "choices": [
-            {"index": 0, "delta": {"role": "assistant", "content": "hi"}, "finish_reason": None}
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": "hi"},
+                "finish_reason": None,
+            }
         ],
     }
     done = {
@@ -82,10 +86,12 @@ def _chat_sse(model: str) -> bytes:
         "choices": [],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
     }
-    return b"".join(
-        f"data: {json.dumps(event)}\n\n".encode()
-        for event in (chunk, done, usage)
-    ) + b"data: [DONE]\n\n"
+    return (
+        b"".join(
+            f"data: {json.dumps(event)}\n\n".encode() for event in (chunk, done, usage)
+        )
+        + b"data: [DONE]\n\n"
+    )
 
 
 def _responses_payload(model: str) -> dict[str, Any]:
@@ -240,9 +246,10 @@ class _Handler(BaseHTTPRequestHandler):
                     }
                 )
                 return
+            auth_id = f"00000000-0000-0000-0000-{len(state.authorizes):012d}"
             self._send_json(
                 {
-                    "authorization_id": f"00000000-0000-0000-0000-{len(state.authorizes):012d}",
+                    "authorization_id": auth_id,
                     "status": "approved",
                     "code": "ok",
                     "reason": None,

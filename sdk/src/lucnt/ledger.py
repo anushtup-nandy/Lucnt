@@ -857,6 +857,7 @@ async def void_async(verdict: Verdict, *, reason: str | None = None) -> VoidResu
 # spend
 # --------------------------------------------------------------------------- #
 
+
 def spend(
     *,
     vendor: str,
@@ -1248,9 +1249,7 @@ def mark_failed_delivery(
         ContractError: The response could not be read as a `ReconException`.
     """
     _forbid_running_loop("mark_failed_delivery", "mark_failed_delivery_async")
-    call = _failed_delivery_call(
-        transaction, transaction_id, reason, amount_at_stake
-    )
+    call = _failed_delivery_call(transaction, transaction_id, reason, amount_at_stake)
     return _model(ReconException, _send(call), call.path)
 
 
@@ -1278,7 +1277,5 @@ async def mark_failed_delivery_async(
             `amount_at_stake` is a `float`.
         ContractError: The response could not be read as a `ReconException`.
     """
-    call = _failed_delivery_call(
-        transaction, transaction_id, reason, amount_at_stake
-    )
+    call = _failed_delivery_call(transaction, transaction_id, reason, amount_at_stake)
     return _model(ReconException, await _send_async(call), call.path)

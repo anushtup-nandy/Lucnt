@@ -418,9 +418,7 @@ def cost_per_output(records: Sequence[SpendRecord]) -> list[CostUnit]:
         count = len(members)
         avg_cost = total_spent / Decimal(count)
         all_have_tokens = all(m.tokens is not None for m in members)
-        total_tokens = (
-            sum(m.tokens or 0 for m in members) if all_have_tokens else None
-        )
+        total_tokens = sum(m.tokens or 0 for m in members) if all_have_tokens else None
         cost_per_1k = (
             _q_money(total_spent / Decimal(total_tokens) * 1000)
             if total_tokens

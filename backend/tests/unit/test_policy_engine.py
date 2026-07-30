@@ -7,7 +7,7 @@ bumping (which needs real ids) is covered in the integration tests (Phase 3c).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -23,7 +23,7 @@ from lucnt_api.services.policy_engine import (
 )
 
 # A Monday at 14:00 UTC — comfortably inside a 9→18 business-hours window.
-_MONDAY_1400 = datetime(2026, 7, 6, 14, 0, tzinfo=timezone.utc)
+_MONDAY_1400 = datetime(2026, 7, 6, 14, 0, tzinfo=UTC)
 
 
 def _ctx(

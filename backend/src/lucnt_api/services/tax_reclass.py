@@ -43,9 +43,7 @@ from lucnt_api.services.tax_rates import (
 _ZERO = Decimal("0")
 
 
-def reflag_divergent_history(
-    db: Session, company_id: uuid.UUID, vendor: Vendor
-) -> int:
+def reflag_divergent_history(db: Session, company_id: uuid.UUID, vendor: Vendor) -> int:
     """Flag committed spends whose booked regime disagrees with the enriched vendor.
 
     Recomputes each of the vendor's forward transactions at *its own* supply date

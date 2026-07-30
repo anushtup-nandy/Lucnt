@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -45,7 +45,7 @@ from lucnt_api.routers.intelligence import (
 from lucnt_api.security import generate_api_key, hash_api_key
 from lucnt_api.services.intelligence import CostUnit, cost_per_output
 
-_NOW = datetime.now(timezone.utc)
+_NOW = datetime.now(UTC)
 
 
 @pytest.fixture

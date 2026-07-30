@@ -604,9 +604,7 @@ class _GovernorCore:
         unmetered: Unmetered,
     ) -> None:
         if unmetered not in ("block", "allow"):
-            raise LucntError(
-                f'unmetered must be "block" or "allow", got {unmetered!r}'
-            )
+            raise LucntError(f'unmetered must be "block" or "allow", got {unmetered!r}')
         self._adapter = adapter
         self._agent = agent
         self._entity = entity
@@ -657,7 +655,7 @@ class _GovernorCore:
             if path not in self._warned_paths:
                 self._warned_paths.add(path)
                 _logger.warning(
-                    "lucnt: POST %s is not meterable and unmetered=\"allow\" is "
+                    'lucnt: POST %s is not meterable and unmetered="allow" is '
                     "set — forwarding it UNGOVERNED. This spend will have no "
                     "ledger row.",
                     path,
@@ -735,9 +733,7 @@ class GovernedTransport(httpx.BaseTransport):
         try:
             response = self._inner.handle_request(request)
         except BaseException as exc:
-            _release(
-                verdict, f"{type(exc).__name__} on the wire to {adapter.vendor}"
-            )
+            _release(verdict, f"{type(exc).__name__} on the wire to {adapter.vendor}")
             raise
         if not 200 <= response.status_code < 300:
             _release(verdict, f"{adapter.vendor} returned HTTP {response.status_code}")
@@ -873,10 +869,7 @@ class GovernedAsyncTransport(httpx.AsyncBaseTransport):
                 request=request,
             )
         raw = b"".join(
-            [
-                chunk
-                async for chunk in cast("httpx.AsyncByteStream", response.stream)
-            ]
+            [chunk async for chunk in cast("httpx.AsyncByteStream", response.stream)]
         )
         await response.aclose()
         rebuilt = httpx.Response(

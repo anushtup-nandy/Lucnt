@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -37,7 +37,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class ReconExceptionType(str, enum.Enum):
+class ReconExceptionType(enum.StrEnum):
     """The kind of anomaly a reconciliation exception records.
 
     `DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the
@@ -55,7 +55,7 @@ class ReconExceptionType(str, enum.Enum):
     TAX_UNCLASSIFIED = "tax_unclassified"
 
 
-class ReconExceptionStatus(str, enum.Enum):
+class ReconExceptionStatus(enum.StrEnum):
     """Lifecycle of an exception: detected → in-recovery → terminal.
 
     `OPEN` is a freshly detected/reported exception; `RECOVERING` is one whose
@@ -79,14 +79,10 @@ class ReconciliationException(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # duplicate/overcharge row) is immutable, so a re-scan must not re-flag it
         # even once resolved — and a genuinely new occurrence is a new
         # transaction row, which gets its own exception.
-        UniqueConstraint(
-            "transaction_id", "exception_type", name="uq_recon_txn_type"
-        ),
+        UniqueConstraint("transaction_id", "exception_type", name="uq_recon_txn_type"),
         # The recovery inbox list + the open-count header (T3-1). transaction_id
         # lookups already ride uq_recon_txn_type's leading column.
-        Index(
-            "ix_reconciliation_exceptions_company_id_status", "company_id", "status"
-        ),
+        Index("ix_reconciliation_exceptions_company_id_status", "company_id", "status"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
@@ -130,6 +126,6 @@ class ReconciliationException(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

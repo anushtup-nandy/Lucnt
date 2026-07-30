@@ -8,7 +8,7 @@ computes on the request path. `POST /insights/{id}/apply` marks an insight acted
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
@@ -135,7 +135,7 @@ def apply_insight(
 
     if not insight.is_applied:
         insight.is_applied = True
-        insight.applied_at = datetime.now(timezone.utc)
+        insight.applied_at = datetime.now(UTC)
         db.commit()
         db.refresh(insight)
     return _to_response(insight)
@@ -158,7 +158,7 @@ def dismiss_insight(
 
     if not insight.is_dismissed:
         insight.is_dismissed = True
-        insight.dismissed_at = datetime.now(timezone.utc)
+        insight.dismissed_at = datetime.now(UTC)
         db.commit()
         db.refresh(insight)
     return _to_response(insight)

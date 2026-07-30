@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,14 +55,12 @@ def test_feed_serves_todays_resolved_prices(
     including a date-ranged rate like claude-sonnet-5's intro window — with
     the SDK pack shape and cache headers."""
     key = _make_key(db_session)
-    response = client.get(
-        "/pricing/feed", headers={"Authorization": f"Bearer {key}"}
-    )
+    response = client.get("/pricing/feed", headers={"Authorization": f"Bearer {key}"})
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=3600"
 
     body = response.json()
-    expected = resolve_feed(datetime.now(timezone.utc).date())
+    expected = resolve_feed(datetime.now(UTC).date())
     assert body == expected
     # Shape the SDK's parser expects: version + estimation + vendors, and
     # every price is a string.

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -41,7 +41,7 @@ def now_in_entity_tz(entity: Entity) -> datetime:
     try:
         tz = ZoneInfo(entity.timezone)
     except (ZoneInfoNotFoundError, ValueError):
-        tz = timezone.utc
+        tz = UTC
     return datetime.now(tz)
 
 
@@ -127,7 +127,7 @@ def reserved_spend(db: Session, agent_id: uuid.UUID) -> Decimal:
     Sums `local_amount` (the hold's functional-currency snapshot from authorize)
     so reservation is measured in the same currency as the budget (T1-2).
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     total = db.execute(
         select(func.coalesce(func.sum(Authorization.local_amount), 0)).where(
             Authorization.agent_id == agent_id,
@@ -154,7 +154,7 @@ def company_reserved_spend(
         `{agent_id: reserved}` in each agent's functional currency. An agent
         with no live holds is **absent**, not zero — callers must default it.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rows = db.execute(
         select(
             Authorization.agent_id,

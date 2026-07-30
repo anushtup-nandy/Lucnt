@@ -18,7 +18,7 @@ Three classes of guard, none of which any prior test covered:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -71,7 +71,7 @@ def _txn(
         paid_currency="SGD",
         local_amount=Decimal("10"),
         local_currency="SGD",
-        transaction_date=datetime.now(timezone.utc),
+        transaction_date=datetime.now(UTC),
     )
     db_session.add(txn)
     db_session.flush()
@@ -167,8 +167,7 @@ _MONEY_PATH_INDEXES = (
 def test_hot_path_index_exists(db_session: Session, index_name: str) -> None:
     found = db_session.execute(
         text(
-            "SELECT 1 FROM pg_indexes "
-            "WHERE schemaname = 'public' AND indexname = :name"
+            "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = :name"
         ),
         {"name": index_name},
     ).scalar_one_or_none()

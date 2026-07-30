@@ -331,9 +331,7 @@ def _agent_memories(intel: AgentIntel) -> list[DraftMemory]:
                 summary=f"Concentrates {pct}% of spend on {top.vendor}",
                 detail_text=(
                     "Top vendors by transaction count: "
-                    + ", ".join(
-                        f"{v.vendor} ({v.count})" for v in features.top_vendors
-                    )
+                    + ", ".join(f"{v.vendor} ({v.count})" for v in features.top_vendors)
                     + "."
                 ),
                 metrics_json={

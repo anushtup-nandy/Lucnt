@@ -375,9 +375,7 @@ def test_capture_books_reverse_charge_journal_and_tax(
     # Every line is stamped with the functional (entity) currency (T1-1).
     assert all(line.currency == "SGD" for line in persisted_lines)
     tax_rows = (
-        db_session.execute(
-            select(TaxRecord).where(TaxRecord.transaction_id == tx_id)
-        )
+        db_session.execute(select(TaxRecord).where(TaxRecord.transaction_id == tx_id))
         .scalars()
         .all()
     )
@@ -386,9 +384,7 @@ def test_capture_books_reverse_charge_journal_and_tax(
     assert tax_rows[0].currency == "SGD"  # tax denominated in functional currency
 
 
-def test_capture_books_domestic_gst(
-    client: TestClient, db_session: Session
-) -> None:
+def test_capture_books_domestic_gst(client: TestClient, db_session: Session) -> None:
     """A domestic service (INR paid by an INR entity) extracts embedded GST, no RCM."""
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="in", currency="INR")
@@ -477,8 +473,13 @@ def test_authorize_requires_currency(client: TestClient, db_session: Session) ->
     _make_agent(db_session, company, _make_entity(db_session, company))
     response = client.post(
         "/transactions/authorize",
-        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "10",
-              "reason": "no currency"},
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "x",
+            "amount": "10",
+            "reason": "no currency",
+        },
         headers=_auth_headers(key),
     )
     assert response.status_code == 422
@@ -492,8 +493,14 @@ def test_authorize_rejects_malformed_currency(
     _make_agent(db_session, company, _make_entity(db_session, company))
     response = client.post(
         "/transactions/authorize",
-        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "10",
-              "currency": "dollars", "reason": "bad currency"},
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "x",
+            "amount": "10",
+            "currency": "dollars",
+            "reason": "bad currency",
+        },
         headers=_auth_headers(key),
     )
     assert response.status_code == 422
@@ -507,8 +514,14 @@ def test_authorize_normalises_currency_case(
     _make_agent(db_session, company, _make_entity(db_session, company))
     verdict = client.post(
         "/transactions/authorize",
-        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "10",
-              "currency": "sgd", "reason": "lowercase currency"},
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "x",
+            "amount": "10",
+            "currency": "sgd",
+            "reason": "lowercase currency",
+        },
         headers=_auth_headers(key),
     ).json()
     assert verdict["status"] == "approved"  # 'sgd' -> 'SGD', domestic, within budget
@@ -606,14 +619,25 @@ def test_reverse_charge_generates_self_invoice(
     _make_agent(db_session, company, entity)
     _make_vendor(db_session, company, "openai", country="US")  # foreign -> RCM (TE-1)
     db_session.add(
-        FxRate(currency="SGD", usd_per_unit=Decimal("0.5"),
-               effective_from=date(2026, 1, 2), source="test")
+        FxRate(
+            currency="SGD",
+            usd_per_unit=Decimal("0.5"),
+            effective_from=date(2026, 1, 2),
+            source="test",
+        )
     )
     db_session.flush()
     verdict = client.post(
         "/transactions/authorize",
-        json={"agent": "ops", "entity": "sg", "vendor": "openai", "amount": "100",
-              "currency": "USD", "reason": "rcm", "model": "gpt-5"},
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "openai",
+            "amount": "100",
+            "currency": "USD",
+            "reason": "rcm",
+            "model": "gpt-5",
+        },
         headers=_auth_headers(key),
     ).json()
     body = client.post(
@@ -646,8 +670,14 @@ def test_domestic_spend_has_no_self_invoice(
     _make_agent(db_session, company, entity)
     verdict = client.post(
         "/transactions/authorize",
-        json={"agent": "ops", "entity": "in", "vendor": "local", "amount": "118",
-              "currency": "INR", "reason": "domestic"},
+        json={
+            "agent": "ops",
+            "entity": "in",
+            "vendor": "local",
+            "amount": "118",
+            "currency": "INR",
+            "reason": "domestic",
+        },
         headers=_auth_headers(key),
     ).json()
     body = client.post(
@@ -676,8 +706,14 @@ def test_reverse_books_contra_and_frees_budget(
     agent = _make_agent(db_session, company, _make_entity(db_session, company))
     verdict = client.post(
         "/transactions/authorize",
-        json={"agent": "ops", "entity": "sg", "vendor": "x", "amount": "100",
-              "currency": "SGD", "reason": "spend to reverse"},
+        json={
+            "agent": "ops",
+            "entity": "sg",
+            "vendor": "x",
+            "amount": "100",
+            "currency": "SGD",
+            "reason": "spend to reverse",
+        },
         headers=_auth_headers(key),
     ).json()
     tx = client.post(

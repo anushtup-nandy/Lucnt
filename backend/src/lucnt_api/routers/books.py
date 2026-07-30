@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -96,7 +96,7 @@ _TO_DESC = "Include transactions on/before this date (YYYY-MM-DD, inclusive)"
 
 def _as_dt(day: date) -> datetime:
     """Midnight (UTC) at the start of `day`, to compare against transaction_date."""
-    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    return datetime(day.year, day.month, day.day, tzinfo=UTC)
 
 
 def _posting_date_conditions(
@@ -743,7 +743,7 @@ def create_manual_journal(
     """
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
-    posting_date = request.posting_date or datetime.now(timezone.utc).date()
+    posting_date = request.posting_date or datetime.now(UTC).date()
     specs = [(ln.account_code, ln.debit, ln.credit) for ln in request.lines]
     result = _post_journal(
         db,
@@ -792,7 +792,7 @@ def create_funding(
     """
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
-    posting_date = request.posting_date or datetime.now(timezone.utc).date()
+    posting_date = request.posting_date or datetime.now(UTC).date()
     specs = [
         (WALLET_CODE, request.amount, _ZERO),
         (CONTRIBUTED_CAPITAL_CODE, _ZERO, request.amount),
@@ -849,9 +849,7 @@ def settle_taxes(
     """
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
-    posting_date = (
-        request.posting_date or request.date_to or datetime.now(timezone.utc).date()
-    )
+    posting_date = request.posting_date or request.date_to or datetime.now(UTC).date()
 
     aggregates = _aggregates(db, company, entity.id, request.date_from, request.date_to)
     by_code = {a.account_code: a for a in aggregates if a.currency == entity.currency}

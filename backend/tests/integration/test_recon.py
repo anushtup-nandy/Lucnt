@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -30,7 +30,7 @@ from lucnt_api.models import (
 )
 from lucnt_api.security import generate_api_key, hash_api_key
 
-_NOW = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -292,9 +292,7 @@ def test_inbox_summary_and_ordering(client: TestClient, db_session: Session) -> 
     assert inbox["items"][0]["exception_type"] == "overcharge"
 
 
-def test_inbox_summary_is_per_currency(
-    client: TestClient, db_session: Session
-) -> None:
+def test_inbox_summary_is_per_currency(client: TestClient, db_session: Session) -> None:
     """T2-2: '$ at stake' is bucketed per currency, never summed across them."""
     company, key, agent, entity = _setup(db_session)
     # A USD duplicate ($5) and a JPY duplicate (¥1500) — different currencies.
@@ -358,9 +356,7 @@ def test_dismissed_subscription_not_reflagged_next_month(
     )
     rescan = client.post("/recon/scan", headers=_auth_headers(key)).json()
     assert rescan["created"] == 0
-    active = client.get(
-        "/recon?status=open", headers=_auth_headers(key)
-    ).json()
+    active = client.get("/recon?status=open", headers=_auth_headers(key)).json()
     assert active["total"] == 0  # the dismissal stuck
 
 

@@ -29,7 +29,7 @@ from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 from lucnt_api.models.agent import Agent
 
 
-class WorkflowStatus(str, enum.Enum):
+class WorkflowStatus(enum.StrEnum):
     """Lifecycle of a workflow budget."""
 
     ACTIVE = "active"

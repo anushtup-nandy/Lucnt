@@ -141,9 +141,7 @@ def test_amount_threshold_routes_to_review(
     assert verdict["code"] == "amount_over_threshold"
 
 
-def test_amount_threshold_human_hold(
-    client: TestClient, db_session: Session
-) -> None:
+def test_amount_threshold_human_hold(client: TestClient, db_session: Session) -> None:
     company, _agent, key = _seed(db_session)
     db_session.add(
         Policy(

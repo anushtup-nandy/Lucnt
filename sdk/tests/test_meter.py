@@ -60,9 +60,7 @@ def _vendor_net() -> httpx.Client:
     this transport is a test bug."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError(
-            f"unexpected wire request: {request.method} {request.url}"
-        )
+        raise AssertionError(f"unexpected wire request: {request.method} {request.url}")
 
     return httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -850,9 +848,12 @@ def test_a_client_without_the_streaming_helper_is_still_wrapped(
         model="claude-opus-5", usage=SimpleNamespace(input_tokens=1, output_tokens=1)
     )
     metered = meter_fn(FakeAnthropic(response), agent="a", entity="e")
-    assert metered.messages.create(
-        model="claude-opus-5", messages=[{"role": "user", "content": "hi"}]
-    ) is response
+    assert (
+        metered.messages.create(
+            model="claude-opus-5", messages=[{"role": "user", "content": "hi"}]
+        )
+        is response
+    )
     assert len(captured) == 1
 
 
@@ -865,8 +866,11 @@ def test_an_unreadable_stream_books_the_estimate(
     _stub(monkeypatch, _capture_handler(captured))
     metered = meter_fn(StreamingAnthropic(None), agent="a", entity="e")
 
-    with caplog.at_level("WARNING", logger="lucnt.meter"), metered.messages.stream(
-        model="claude-opus-5", messages=[{"role": "user", "content": "hi"}]
+    with (
+        caplog.at_level("WARNING", logger="lucnt.meter"),
+        metered.messages.stream(
+            model="claude-opus-5", messages=[{"role": "user", "content": "hi"}]
+        ),
     ):
         pass
 

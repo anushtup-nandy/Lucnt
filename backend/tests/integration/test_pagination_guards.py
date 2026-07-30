@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -125,7 +125,7 @@ def _spend(
         paid_currency=entity.currency,
         local_amount=amount,
         local_currency=entity.currency,
-        transaction_date=when or datetime.now(timezone.utc),
+        transaction_date=when or datetime.now(UTC),
         reverses_transaction_id=reverses,
     )
     db.add(txn)

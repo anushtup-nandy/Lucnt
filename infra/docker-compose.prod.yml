@@ -22,7 +22,9 @@
 
 services:
   nginx:
-    image: nginx:1.27-bookworm
+    # F-25: digest-pinned — the tag is for humans, the digest is the pin.
+    # Re-pin deliberately with: docker buildx imagetools inspect <tag>
+    image: nginx:1.27-bookworm@sha256:6784fb0834aa7dbbe12e3d7471e69c290df3e6ba810dc38b34ae33d3c1c05f7d
     ports:
       - "80:80"
       - "443:443"
@@ -91,7 +93,7 @@ services:
     restart: "no"
 
   redis:
-    image: redis:7.4-bookworm
+    image: redis:7.4-bookworm@sha256:595cc6f2bb3af6e03347b90deb6123c6aa2c81dea05ce08128de8a174b6ac67b
     # Internal only. Not published, so the absence of a Redis password is
     # contained by the network boundary rather than by hope.
     expose:
@@ -139,7 +141,9 @@ services:
   # ${TLS_CERT_DIR} directly), then UNCOMMENT the HSTS line in nginx.conf and
   # reload. Renewal is `... run --rm certbot renew` from cron/systemd.
   certbot:
-    image: certbot/certbot
+    # Was a bare untagged `certbot/certbot` (i.e. :latest) — the exact drift
+    # F-25 exists to stop on a certificate-issuing container.
+    image: certbot/certbot:latest@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
     profiles: ["certs"]
     volumes:
       - ${TLS_CERT_DIR:?set TLS_CERT_DIR to the directory holding fullchain.pem and privkey.pem}:/etc/letsencrypt

@@ -77,17 +77,13 @@ def _seed(db_session: Session) -> tuple[Company, Agent, ApiKey, str]:
 
 def _audit_rows(db_session: Session, company: Company) -> list[AuditLog]:
     return list(
-        db_session.execute(
-            select(AuditLog).where(AuditLog.company_id == company.id)
-        )
+        db_session.execute(select(AuditLog).where(AuditLog.company_id == company.id))
         .scalars()
         .all()
     )
 
 
-def test_budget_update_is_audited(
-    client: TestClient, db_session: Session
-) -> None:
+def test_budget_update_is_audited(client: TestClient, db_session: Session) -> None:
     company, agent, api_key, key = _seed(db_session)
 
     resp = client.patch(

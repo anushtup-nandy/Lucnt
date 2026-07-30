@@ -203,9 +203,7 @@ def load_pricing_pack() -> PricingPack:
             build) or fails validation.
     """
     try:
-        raw = (
-            files(_PACK_PACKAGE).joinpath(_PACK_FILENAME).read_text(encoding="utf-8")
-        )
+        raw = files(_PACK_PACKAGE).joinpath(_PACK_FILENAME).read_text(encoding="utf-8")
     except (FileNotFoundError, ModuleNotFoundError) as exc:
         raise LucntError(
             f"pricing pack {_PACK_PACKAGE}/{_PACK_FILENAME} is missing from the "

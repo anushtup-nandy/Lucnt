@@ -17,14 +17,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class ApiKeyMode(str, enum.Enum):
+class ApiKeyMode(enum.StrEnum):
     """Live vs. test key, matching the `lucnt_live_...` / `lucnt_test_...` prefix."""
 
     LIVE = "live"
     TEST = "test"
 
 
-class ApiKeyScope(str, enum.Enum):
+class ApiKeyScope(enum.StrEnum):
     """What a key may do — separation of duties (PRODUCTION_PLAN T0-12).
 
     `runtime` keys drive the money path (authorize/capture) and reads only; they

@@ -229,12 +229,20 @@ async def beat_a_different_spend_under_one_op_id_is_refused() -> None:
     try:
         with lucnt.operation(op_id):
             await lucnt.authorize_async(
-                agent=AGENT, entity=ENTITY, vendor="openai", amount="1.00",
-                currency="USD", reason="first",
+                agent=AGENT,
+                entity=ENTITY,
+                vendor="openai",
+                amount="1.00",
+                currency="USD",
+                reason="first",
             )
             await lucnt.authorize_async(
-                agent=AGENT, entity=ENTITY, vendor="openai", amount="99.00",
-                currency="USD", reason="second",
+                agent=AGENT,
+                entity=ENTITY,
+                vendor="openai",
+                amount="99.00",
+                currency="USD",
+                reason="second",
             )
     except lucnt.IdempotencyConflict:
         print("[async] a second, different spend under one op id was refused")

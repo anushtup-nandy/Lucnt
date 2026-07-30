@@ -13,7 +13,7 @@ exception with `POST /recon/{id}/resolve`.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -422,7 +422,7 @@ def resolve_exception(
         else ReconExceptionStatus.DISMISSED
     )
     exc.fix_notes = payload.fix_notes
-    exc.resolved_at = datetime.now(timezone.utc)
+    exc.resolved_at = datetime.now(UTC)
     record_audit(
         db,
         ctx,

@@ -30,7 +30,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class TransactionSource(str, enum.Enum):
+class TransactionSource(enum.StrEnum):
     """Which channel committed this spend to the ledger."""
 
     SDK = "sdk"
@@ -38,7 +38,7 @@ class TransactionSource(str, enum.Enum):
     INVOICE = "invoice"
 
 
-class TransactionStatus(str, enum.Enum):
+class TransactionStatus(enum.StrEnum):
     """Post-capture ledger status.
 
     Only `COMPLETED` is produced until Phase 4 (Recovery) adds reversal/
@@ -56,9 +56,7 @@ class Transaction(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # Postgres allows multiple NULLs under a unique constraint, so this only
         # blocks double-capture of one authorization on retry -- sdk/PLAN.md §7
         # failure mode #1 -- without constraining card/invoice rows (always null).
-        UniqueConstraint(
-            "authorization_id", name="uq_transactions_authorization_id"
-        ),
+        UniqueConstraint("authorization_id", name="uq_transactions_authorization_id"),
         # Money integrity (T0-7): a committed spend and its FX rate are strictly
         # positive. Refunds/reversals get first-class modelling in Tier 1 (T1-16),
         # not a negative row that would silently free budget.

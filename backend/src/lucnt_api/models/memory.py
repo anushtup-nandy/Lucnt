@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -34,7 +34,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class MemoryType(str, enum.Enum):
+class MemoryType(enum.StrEnum):
     """The kind of learned pattern a memory records.
 
     `SPEND_PATTERN` — the agent's typical amount range and cadence.
@@ -76,6 +76,6 @@ class Memory(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

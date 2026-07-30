@@ -33,7 +33,7 @@ from lucnt_api.models.authorization import VerdictStatus
 from lucnt_api.models.policy import Policy, PolicyRuleType
 
 
-class VerdictCode(str, enum.Enum):
+class VerdictCode(enum.StrEnum):
     """Machine-readable reason a verdict was reached.
 
     The SDK maps these to typed exceptions under `strict=True`

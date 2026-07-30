@@ -9,7 +9,7 @@ but an unauthenticated endpoint would be a free amplification target.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -33,7 +33,7 @@ def get_pricing_feed(
     `Cache-Control` matches the SDK's default client-side TTL so intermediary
     caches and the SDK agree on freshness.
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     return JSONResponse(
         resolve_feed(today),
         headers={"Cache-Control": "public, max-age=3600"},

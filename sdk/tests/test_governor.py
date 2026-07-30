@@ -213,16 +213,25 @@ def test_embeddings_estimate_covers_every_input_shape() -> None:
     )
     assert doubled == per_100k_tokens * 2
     # Pre-tokenized inputs: a list of token ids, and a batch of them.
-    assert _estimate(
-        adapter,
-        "embeddings",
-        {"model": "text-embedding-3-small", "input": [1] * 100_000},
-    ) == per_100k_tokens
-    assert _estimate(
-        adapter,
-        "embeddings",
-        {"model": "text-embedding-3-small", "input": [[1] * 100_000, [2] * 100_000]},
-    ) == per_100k_tokens * 2
+    assert (
+        _estimate(
+            adapter,
+            "embeddings",
+            {"model": "text-embedding-3-small", "input": [1] * 100_000},
+        )
+        == per_100k_tokens
+    )
+    assert (
+        _estimate(
+            adapter,
+            "embeddings",
+            {
+                "model": "text-embedding-3-small",
+                "input": [[1] * 100_000, [2] * 100_000],
+            },
+        )
+        == per_100k_tokens * 2
+    )
 
 
 def test_a_subcent_spend_books_the_minimum_ledger_unit() -> None:
@@ -306,9 +315,7 @@ def test_usage_readers_per_endpoint_kind() -> None:
             "usage": {"prompt_tokens": 8, "total_tokens": 8},
         },
     )
-    assert emb == Usage(
-        model="text-embedding-3-small", input_tokens=8, output_tokens=0
-    )
+    assert emb == Usage(model="text-embedding-3-small", input_tokens=8, output_tokens=0)
     resp = _usage_from_payload(
         "responses",
         {"model": "gpt-4o", "usage": {"input_tokens": 36, "output_tokens": 87}},
@@ -511,8 +518,7 @@ def test_reads_and_free_posts_pass_through_ungoverned(
 
     assert client.get("/v1/models").status_code == 200
     assert (
-        client.post("/v1/messages/count_tokens", json={"model": "x"}).status_code
-        == 200
+        client.post("/v1/messages/count_tokens", json={"model": "x"}).status_code == 200
     )
     assert recorder.authorizes == []
 
@@ -843,9 +849,12 @@ def test_async_streamed_response_books_from_the_scanner(
         )
 
     async def main() -> bytes:
-        async with _agoverned(vendor) as client, client.stream(
-            "POST", "/v1/chat/completions", json={**_CHAT_BODY, "stream": True}
-        ) as response:
+        async with (
+            _agoverned(vendor) as client,
+            client.stream(
+                "POST", "/v1/chat/completions", json={**_CHAT_BODY, "stream": True}
+            ) as response,
+        ):
             chunks = [chunk async for chunk in response.aiter_bytes()]
         return b"".join(chunks)
 

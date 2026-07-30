@@ -100,8 +100,12 @@ def _spend(client: TestClient, key: str, *, amount: str) -> dict[str, object]:
     verdict = client.post(
         "/transactions/authorize",
         json={
-            "agent": "ops", "entity": "us", "vendor": "somesaas",
-            "amount": amount, "currency": "USD", "reason": "seat",
+            "agent": "ops",
+            "entity": "us",
+            "vendor": "somesaas",
+            "amount": amount,
+            "currency": "USD",
+            "reason": "seat",
         },
         headers=_headers(key),
     ).json()
@@ -162,9 +166,7 @@ def test_taxable_state_tx_self_assesses_use_tax(
     assert _exceptions(db_session, tx_id) == []  # confident → no flag
 
 
-def test_exempt_state_ca_books_no_tax(
-    client: TestClient, db_session: Session
-) -> None:
+def test_exempt_state_ca_books_no_tax(client: TestClient, db_session: Session) -> None:
     """CA (exempt): zero tax, a plain Dr Expense / Cr Wallet pair, no flag (TE-2)."""
     company, key = _make_us_company(db_session, us_state="CA")
     body = _spend(client, key, amount="100")
@@ -175,9 +177,7 @@ def test_exempt_state_ca_books_no_tax(
     assert _exceptions(db_session, tx_id) == []
 
 
-def test_split_state_ia_is_b2b_exempt(
-    client: TestClient, db_session: Session
-) -> None:
+def test_split_state_ia_is_b2b_exempt(client: TestClient, db_session: Session) -> None:
     """IA (split state) resolves to its B2B branch — exempt, zero tax (TE-2)."""
     company, key = _make_us_company(db_session, us_state="IA")
     body = _spend(client, key, amount="100")

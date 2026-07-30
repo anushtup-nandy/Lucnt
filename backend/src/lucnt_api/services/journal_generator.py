@@ -45,8 +45,18 @@ _ZERO = Decimal("0")
 # words, so "roads" no longer matches "ads" and "metabase" no longer matches
 # "meta". Plurals are listed explicitly (word-boundary alone misses "airlines").
 _TRAVEL_KEYWORDS = frozenset(
-    {"airline", "airlines", "airways", "flight", "flights",
-     "travel", "hotel", "hotels", "booking", "expedia"}
+    {
+        "airline",
+        "airlines",
+        "airways",
+        "flight",
+        "flights",
+        "travel",
+        "hotel",
+        "hotels",
+        "booking",
+        "expedia",
+    }
 )
 _MARKETING_KEYWORDS = frozenset({"ads", "meta", "canva", "marketing", "linkedin"})
 

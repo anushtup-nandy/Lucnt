@@ -239,9 +239,7 @@ def _make_async_metered_call(
         # bookkeeping must never destroy what the customer paid for (T5-1).
         # ---------------------------------------------------------------------
         if streaming:
-            return _metered_astream(
-                adapter, verdict, response, requested_model=model
-            )
+            return _metered_astream(adapter, verdict, response, requested_model=model)
         await _book_async(adapter, verdict, response, requested_model=model)
         return response
 
@@ -345,9 +343,7 @@ async def _metered_astream(
                 last_usage_chunk = chunk
             yield chunk
     except BaseException:
-        await _book_streamed_async(
-            adapter, verdict, last_usage_chunk, requested_model
-        )
+        await _book_streamed_async(adapter, verdict, last_usage_chunk, requested_model)
         raise
     await _book_streamed_async(adapter, verdict, last_usage_chunk, requested_model)
 
@@ -406,9 +402,7 @@ async def _book_streamed_async(
                 verdict.authorization_id,
             )
         return
-    await _book_async(
-        adapter, verdict, usage_chunk, requested_model=requested_model
-    )
+    await _book_async(adapter, verdict, usage_chunk, requested_model=requested_model)
 
 
 class _MeteredStreamManager:
@@ -498,9 +492,7 @@ class _MeteredStreamManager:
                 exc_info=True,
             )
         if self._verdict is not None:
-            _book_streamed(
-                self._adapter, self._verdict, final, self._requested_model
-            )
+            _book_streamed(self._adapter, self._verdict, final, self._requested_model)
         return result
 
     def __getattr__(self, name: str) -> Any:

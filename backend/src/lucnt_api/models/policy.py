@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text
@@ -21,7 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
-class PolicyRuleType(str, enum.Enum):
+class PolicyRuleType(enum.StrEnum):
     """The kind of rule a policy encodes; selects the config schema + evaluator."""
 
     BUDGET_CAP = "budget_cap"
@@ -31,7 +31,7 @@ class PolicyRuleType(str, enum.Enum):
     TIME_OF_DAY = "time_of_day"
 
 
-class PolicyScopeType(str, enum.Enum):
+class PolicyScopeType(enum.StrEnum):
     """Whether a policy applies company-wide or to a single agent.
 
     `company` policies (`scope_id is None`) form the base layer; `agent`
@@ -87,6 +87,6 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     block_count: Mapped[int] = mapped_column(default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

@@ -9,7 +9,7 @@ into `compute_tax` (T1-12); these tests state it explicitly.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -85,7 +85,7 @@ def _txn(
         category=category,
         model_used=model_used,
         tokens_consumed=tokens_consumed,
-        transaction_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        transaction_date=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
 
@@ -120,7 +120,9 @@ def test_reverse_charge_journal() -> None:
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
         rate=_IN_RATE,
-        vendor_country="IN", entity_country="IN", vendor_registered_in=(),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=(),
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -143,7 +145,9 @@ def test_domestic_gst_journal_nets_expense() -> None:
         paid_currency=txn.paid_currency,
         entity_currency=entity.currency,
         rate=_IN_RATE,
-        vendor_country="IN", entity_country="IN", vendor_registered_in=("IN",),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=("IN",),
     )
     lines = generate_journal(txn, entity, tax, _accounts())
 
@@ -210,12 +214,16 @@ def test_caller_category_overrides_vendor_inference() -> None:
     """An explicit, known caller category wins over vendor inference (T1-19)."""
     entity = Entity(code="us", currency="USD")
     txn = _txn(
-        paid_amount=Decimal("10"), paid_currency="USD",
-        vendor="mystery vendor", category="travel",
+        paid_amount=Decimal("10"),
+        paid_currency="USD",
+        vendor="mystery vendor",
+        category="travel",
     )
     tax = compute_tax(
-        tax_regime="US-Sales-Tax", functional_amount=txn.local_amount,
-        paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        tax_regime="US-Sales-Tax",
+        functional_amount=txn.local_amount,
+        paid_currency=txn.paid_currency,
+        entity_currency=entity.currency,
         rate=_ZERO,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
@@ -235,8 +243,10 @@ def test_whole_token_vendor_matching(vendor: str, expected_code: str) -> None:
     entity = Entity(code="us", currency="USD")
     txn = _txn(paid_amount=Decimal("10"), paid_currency="USD", vendor=vendor)
     tax = compute_tax(
-        tax_regime="US-Sales-Tax", functional_amount=txn.local_amount,
-        paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        tax_regime="US-Sales-Tax",
+        functional_amount=txn.local_amount,
+        paid_currency=txn.paid_currency,
+        entity_currency=entity.currency,
         rate=_ZERO,
     )
     lines = generate_journal(txn, entity, tax, _accounts())
@@ -247,15 +257,21 @@ def test_blocked_itc_rcm_books_tax_into_expense() -> None:
     """Blocked-ITC RCM (IN travel): no input-credit leg; GST is a cost (T1-14)."""
     entity = Entity(code="in", currency="INR")
     txn = _txn(
-        paid_amount=Decimal("100"), paid_currency="USD",
-        vendor="grand hotel", category="travel",
+        paid_amount=Decimal("100"),
+        paid_currency="USD",
+        vendor="grand hotel",
+        category="travel",
     )
     tax = compute_tax(
-        tax_regime="IN-GST", functional_amount=txn.local_amount,
-        paid_currency=txn.paid_currency, entity_currency=entity.currency,
+        tax_regime="IN-GST",
+        functional_amount=txn.local_amount,
+        paid_currency=txn.paid_currency,
+        entity_currency=entity.currency,
         rate=_IN_RATE,
         expense_category="travel",
-        vendor_country="IN", entity_country="IN", vendor_registered_in=(),
+        vendor_country="IN",
+        entity_country="IN",
+        vendor_registered_in=(),
     )
     lines = generate_journal(txn, entity, tax, _accounts())
     _assert_balances(lines)

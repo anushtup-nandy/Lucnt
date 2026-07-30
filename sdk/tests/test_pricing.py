@@ -147,9 +147,9 @@ def test_estimate_uses_the_packs_heuristics() -> None:
     estimate = adapter.estimate_cost({"model": "claude-opus-5", "messages": ""})
     # Input estimate floors at 1 token for an empty payload; output falls back
     # to the pack's default_output_tokens.
-    expected = (
-        input_price * 1 + output_price * pack.default_output_tokens
-    ) / Decimal(1_000_000)
+    expected = (input_price * 1 + output_price * pack.default_output_tokens) / Decimal(
+        1_000_000
+    )
     assert estimate == expected.quantize(Decimal("0.0001"))
 
 
@@ -306,9 +306,7 @@ def test_pricing_feed_off_never_touches_the_network(
     feed_env: Callable[..., list[str]],
 ) -> None:
     hits = feed_env(_feed_payload())
-    config.configure(
-        api_key="sk_test", base_url="https://api.test", pricing_feed=False
-    )
+    config.configure(api_key="sk_test", base_url="https://api.test", pricing_feed=False)
     adapter = AnthropicAdapter()
     assert hits == []
     assert adapter.pricing["claude-opus-5"] == (Decimal("5.00"), Decimal("25.00"))

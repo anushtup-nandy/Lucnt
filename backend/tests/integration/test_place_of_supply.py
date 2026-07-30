@@ -125,8 +125,13 @@ def _spend(
     verdict = client.post(
         "/transactions/authorize",
         json={
-            "agent": "research", "entity": "in", "vendor": vendor,
-            "amount": amount, "currency": currency, "reason": "t", **extra,
+            "agent": "research",
+            "entity": "in",
+            "vendor": vendor,
+            "amount": amount,
+            "currency": currency,
+            "reason": "t",
+            **extra,
         },
         headers=_headers(key),
     ).json()
@@ -186,7 +191,9 @@ def test_vendor_crud_create_enrich_and_conflicts(
     created = client.post(
         "/vendors",
         json={
-            "name": "Zoho", "country": "in", "state": "ka",
+            "name": "Zoho",
+            "country": "in",
+            "state": "ka",
             "gst_registered_in": ["in"],
         },
         headers=_headers(key),
@@ -220,16 +227,16 @@ def test_vendor_crud_create_enrich_and_conflicts(
     assert forbidden.status_code == 403
 
 
-def test_vendor_withholding_docs_crud(
-    client: TestClient, db_session: Session
-) -> None:
+def test_vendor_withholding_docs_crud(client: TestClient, db_session: Session) -> None:
     """TRC / Form 10F onboarding fields round-trip through create + patch (TE-3)."""
     company, _, key = _make_in_company(db_session)
     created = client.post(
         "/vendors",
         json={
-            "name": "OpenAI", "country": "US",
-            "trc_on_file": True, "trc_expiry": "2027-03-31",
+            "name": "OpenAI",
+            "country": "US",
+            "trc_on_file": True,
+            "trc_expiry": "2027-03-31",
             "form_10f_on_file": True,
         },
         headers=_headers(key),
@@ -255,7 +262,9 @@ def test_intra_state_domestic_splits_cgst_sgst(
     client.post(
         "/vendors",
         json={
-            "name": "Zoho", "country": "IN", "state": "KA",
+            "name": "Zoho",
+            "country": "IN",
+            "state": "KA",
             "gst_registered_in": ["IN"],
         },
         headers=_headers(key),
@@ -283,7 +292,9 @@ def test_tax_record_stamps_applied_rule(
     client.post(
         "/vendors",
         json={
-            "name": "Zoho", "country": "IN", "state": "KA",
+            "name": "Zoho",
+            "country": "IN",
+            "state": "KA",
             "gst_registered_in": ["IN"],
         },
         headers=_headers(key),
@@ -361,7 +372,11 @@ def test_imported_goods_route_to_customs_not_rcm(
         headers=_headers(key),
     )
     body = _spend(
-        client, key, vendor="HardwareCo", amount="100", currency="USD",
+        client,
+        key,
+        vendor="HardwareCo",
+        amount="100",
+        currency="USD",
         supply_type="goods",
     )
     tx_id = str(body["id"])
@@ -374,9 +389,7 @@ def test_imported_goods_route_to_customs_not_rcm(
     assert exc[0].evidence_json["reason"] == "goods_customs_review"
 
 
-def test_domestic_goods_use_normal_gst(
-    client: TestClient, db_session: Session
-) -> None:
+def test_domestic_goods_use_normal_gst(client: TestClient, db_session: Session) -> None:
     """Domestic goods (same country) are taxed as normal GST, not customs (TE-4)."""
     company, _, key = _make_in_company(db_session)
     client.post(
@@ -385,7 +398,11 @@ def test_domestic_goods_use_normal_gst(
         headers=_headers(key),
     )
     body = _spend(
-        client, key, vendor="LocalHW", amount="118", currency="INR",
+        client,
+        key,
+        vendor="LocalHW",
+        amount="118",
+        currency="INR",
         supply_type="goods",
     )
     assert body["tax"]["tax_type"] == "GST"  # domestic GST, not CUSTOMS
@@ -473,7 +490,9 @@ def test_enrichment_reflags_divergent_history_without_rewriting(
     created = client.post(
         "/vendors",
         json={
-            "name": "Acme", "country": "IN", "state": "KA",
+            "name": "Acme",
+            "country": "IN",
+            "state": "KA",
             "gst_registered_in": ["IN"],
         },
         headers=_headers(key),
@@ -536,7 +555,11 @@ def test_tax_exclusive_books_gst_on_top(
         headers=_headers(key),
     )
     body = _spend(
-        client, key, vendor="LocalCorp", amount="100", currency="INR",
+        client,
+        key,
+        vendor="LocalCorp",
+        amount="100",
+        currency="INR",
         tax_inclusive=False,
     )
     tx_id = str(body["id"])
@@ -547,9 +570,7 @@ def test_tax_exclusive_books_gst_on_top(
     assert rows[0].tax_amount == Decimal("18.0000")
 
 
-def test_rate_slab_taxes_at_that_rate(
-    client: TestClient, db_session: Session
-) -> None:
+def test_rate_slab_taxes_at_that_rate(client: TestClient, db_session: Session) -> None:
     """A `tax_category` slab books at that GST rate, not the 18% default (T1-10)."""
     company, _, key = _make_in_company(db_session)
     client.post(
@@ -558,7 +579,11 @@ def test_rate_slab_taxes_at_that_rate(
         headers=_headers(key),
     )
     body = _spend(
-        client, key, vendor="LocalCorp", amount="105", currency="INR",
+        client,
+        key,
+        vendor="LocalCorp",
+        amount="105",
+        currency="INR",
         tax_category="gst_5",
     )
     tx_id = str(body["id"])
@@ -568,16 +593,18 @@ def test_rate_slab_taxes_at_that_rate(
     assert _debit(db_session, tx_id, "1400") == Decimal("5.0000")
 
 
-def test_unknown_slab_fails_closed(
-    client: TestClient, db_session: Session
-) -> None:
+def test_unknown_slab_fails_closed(client: TestClient, db_session: Session) -> None:
     """An unconfigured slab is a clean 422 at capture, never a guessed rate."""
     company, _, key = _make_in_company(db_session)
     verdict = client.post(
         "/transactions/authorize",
         json={
-            "agent": "research", "entity": "in", "vendor": "LocalCorp",
-            "amount": "100", "currency": "INR", "reason": "t",
+            "agent": "research",
+            "entity": "in",
+            "vendor": "LocalCorp",
+            "amount": "100",
+            "currency": "INR",
+            "reason": "t",
             "tax_category": "gst_99",
         },
         headers=_headers(key),
@@ -598,7 +625,9 @@ def test_reversal_negates_each_head_component(
     client.post(
         "/vendors",
         json={
-            "name": "Zoho", "country": "IN", "state": "KA",
+            "name": "Zoho",
+            "country": "IN",
+            "state": "KA",
             "gst_registered_in": ["IN"],
         },
         headers=_headers(key),

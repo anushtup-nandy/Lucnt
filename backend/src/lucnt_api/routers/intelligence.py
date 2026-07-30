@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Collection, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, TypeAlias
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func, or_, select
@@ -86,7 +86,7 @@ _LEDGER_CHUNK_SIZE = 1_000
 
 # The column tuple `recompute` selects, in SELECT order. Declared next to
 # `_record_from_row` so the projection and its unpack cannot silently drift.
-_SpendRow: TypeAlias = tuple[
+type _SpendRow = tuple[
     uuid.UUID,  # agent_id
     str,  # vendor
     Decimal,  # local_amount
@@ -240,7 +240,7 @@ def recompute(
     persist as a record of the action a human took). Idempotent — a second call
     with no new spend yields the same state.
     """
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     agents = {
         a.id: a
         for a in db.execute(

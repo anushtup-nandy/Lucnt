@@ -216,9 +216,7 @@ def test_manual_journal_line_must_be_one_sided(
     assert resp.status_code == 422
 
 
-def test_write_endpoints_require_admin(
-    client: TestClient, db_session: Session
-) -> None:
+def test_write_endpoints_require_admin(client: TestClient, db_session: Session) -> None:
     """A runtime-scoped key cannot post manual journals or funding (T0-12)."""
     company = _make_company(db_session)
     _make_entity(db_session, company)
@@ -360,7 +358,5 @@ def test_manual_journal_periodises_by_posting_date(
     ).json()
     assert Decimal(str(_totals(inside)["total_debit"])) == Decimal("77")
 
-    outside = client.get(
-        "/books/tb?date_from=2031-01-01", headers=_headers(key)
-    ).json()
+    outside = client.get("/books/tb?date_from=2031-01-01", headers=_headers(key)).json()
     assert outside["currencies"] == []

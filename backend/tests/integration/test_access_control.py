@@ -128,9 +128,7 @@ def test_runtime_key_cannot_raise_its_own_budget(
     assert resp.status_code == 403
 
 
-def test_admin_key_can_raise_budget(
-    client: TestClient, db_session: Session
-) -> None:
+def test_admin_key_can_raise_budget(client: TestClient, db_session: Session) -> None:
     company, agent = _seed(db_session)
     admin_key = _make_key(db_session, company, scope=ApiKeyScope.ADMIN)
 

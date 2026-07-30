@@ -83,9 +83,7 @@ _DEFAULT_RESPECT_RETRY_AFTER: bool = LucntConfig.model_fields[
     "respect_retry_after"
 ].default
 _DEFAULT_PRICING_FEED: bool = LucntConfig.model_fields["pricing_feed"].default
-_DEFAULT_PRICING_FEED_TTL: float = LucntConfig.model_fields[
-    "pricing_feed_ttl"
-].default
+_DEFAULT_PRICING_FEED_TTL: float = LucntConfig.model_fields["pricing_feed_ttl"].default
 
 
 def _require_secure_base_url(base_url: str) -> None:
@@ -172,9 +170,7 @@ def configure(
         _active_config = LucntConfig(
             api_key=SecretStr(resolved_key),
             base_url=resolved_base_url,
-            timeout=_resolve(
-                timeout, _env_float("LUCNT_TIMEOUT"), _DEFAULT_TIMEOUT
-            ),
+            timeout=_resolve(timeout, _env_float("LUCNT_TIMEOUT"), _DEFAULT_TIMEOUT),
             # Both stay None when unset — the transport falls back to `timeout`.
             connect_timeout=_first(
                 connect_timeout, _env_float("LUCNT_CONNECT_TIMEOUT")

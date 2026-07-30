@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 _WINDOW_SECONDS = 60
 
 
-class Bucket(str, enum.Enum):
+class Bucket(enum.StrEnum):
     """A named limit. The value is part of the Redis key, so keep it stable.
 
     `str, Enum` rather than `enum.StrEnum` — the project targets Python 3.10.

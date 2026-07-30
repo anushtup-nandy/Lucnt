@@ -44,7 +44,9 @@ def list_api_keys(
     total = count_total(db, stmt)
     rows = (
         db.execute(
-            stmt.order_by(ApiKey.created_at.desc()).offset(page.offset).limit(page.limit)
+            stmt.order_by(ApiKey.created_at.desc())
+            .offset(page.offset)
+            .limit(page.limit)
         )
         .scalars()
         .all()
