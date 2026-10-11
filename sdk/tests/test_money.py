@@ -1,4 +1,4 @@
-"""Money must be exact at the SDK's input boundary (T5-10).
+"""Money must be exact at the SDK's input boundary.
 
 `float` was accepted through 0.x and is rejected from 1.0.0. These tests pin
 both halves of that: the rejection, and the fact that every *exact* form still

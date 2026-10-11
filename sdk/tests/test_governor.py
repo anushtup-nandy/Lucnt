@@ -1,4 +1,4 @@
-"""Unit tests for the transport-layer governor (F-1).
+"""Unit tests for the transport-layer governor.
 
 The governor is exercised directly through `httpx.Client` objects whose inner
 transport is an `httpx.MockTransport` playing the vendor — no vendor SDK is
@@ -707,7 +707,7 @@ def test_a_gzipped_json_response_is_booked_and_stays_readable(
 def test_embeddings_are_governed_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F-13: embeddings are real spend and were entirely invisible."""
+    """Embeddings are real spend and were entirely invisible."""
     recorder = _Ledger()
     _stub_ledger(monkeypatch, recorder)
 
@@ -738,7 +738,7 @@ def test_embeddings_are_governed_end_to_end(
 def test_the_responses_api_is_governed_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F-13: the Responses API is where OpenAI is steering new work."""
+    """The Responses API is where OpenAI is steering new work."""
     recorder = _Ledger()
     _stub_ledger(monkeypatch, recorder)
 

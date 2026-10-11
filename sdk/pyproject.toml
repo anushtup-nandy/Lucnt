@@ -1,6 +1,6 @@
 [project]
 name = "lucnt"
-# T5-7: single-sourced from src/lucnt/_version.py — never hardcode it here again.
+# Single-sourced from src/lucnt/_version.py — never hardcode it here again.
 dynamic = ["version"]
 description = "Financial infrastructure that attaches to your existing agents."
 readme = "README.md"
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-# T5-10: cap the majors. `httpx>=0.27` alone would happily install a 1.x that
+# Cap the majors. `httpx>=0.27` alone would happily install a 1.x that
 # breaks the transport; same for a hypothetical pydantic 3.
 dependencies = [
     "httpx>=0.27,<1.0",
@@ -53,7 +53,7 @@ path = "src/lucnt/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/lucnt"]
 
-# Open source ships an sdist as well as a wheel (T5-7). Tests and the acceptance
+# Open source ships an sdist as well as a wheel. Tests and the acceptance
 # example go in it deliberately — a consumer auditing money-path code wants them.
 [tool.hatch.build.targets.sdist]
 include = [
@@ -80,8 +80,8 @@ addopts = "-q"
 target-version = "py310"
 line-length = 88
 # Newer ruff (≥0.16) formats Python code blocks inside markdown and broke the
-# `ruff format --check .` CI gate on PLAN.md — snippets there are hand-laid for
-# reading, not gated code. Keep the formatter out of prose.
+# `ruff format --check .` CI gate on markdown — snippets there are hand-laid
+# for reading, not gated code. Keep the formatter out of prose.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
@@ -108,8 +108,8 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "N"]
 "tests-realclient/**" = ["D", "N"]
-# PolicyBlocked / BudgetExhausted are the documented public exception names
-# (sdk/PLAN.md §2, §7) — no Error suffix by design.
+# PolicyBlocked / BudgetExhausted are the documented public exception names —
+# no Error suffix by design.
 "src/lucnt/exceptions.py" = ["N818"]
 
 # -----------------------------------------------------------------------------

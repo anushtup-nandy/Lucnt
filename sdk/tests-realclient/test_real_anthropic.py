@@ -1,6 +1,6 @@
-"""F-1/F-11/F-18 acceptance against the REAL `anthropic` client.
+"""Acceptance against the REAL `anthropic` client.
 
-Closes F-18's gap too: the streaming wrappers were only ever asserted against
+Closes a gap too: the streaming wrappers were only ever asserted against
 hand-written fake context managers, because `anthropic` is deliberately not a
 dependency of this package. Here the real `MessageStream` machinery parses the
 harness's SSE bytes and `get_final_message()` is the real helper.
@@ -44,7 +44,7 @@ def test_sync_stream_books_from_the_real_final_message(
     manager = client.messages.stream(
         model="claude-opus-5", max_tokens=64, messages=_MESSAGES
     )
-    # F-11: a manager built but not yet entered has minted no hold.
+    # A manager built but not yet entered has minted no hold.
     assert state.authorizes == []
     with manager as stream:
         text = "".join(stream.text_stream)

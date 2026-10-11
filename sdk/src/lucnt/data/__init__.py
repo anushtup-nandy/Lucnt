@@ -1,4 +1,4 @@
-"""Packaged data files (T5-12 domain content).
+"""Packaged data files (domain content).
 
 A real package rather than a namespace directory: `importlib.resources.files()`
 is only reliably resolvable for an importable package, and this must work from

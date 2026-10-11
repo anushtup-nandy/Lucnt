@@ -1,11 +1,11 @@
-"""Packaged pricing data pack — domain content, not operator configuration (T5-12).
+"""Packaged pricing data pack — domain content, not operator configuration.
 
 Vendor token prices, the pre-call estimate heuristics, and each vendor's billing
 currency live in a JSON file shipped inside the wheel rather than as module
 constants in `adapters/*`. Two reasons: a new model id becomes a data change
 instead of a code change (an unpriced model otherwise hard-blocks the customer's
-own LLM calls — T5-10), and the table stops being source code that has to be
-audited before the package goes public (T5-7d).
+own LLM calls), and the table stops being source code that has to be
+audited before the package goes public.
 
 **No on-disk discovery, deliberately.** A library that hunts for a `lucnt.toml`
 in the customer's working directory behaves differently depending on where their
@@ -13,7 +13,7 @@ process was started, and reading arbitrary files off their filesystem is a
 security smell in a dependency. The pack is read from the installed package
 only; per-process overrides arrive as arguments (`meter(pricing=...)`).
 
-**The server feed is the authority; the pack is the offline fallback (F-2).**
+**The server feed is the authority; the pack is the offline fallback.**
 `load_active_pack()` fetches `GET /pricing/feed` — where date-ranged rates are
 resolved server-side against *today*, so a lapsing introductory rate never
 requires a client release — merges it over the packaged pack (feed wins per
@@ -75,7 +75,7 @@ class PricingPack:
             estimate. Estimate-only — never used to price actual usage.
         default_output_tokens: Assumed output length when the request sets no
             explicit cap.
-        image_tokens: Tokens charged per image in the pre-call estimate (T5-10).
+        image_tokens: Tokens charged per image in the pre-call estimate.
             A flat figure because the request cannot be priced properly without
             decoding the image: vendors bill roughly by pixel area, which is not
             knowable from a base64 payload without parsing it, and a client
@@ -217,7 +217,7 @@ def load_pricing_pack() -> PricingPack:
 
 
 # --------------------------------------------------------------------------- #
-# The server-fetched feed (F-2)
+# The server-fetched feed
 # --------------------------------------------------------------------------- #
 
 _feed_lock = threading.Lock()
@@ -295,7 +295,7 @@ def _feed_enabled() -> tuple[bool, float]:
 
 
 def load_active_pack() -> PricingPack:
-    """The pricing every adapter prices against: feed-merged, pack-fallback (F-2).
+    """The pricing every adapter prices against: feed-merged, pack-fallback.
 
     Fetches the feed at most once per `pricing_feed_ttl` (a failed fetch is
     cached for the same TTL, so a feed outage costs one connect error per TTL,
@@ -321,7 +321,7 @@ def load_active_pack() -> PricingPack:
             pass
         else:
             # A blocking fetch would stall every coroutine in the process
-            # (the T5-6 rule). Use what we have; do not poison the TTL cache.
+            # (the async rule). Use what we have; do not poison the TTL cache.
             feed = state[1] if state is not None else None
             return _merge_feed(pack, feed) if feed is not None else pack
         try:

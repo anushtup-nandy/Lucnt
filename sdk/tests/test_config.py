@@ -59,7 +59,7 @@ def test_get_config_returns_active_config() -> None:
 
 
 def test_api_key_masked_in_repr() -> None:
-    """SecretStr keeps the key out of any repr / log / traceback (T0-19)."""
+    """SecretStr keeps the key out of any repr / log / traceback."""
     cfg = config.configure(api_key="sk_super_secret")
     assert "sk_super_secret" not in repr(cfg)
     assert "sk_super_secret" not in str(cfg)

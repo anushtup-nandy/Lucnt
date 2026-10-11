@@ -30,7 +30,7 @@ from lucnt.pricing import (
     normalize_prices,
 )
 
-# Both stay compiled in, deliberately (T5-12c): `_MILLION` is the pricing unit
+# Both stay compiled in, deliberately: `_MILLION` is the pricing unit
 # itself, and `_FOUR_PLACES` matches the ledger's NUMERIC(18, 4) — making it
 # configurable would let the client round money differently from the books.
 _MILLION = Decimal(1_000_000)
@@ -38,7 +38,7 @@ _FOUR_PLACES = Decimal("0.0001")
 
 
 # Content-block `type` discriminators across both vendors, for the pre-call
-# estimate (T5-10). Kept compiled in rather than in the data pack: these are the
+# estimate. Kept compiled in rather than in the data pack: these are the
 # vendors' wire vocabulary, and a customer overriding them could only break the
 # walker — unlike a price or a model id, there is no per-customer variation to
 # express. Anything unrecognised falls through to the media charge, so a vendor
@@ -52,12 +52,12 @@ def _quantize(amount: Decimal) -> Decimal:
     """Round a cost to the ledger's 4-decimal precision (half-up).
 
     A positive amount is floored at the ledger's smallest unit (0.0001) rather
-    than rounded to zero: the backend refuses zero-amount money (T0-4's
+    than rounded to zero: the backend refuses zero-amount money (its
     `amount > 0` invariant), so a sub-precision spend — 8 embedding tokens,
     say — quantized to 0.0000 would fail authorize outright and bounce a
     settlement into the estimate fallback. Booking the minimum unit
     over-states such a spend by a fraction of a hundredth of a cent, which is
-    the correct direction: never book a real spend as zero (F-13).
+    the correct direction: never book a real spend as zero.
     """
     quantized = amount.quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
     if quantized <= 0 < amount:
@@ -89,15 +89,15 @@ class MeterAdapter:
     Subclasses set `vendor`, `method_path`, and (optionally)
     `output_token_keys`, and implement `matches` + `usage_from_response`.
     Prices and the billing currency come from the packaged data pack keyed by
-    `vendor` (T5-12), not from a class attribute — so adding a model id is a
+    `vendor`, not from a class attribute — so adding a model id is a
     data change, and a customer can override one without a release.
     """
 
     vendor: str
     # Dotted path to the metered method, e.g. ("messages", "create").
     method_path: tuple[str, ...]
-    # Dotted path to a *separate* streaming helper that must also be metered
-    # (T5-5). Anthropic's `messages.stream()` is its own method, so wrapping only
+    # Dotted path to a *separate* streaming helper that must also be metered.
+    # Anthropic's `messages.stream()` is its own method, so wrapping only
     # `messages.create` left every streamed call completely unmetered — spend with
     # no ledger row and no error. None when the vendor streams through
     # `method_path` with a `stream=True` kwarg instead.
@@ -120,7 +120,7 @@ class MeterAdapter:
                 override is malformed.
         """
         # Feed-merged when the server feed is reachable, packaged pack
-        # otherwise (F-2); caller overrides below win over both.
+        # otherwise; caller overrides below win over both.
         pack = load_active_pack()
         vendor_pricing = pack.vendors.get(self.vendor)
         if vendor_pricing is None:
@@ -150,7 +150,7 @@ class MeterAdapter:
 
         Vendor knowledge — usage extraction, pricing, which method to wrap — is
         identical for a vendor's sync and async clients, so one adapter serves
-        both and only `meter()`'s call wrapper differs (T5-6). See `is_async`.
+        both and only `meter()`'s call wrapper differs. See `is_async`.
         """
         raise NotImplementedError
 
@@ -179,7 +179,7 @@ class MeterAdapter:
 
     @staticmethod
     def is_streaming_request(kwargs: Mapping[str, Any]) -> bool:
-        """True when this request asks the vendor to stream (T5-5).
+        """True when this request asks the vendor to stream.
 
         Both vendors spell it `stream=True` on the completion call. A streamed
         response is an iterator, not a message, so `usage_from_response` cannot
@@ -188,7 +188,7 @@ class MeterAdapter:
         return kwargs.get("stream") is True
 
     def _snapshot_base(self, model: str) -> str | None:
-        """Find the priced base id that `model` is a dated snapshot of (T5-2).
+        """Find the priced base id that `model` is a dated snapshot of.
 
         Vendors publish a stable alias plus dated snapshots of it —
         `gpt-4o-2024-08-06`, `claude-haiku-4-5-20251001` — billed at the alias's
@@ -276,7 +276,7 @@ class MeterAdapter:
         return len(text) // self._chars_per_token
 
     def _block_tokens(self, block: object) -> int:
-        """Estimate one content block, charging media as media (T5-10).
+        """Estimate one content block, charging media as media.
 
         The bug this replaces: the estimate used to be
         `len(str(messages)) // 4`, which counted a **base64 payload as text**. A

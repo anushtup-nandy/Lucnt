@@ -13,7 +13,7 @@ from lucnt.models import LucntConfig
 
 _DEFAULT_BASE_URL = "https://api.lucnt.dev"
 _DEFAULT_TIMEOUT = 30.0
-# Safety control, not a knob (T5-12): http:// is permitted only against these
+# Safety control, not a knob: http:// is permitted only against these
 # hosts. Exposing this to configuration would be a switch that disables TLS.
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
@@ -74,7 +74,7 @@ def _resolve(explicit: _T | None, env: _T | None, default: _T) -> _T:
 
 
 # Defaults are declared once, on `LucntConfig`, and read back here rather than
-# retyped — the same single-source discipline `_version.py` gets (T5-7). A
+# retyped — the same single-source discipline `_version.py` gets. A
 # second copy of "max_retries is 2" is a copy that eventually disagrees.
 _DEFAULT_MAX_RETRIES: int = LucntConfig.model_fields["max_retries"].default
 _DEFAULT_BACKOFF_BASE: float = LucntConfig.model_fields["backoff_base"].default
@@ -89,7 +89,7 @@ _DEFAULT_PRICING_FEED_TTL: float = LucntConfig.model_fields["pricing_feed_ttl"].
 def _require_secure_base_url(base_url: str) -> None:
     """Reject a plaintext base URL so the Bearer key never crosses the wire raw.
 
-    `http://` is allowed only for a localhost dev backend (T0-19).
+    `http://` is allowed only for a localhost dev backend.
     """
     parsed = urlparse(base_url)
     if parsed.scheme == "https":
@@ -140,8 +140,8 @@ def configure(
             from `Retry-After`. Env: `LUCNT_BACKOFF_MAX`.
         respect_retry_after: Honour a server `Retry-After` header in place of
             computed backoff. Env: `LUCNT_RESPECT_RETRY_AFTER`.
-        pricing_feed: Fetch vendor pricing from the backend's `/pricing/feed`
-            (F-2), merging it over the packaged pack; the pack alone is used
+        pricing_feed: Fetch vendor pricing from the backend's `/pricing/feed`,
+            merging it over the packaged pack; the pack alone is used
             when disabled or unreachable. Env: `LUCNT_PRICING_FEED`.
         pricing_feed_ttl: Seconds a fetched feed (or a failed fetch) is cached
             before re-fetching. Env: `LUCNT_PRICING_FEED_TTL`.

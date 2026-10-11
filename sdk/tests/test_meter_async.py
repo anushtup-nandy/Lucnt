@@ -1,4 +1,4 @@
-"""`meter()` must govern async vendor clients too (T5-6).
+"""`meter()` must govern async vendor clients too.
 
 Before this, `meter(AsyncOpenAI())` raised — which locked out the majority of
 agent code, since anything serving concurrent work uses the async client. These
@@ -120,7 +120,7 @@ def _usage(input_tokens: int = 1_000, output_tokens: int = 500) -> SimpleNamespa
 
 def _vendor_net() -> httpx.Client:
     """See test_meter.py's twin: fakes model the `._client` a real vendor
-    client always carries, so meter() can install the governor (F-1)."""
+    client always carries, so meter() can install the governor."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"unexpected wire request: {request.method} {request.url}")
@@ -299,7 +299,7 @@ def test_detection_prefers_the_method_over_the_class_name() -> None:
 
 
 def test_meter_no_longer_rejects_an_async_client() -> None:
-    """The T5-6 headline: this used to raise `LucntError`."""
+    """The headline: this used to raise `LucntError`."""
     metered = meter_fn(AsyncOpenAI(_openai_response()), agent="a", entity="e")
     assert asyncio.iscoroutinefunction(metered.chat.completions.create)
 
@@ -359,7 +359,7 @@ def test_an_async_completion_blocked_by_policy_never_reaches_the_vendor(
 def test_a_failing_async_vendor_call_releases_the_hold_and_reraises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T5-4 on the async path: a hold nobody captures reserves budget forever."""
+    """Void on the async path: a hold nobody captures reserves budget forever."""
     paths, _ = _ledger_recorder(monkeypatch)
     metered = meter_fn(FailingAsyncOpenAI(), agent="research", entity="in")
 
@@ -376,7 +376,8 @@ def test_a_failing_async_vendor_call_releases_the_hold_and_reraises(
 def test_a_backend_failure_after_an_async_call_never_destroys_the_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T5-1 on the async path — the response is the thing the customer bought."""
+    """Best-effort booking on the async path — the response is the thing the
+    customer bought."""
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -522,7 +523,7 @@ def test_an_async_stream_that_errors_midway_is_booked_then_reraises(
 def test_the_async_stream_helper_is_metered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`AsyncAnthropic.messages.stream()` is a separate method (T5-5 + T5-6).
+    """`AsyncAnthropic.messages.stream()` is a separate method.
 
     Left unwrapped, every streamed async call is spend with no ledger row and no
     error — the worst failure mode available.
@@ -640,7 +641,7 @@ def test_a_failing_async_stream_entry_releases_the_hold(
 def test_an_unreadable_async_final_message_books_the_estimate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Best-effort per T5-1: the caller's stream must survive our ignorance."""
+    """Best-effort: the caller's stream must survive our ignorance."""
     paths, bodies = _ledger_recorder(monkeypatch)
 
     class _Stream:

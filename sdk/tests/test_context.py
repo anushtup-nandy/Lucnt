@@ -51,7 +51,7 @@ def test_nested_tasks_restore_outer_context_on_exit() -> None:
         assert get_current_task() is outer_ctx
 
 
-# --- T5-11: operation() ambient idempotency scope ----------------------------
+# --- operation() ambient idempotency scope ----------------------------
 
 
 def test_get_current_operation_is_none_outside_an_operation_block() -> None:

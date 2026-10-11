@@ -3,7 +3,7 @@
 Both are contextvars read by `authorize()` so a caller sets them once and every
 call inside the block inherits them. `task()` answers *who is spending and why*;
 `operation()` answers *which logical spend this is*, which is what makes the
-caller's own retry loop safe (T5-11).
+caller's own retry loop safe.
 """
 
 from __future__ import annotations
@@ -130,9 +130,9 @@ def operation(op_id: str) -> Iterator[str]:
     """Name one logical spend so *your* retry of it replays instead of re-holding.
 
     `authorize()` auto-generates an idempotency key per call, which makes the
-    SDK's own transport retries safe (T5-3). It cannot help when the retry is
+    SDK's own transport retries safe. It cannot help when the retry is
     yours: calling `spend()` again after a `TransportError` is a new logical
-    spend, gets a fresh key, and mints a second hold — the double-book T0-6
+    spend, gets a fresh key, and mints a second hold — the double-book idempotency
     exists to prevent, failing silently. Naming the operation fixes that,
     because the key is now a property of the operation rather than the call:
 
@@ -186,7 +186,7 @@ def get_current_operation() -> _Operation | None:
 
 
 def bind_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
-    """Bind the current ambient context to `fn` so it survives a thread hop (T5-8).
+    """Bind the current ambient context to `fn` so it survives a thread hop.
 
     A worker thread starts with an empty context, so ambient identity set by
     `task()` does **not** reach code running in a `ThreadPoolExecutor`. Without

@@ -1,7 +1,7 @@
 """Unit tests for lucnt.ledger: authorize() / capture() / spend().
 
 All backend interaction is mocked via httpx.MockTransport — none of this
-needs a live server, per sdk/PLAN.md §6 ("Unit: mock transport").
+needs a live server.
 """
 
 from __future__ import annotations
@@ -198,15 +198,15 @@ def test_capture_sends_the_authorization_id_and_returns_the_transaction(
     tx = ledger.capture(verdict, invoice_url="https://example.test/invoice/1")
     assert tx.id == "tx_1"
     assert tx.approved
-    assert tx.estimated is False  # F-8: absent on the wire means settled truth
-    # F-12: the evidence link round-trips instead of being silently dropped.
+    assert tx.estimated is False  # absent on the wire means settled truth
+    # The evidence link round-trips instead of being silently dropped.
     assert tx.invoice_url == "https://example.test/invoice/1"
 
 
 def test_capture_marks_an_estimate_booked_amount(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F-8: when meter()'s T5-1 fallback books the hold's estimate, the wire
+    """When meter()'s best-effort fallback books the hold's estimate, the wire
     says so, and the backend echoes it back on the booked transaction."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -451,7 +451,7 @@ def test_check_budget_filters_server_side(
 ) -> None:
     """The slug must be pushed to the server, not scanned for client-side.
 
-    `GET /budgets` is paginated (backend T3-3), so a client-side scan of the
+    `GET /budgets` is paginated, so a client-side scan of the
     returned array would report "no budget found" for any agent past the first
     page — an agent that exists reading as absent.
     """
@@ -489,7 +489,7 @@ def test_check_budget_filters_server_side(
     assert isinstance(status, BudgetStatus)
     assert status.agent == "ops"
     assert status.remaining == Decimal("100")
-    # F-10: the read reports what the gate enforces — holds included.
+    # The read reports what the gate enforces — holds included.
     assert status.reserved == Decimal("30")
     assert status.available == Decimal("70")
     assert status.status == "warning"
@@ -499,7 +499,7 @@ def test_check_budget_filters_server_side(
 def test_check_budget_requires_the_reserved_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F-10: a money read must not silently degrade. A backend too old to
+    """A money read must not silently degrade. A backend too old to
     report holds raises `ContractError` naming the mismatch, rather than
     handing the agent a headroom figure the gate would refuse."""
 
@@ -555,7 +555,7 @@ def test_get_transport_rebuilds_after_reconfigure() -> None:
     assert first is not second
 
 
-# --- T5-8: transport singleton thread safety ---------------------------------
+# --- transport singleton thread safety ---------------------------------
 
 
 def test_identical_reconfigure_does_not_rebuild_the_pool() -> None:
@@ -607,7 +607,7 @@ def test_reconfigure_retires_the_old_pool_without_closing_it() -> None:
     assert not first._client.is_closed  # still usable by an in-flight caller
 
 
-# --- T5-8: task() context across a thread hop --------------------------------
+# --- task() context across a thread hop --------------------------------
 
 
 def test_task_context_is_lost_in_a_worker_thread_without_binding() -> None:
@@ -672,7 +672,7 @@ def test_authorize_in_a_bound_worker_attributes_the_right_agent(
     assert seen == ["research"] * 3
 
 
-# --- T0-6: the SDK half of idempotency ---------------------------------------
+# --- the SDK half of idempotency ---------------------------------------
 
 
 def _approved(auth_id: str) -> httpx.Response:
@@ -783,7 +783,7 @@ def test_capture_sends_no_idempotency_key(monkeypatch: pytest.MonkeyPatch) -> No
     assert seen["/transactions/capture"] == [None]
 
 
-# --- T5-11: operation() drives the key, with a payload guardrail -------------
+# --- operation() drives the key, with a payload guardrail -------------
 
 
 def _spend_kwargs(**overrides: object) -> dict[str, object]:
@@ -811,7 +811,7 @@ def test_operation_scope_supplies_the_idempotency_key(
 def test_retrying_the_operation_block_reuses_the_same_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole point of T5-11: the caller's own retry replays the original
+    """The whole point of `operation()`: the caller's own retry replays the original
     hold instead of minting a second one."""
     seen: dict[str, list[str | None]] = {}
     _keys_seen(monkeypatch, seen)
@@ -955,7 +955,7 @@ def test_a_blank_or_oversized_explicit_key_is_rejected(
     assert seen == {}
 
 
-# --- T5-4: void() releases an orphaned hold -----------------------------------
+# --- void() releases an orphaned hold -----------------------------------
 
 
 def _void_handler(

@@ -1,4 +1,4 @@
-"""A 2xx the SDK cannot read must raise `ContractError`, not leak (T5-10).
+"""A 2xx the SDK cannot read must raise `ContractError`, not leak.
 
 Three failures used to escape the SDK's exception hierarchy entirely — a
 `json.JSONDecodeError` from an unparseable body, a `KeyError` from a renamed

@@ -24,7 +24,7 @@ class TransportError(LucntError):
 
 
 class ContractError(LucntError):
-    """Raised when a 2xx response does not match the contract the SDK expects (T5-10).
+    """Raised when a 2xx response does not match the contract the SDK expects.
 
     Sits between the two neighbours it is deliberately *not*: `APIError` is the
     API refusing on purpose, and `TransportError` is retryable. This is neither.
@@ -49,7 +49,7 @@ class ContractError(LucntError):
 
 
 class APIError(LucntError):
-    """Base for 4xx responses the API returned deliberately (T5-9).
+    """Base for 4xx responses the API returned deliberately.
 
     Carries the parsed `detail` rather than the raw response body — a 4xx from
     an edge proxy is often HTML, and interpolating that into a message is how
@@ -127,7 +127,7 @@ class RateLimitError(APIError):
 
 
 class IdempotencyConflict(LucntError):
-    """Raised when one `operation()` scope is used for two different spends (T5-11).
+    """Raised when one `operation()` scope is used for two different spends.
 
     The server replays the first hold for a repeated idempotency key *without
     comparing the payload*, so a second, materially different spend under the

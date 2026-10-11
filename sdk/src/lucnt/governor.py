@@ -1,7 +1,7 @@
-"""Transport-layer governor — every wire request is governed by construction (F-1).
+"""Transport-layer governor — every wire request is governed by construction.
 
 `meter()`'s method wrappers cover the call paths the adapter *names*
-(`chat.completions.create`, `messages.create/stream`). F-1's finding was that a
+(`chat.completions.create`, `messages.create/stream`). The finding was that a
 real vendor client exposes many more paths that reach the network —
 `with_raw_response`, `with_streaming_response`, `responses`, `beta.*`,
 `embeddings` — and every one of them passed through the proxy silently
@@ -30,7 +30,7 @@ path the wrappers do not name.
 price (audio, images, batches, fine-tuning) is refused with a synthetic 403
 naming the path and the escape hatches — `unmetered="allow"` to forward it
 ungoverned (logged, once per path), or the explicit `authorize()`/`capture()`
-primitive. Silent passthrough is the one behaviour F-1 forbids.
+primitive. Silent passthrough is the one behaviour this forbids.
 
 Frameworks that build their own vendor client (LangChain, agents SDKs) are
 covered via `metered_http_client()` / `metered_async_http_client()`: both
@@ -230,7 +230,7 @@ def _usage_from_payload(kind: str, payload: Mapping[str, Any]) -> Usage:
 
     Raises:
         LucntError: The payload carries no readable usage/model — the caller
-            degrades to booking the authorized estimate (T5-1), never raises on.
+            degrades to booking the authorized estimate, never raises on.
     """
     usage = payload.get("usage")
     model = payload.get("model")
@@ -316,7 +316,7 @@ class _SseUsageScanner:
 
 
 # --------------------------------------------------------------------------- #
-# booking + release (best-effort, per T5-1 — never raise after money moved)
+# booking + release (best-effort — never raise after money moved)
 # --------------------------------------------------------------------------- #
 
 
@@ -326,7 +326,7 @@ def _book_wire(
     usage: Usage | None,
     requested_model: str | None,
 ) -> None:
-    """Settle a governed spend, degrading exactly like `meter._book` (T5-1)."""
+    """Settle a governed spend, degrading exactly like `meter._book`."""
     if usage is not None:
         try:
             capture(
@@ -407,7 +407,7 @@ async def _book_wire_async(
 
 
 def _release(verdict: Verdict, reason: str) -> None:
-    """Void a hold whose wire attempt failed, never raising (T5-4)."""
+    """Void a hold whose wire attempt failed, never raising."""
     try:
         void(verdict, reason=reason)
     except Exception:
@@ -492,7 +492,7 @@ class _GovernedByteStream(httpx.SyncByteStream):
 
     Books on every exit path — exhaustion, mid-stream error, and an abandoned
     stream whose `close()` arrives first — because the vendor generated (and
-    charged for) whatever was streamed before the exit (T5-5 reasoning).
+    charged for) whatever was streamed before the exit.
     """
 
     def __init__(
@@ -924,7 +924,7 @@ def metered_http_client(
     unmetered: Unmetered = "block",
     **httpx_kwargs: Any,
 ) -> httpx.Client:
-    """Build an `httpx.Client` whose every request is governed (F-1).
+    """Build an `httpx.Client` whose every request is governed.
 
     The integration point for frameworks that construct their own vendor
     client: anything accepting an `http_client=` — LangChain's `ChatOpenAI`,
@@ -945,7 +945,7 @@ def metered_http_client(
     pass through untouched. Unknown POST paths follow `unmetered`.
 
     **Turn off the vendor SDK's own retries** (`max_retries=0`) and retry at
-    the lucnt layer instead — the same rule as `meter()` (T5-10).
+    the lucnt layer instead — the same rule as `meter()`.
 
     Args:
         vendor: `"openai"` or `"anthropic"` — which wire shapes to expect.
@@ -990,7 +990,7 @@ def metered_async_http_client(
     unmetered: Unmetered = "block",
     **httpx_kwargs: Any,
 ) -> httpx.AsyncClient:
-    """Build a governed `httpx.AsyncClient` (F-1).
+    """Build a governed `httpx.AsyncClient`.
 
     The async twin of `metered_http_client()`; see there for semantics and
     arguments. Pass it as the async `http_client` (LangChain:
@@ -1023,7 +1023,7 @@ def install_governor(
 
     Called by `meter()`. Mutating rather than copying is deliberate: the
     governance must hold even for code that kept a reference to the unwrapped
-    client — the exact failure F-1 describes.
+    client — the exact failure this closes.
 
     Raises:
         LucntError: `client` exposes no httpx client at `._client`. Failing
@@ -1067,5 +1067,5 @@ def install_governor(
         f"{type(client).__module__}.{type(client).__qualname__}: expected an "
         f"httpx.Client or httpx.AsyncClient at `._client`, found "
         f"{type(http_client).__name__}. Without the governor, call paths "
-        f"outside the wrapped methods would reach the vendor unmetered (F-1)."
+        f"outside the wrapped methods would reach the vendor unmetered."
     )

@@ -1,4 +1,4 @@
-"""E2E driver for the lucnt SDK's async surface and hold release (T5-6, T5-4).
+"""E2E driver for the lucnt SDK's async surface and hold release.
 
 `example_agent.py` covers the synchronous primitive. This covers what it cannot:
 the `_async` twins against **real sockets** rather than `httpx.MockTransport`, and
@@ -59,7 +59,7 @@ async def beat_authorize_capture() -> None:
 
 
 async def beat_void_releases_the_hold() -> None:
-    """T5-4 against the real backend: an unspent hold must stop reserving budget.
+    """Void against the real backend: an unspent hold must stop reserving budget.
 
     The bug being closed is silent and permanent: `reserved_spend` counts
     approved-but-uncaptured holds, so a vendor error after `authorize()` shrinks
@@ -191,7 +191,7 @@ async def beat_concurrent_spends() -> None:
 
 
 async def beat_operation_replays_instead_of_double_booking() -> None:
-    """T5-11 against the real dedupe: one op id, two attempts, one hold.
+    """`operation()` against the real dedupe: one op id, two attempts, one hold.
 
     This is the beat that most needs a live server. The guardrail is client-side,
     but the *replay* is the backend looking up a repeated `Idempotency-Key` — a

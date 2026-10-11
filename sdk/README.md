@@ -177,7 +177,7 @@ Requires Python 3.10+.
 
 ## Documentation
 
-Full reference at **[docs.lucnt.dev](https://docs.lucnt.dev)**.
+Source, issues and changelog: **[github.com/anushtup-nandy/lucnt](https://github.com/anushtup-nandy/lucnt)**.
 
 ## License
 

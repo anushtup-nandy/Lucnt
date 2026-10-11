@@ -7,14 +7,14 @@ self-regulation read), `meter()` (Phase 3.5 auto-instrumentation for LLM/vendor
 clients), `mark_failed_delivery()` (Phase 4 recovery hook), and `query()` (Phase 5
 living financial memory), their typed models, and the SDK's exception hierarchy.
 
-**Every call has an `_async` twin** (T5-6) — `spend_async()`, `authorize_async()`,
+**Every call has an `_async` twin** — `spend_async()`, `authorize_async()`,
 `capture_async()`, `void_async()`, `check_budget_async()`, `query_async()`,
 `mark_failed_delivery_async()` — plus `aclose()` for deterministic shutdown.
 `meter()` detects an async vendor client and returns an async-aware proxy, so
 the same call wraps `OpenAI()` and `AsyncOpenAI()`. Calling a synchronous
 function from inside a running event loop raises rather than stalling the loop.
 
-`meter()` also installs a transport-layer governor on the wrapped client (F-1),
+`meter()` also installs a transport-layer governor on the wrapped client,
 so *every* call path that reaches the network is governed — not only the
 documented methods. For frameworks that build their own vendor client
 (LangChain and friends), `metered_http_client()` / `metered_async_http_client()`

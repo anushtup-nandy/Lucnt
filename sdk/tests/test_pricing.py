@@ -1,4 +1,4 @@
-"""Unit tests for the packaged pricing data pack (T5-12)."""
+"""Unit tests for the packaged pricing data pack."""
 
 from __future__ import annotations
 
@@ -174,7 +174,7 @@ def test_resolve_adapter_returns_none_for_an_unknown_client() -> None:
     assert resolve_adapter(object()) is None
 
 
-# --- F-2: the server-fetched pricing feed --------------------------------------
+# --- the server-fetched pricing feed --------------------------------------
 
 
 import asyncio  # noqa: E402
@@ -247,7 +247,7 @@ def _feed_payload(opus_input: str = "7.00") -> dict[str, object]:
 def test_feed_prices_override_the_packaged_pack(
     feed_env: Callable[..., list[str]],
 ) -> None:
-    """F-2: the server feed is authoritative; the wheel's pack is the offline
+    """The server feed is authoritative; the wheel's pack is the offline
     fallback. A feed price wins, and pack-only models stay priced."""
     feed_env(_feed_payload())
     adapter = AnthropicAdapter()
@@ -316,7 +316,7 @@ def test_no_blocking_fetch_inside_a_running_event_loop(
     feed_env: Callable[..., list[str]],
 ) -> None:
     """Constructing an adapter inside a running loop must not do blocking I/O
-    (the T5-6 rule); it uses the cache or the pack and moves on."""
+    (the async rule); it uses the cache or the pack and moves on."""
     hits = feed_env(_feed_payload())
 
     async def main() -> AnthropicAdapter:

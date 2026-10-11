@@ -76,7 +76,7 @@ def test_request_raises_lucnt_error_on_400() -> None:
         transport.request("GET", "/health")
 
 
-# --- T5-9: typed 4xx mapping -------------------------------------------------
+# --- typed 4xx mapping -------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -104,7 +104,7 @@ def test_4xx_maps_to_typed_exception(
 
 
 def test_conflict_is_distinguishable_from_validation_error() -> None:
-    """The point of T5-9: a caller can branch on 409 vs 422."""
+    """The point: a caller can branch on 409 vs 422."""
     transport = _make_transport(
         lambda request: httpx.Response(409, json={"detail": "already captured"})
     )
@@ -173,7 +173,7 @@ def test_5xx_stays_a_transport_error_not_an_api_error() -> None:
     assert not isinstance(excinfo.value, APIError)
 
 
-# --- T0-6: idempotency key forwarding ----------------------------------------
+# --- idempotency key forwarding ----------------------------------------
 
 
 def test_idempotency_key_is_sent_as_header() -> None:
@@ -198,7 +198,7 @@ def test_no_idempotency_header_when_key_omitted() -> None:
     assert seen == [False]
 
 
-# --- T5-3: retries, backoff, jitter ------------------------------------------
+# --- retries, backoff, jitter ------------------------------------------
 
 
 def test_retries_5xx_then_succeeds() -> None:
@@ -331,7 +331,7 @@ def test_exhausted_429_surfaces_typed_rate_limit_error() -> None:
     assert len(calls) == 2
 
 
-# --- T5-10 (partial): connect/read timeout split -----------------------------
+# --- connect/read timeout split -----------------------------
 
 
 def test_timeout_split_is_applied_to_the_client() -> None:

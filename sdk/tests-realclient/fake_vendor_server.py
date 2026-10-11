@@ -1,6 +1,6 @@
 """One local HTTP server playing BOTH the lucnt backend and the vendor APIs.
 
-The point of this harness (F-1): the 380-test unit suite exercises fakes that
+The point of this harness: the 380-test unit suite exercises fakes that
 only expose the paths the adapters name, so it is structurally incapable of
 noticing a vendor call path that bypasses metering. Here the *real* `openai`,
 `anthropic`, and `langchain-openai` libraries make real HTTP calls against this

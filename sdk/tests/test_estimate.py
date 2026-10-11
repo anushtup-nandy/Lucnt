@@ -1,4 +1,4 @@
-"""The pre-call estimate must charge media as media, not as text (T5-10).
+"""The pre-call estimate must charge media as media, not as text.
 
 The estimate exists only to gate `authorize()`. That makes its failure mode
 asymmetric and easy to under-rate: an inflated estimate does not over-bill

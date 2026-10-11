@@ -4,10 +4,10 @@
 (`authorize`, `capture`, `spend`, ...) routes through. They map HTTP failures
 onto the typed exception hierarchy in `exceptions.py` so callers never see a
 bare `httpx` exception, forward the caller's `Idempotency-Key` so a retried
-write replays server-side instead of double-booking (T0-6), and retry transient
-failures with jittered exponential backoff (T5-3).
+write replays server-side instead of double-booking, and retry transient
+failures with jittered exponential backoff.
 
-**The two share every decision and differ only in the lines that do I/O** (T5-6).
+**The two share every decision and differ only in the lines that do I/O**.
 Retry eligibility, the attempt count, the backoff schedule, response
 classification, and the status→exception mapping are all module-level and pure;
 each class contributes a short loop around them. That split is deliberate rather
@@ -49,7 +49,7 @@ _USER_AGENT = f"lucnt-python/{__version__}"
 MAX_IDEMPOTENCY_KEY_CHARS = 255
 
 # A 4xx from an edge proxy is often an HTML error page. Cap what reaches the
-# exception message so a traceback never carries a screenful of markup (T5-9).
+# exception message so a traceback never carries a screenful of markup.
 _MAX_DETAIL_CHARS = 200
 
 # Methods with no side effect, so a retry is safe even without an idempotency
@@ -112,8 +112,8 @@ async def _asleep(seconds: float) -> None:
 
     The async twin of `_sleep`, and patched the same way in tests. Never
     `time.sleep` here: blocking the loop for a backoff delay would stall every
-    other coroutine in the process, which is the whole failure T5-6 exists to
-    remove.
+    other coroutine in the process, which is the whole failure the async
+    transport exists to remove.
     """
     await asyncio.sleep(seconds)
 
@@ -148,7 +148,7 @@ def _parse_detail(response: httpx.Response) -> str | None:
 def _parse_retry_after(response: httpx.Response) -> float | None:
     """Read `Retry-After` as seconds, ignoring the HTTP-date form.
 
-    The backend's limiter (T3-7) always sends delta-seconds; a date-form
+    The backend's limiter always sends delta-seconds; a date-form
     header from an intermediary is dropped rather than guessed at.
     """
     raw = response.headers.get("Retry-After")
@@ -161,7 +161,7 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
 
 
 def _raise_for_error(response: httpx.Response, path: str) -> None:
-    """Map a 4xx response onto the typed exception hierarchy (T5-9)."""
+    """Map a 4xx response onto the typed exception hierarchy."""
     status_code = response.status_code
     detail = _parse_detail(response)
     request_id = response.headers.get("X-Request-Id")
@@ -293,7 +293,7 @@ def _idempotency_headers(idempotency_key: str | None) -> dict[str, str] | None:
 def _timeout(config: LucntConfig) -> httpx.Timeout:
     """Build the per-phase timeout both transports use.
 
-    The connect/read split is T5-10: connect and read fail for different reasons
+    The connect/read split exists because connect and read fail for different reasons
     — a dead host should give up fast, a slow policy evaluation should not. Both
     fall back to the overall timeout.
     """
@@ -357,7 +357,7 @@ class Transport:
             json: Optional JSON request body.
             params: Optional URL query parameters (e.g. for GET reads).
             idempotency_key: Sent as `Idempotency-Key`. The server replays the
-                original result for a repeat key instead of acting twice (T0-6),
+                original result for a repeat key instead of acting twice,
                 which is what makes retrying a write safe — so passing one also
                 marks the request retry-safe.
             retry_safe: Force retry eligibility for a write the server dedupes
@@ -471,7 +471,7 @@ class AsyncTransport:
             json: Optional JSON request body.
             params: Optional URL query parameters (e.g. for GET reads).
             idempotency_key: Sent as `Idempotency-Key`. The server replays the
-                original result for a repeat key instead of acting twice (T0-6),
+                original result for a repeat key instead of acting twice,
                 which is what makes retrying a write safe — so passing one also
                 marks the request retry-safe.
             retry_safe: Force retry eligibility for a write the server dedupes

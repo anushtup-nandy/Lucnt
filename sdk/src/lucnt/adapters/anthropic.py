@@ -4,9 +4,9 @@ Wraps `client.messages.create(...)`; reads `response.usage.input_tokens` /
 `output_tokens` and `response.model`. Detection is by module so `lucnt` never
 imports `anthropic`.
 
-Prices live in the packaged data pack (`lucnt/data/pricing.json`), not here
-(T5-12) — a new model id is a data change, and `meter(pricing=...)` overrides
-one without waiting for a release. Cache-discounted input tokens are billed at
+Prices live in the packaged data pack (`lucnt/data/pricing.json`), not here —
+a new model id is a data change, and `meter(pricing=...)` overrides one
+without waiting for a release. Cache-discounted input tokens are billed at
 the standard input rate (a conservative simplification; cache-aware pricing is
 a future refinement).
 """
@@ -22,13 +22,13 @@ class AnthropicAdapter(MeterAdapter):
 
     vendor = "anthropic"
     method_path = ("messages", "create")
-    # T5-5: `messages.stream()` is a separate method, so wrapping only `create`
+    # `messages.stream()` is a separate method, so wrapping only `create`
     # let every streamed call through completely unmetered.
     stream_method_path = ("messages", "stream")
 
     @classmethod
     def matches(cls, client: object) -> bool:
-        """Match any `anthropic` client — `Anthropic` or `AsyncAnthropic` (T5-6)."""
+        """Match any `anthropic` client — `Anthropic` or `AsyncAnthropic`."""
         return type(client).__module__.split(".", 1)[0] == "anthropic"
 
     def usage_from_response(self, response: object) -> Usage:

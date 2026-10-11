@@ -1,4 +1,4 @@
-"""Fixtures for the real-vendor-client acceptance tests (F-1).
+"""Fixtures for the real-vendor-client acceptance tests.
 
 Requires the real `openai`, `anthropic`, and `langchain-openai` packages —
 run via `sdk/scripts/run_realclient_tests.sh`, which builds the wheel and

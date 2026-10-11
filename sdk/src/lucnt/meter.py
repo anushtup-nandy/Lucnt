@@ -15,11 +15,11 @@ A blocking verdict **raises** (`PolicyBlocked` / `BudgetExhausted`) rather than
 returning — the wrapped method must yield the vendor's response type or nothing,
 so there is no falsy-return option.
 
-**Sync and async clients are both supported** (T5-6): `meter()` detects which it
+**Sync and async clients are both supported**: `meter()` detects which it
 was handed and installs the matching wrapper, so the same call governs `OpenAI()`
 and `AsyncOpenAI()`. The async wrappers mirror the sync ones exactly, including
 the best-effort-bookkeeping rule below. Streaming *context managers* authorize
-on entry on both paths (F-11): the async one because `async with` gives the
+on entry on both paths: the async one because `async with` gives the
 wrapper no earlier point at which it may await, the sync one to match — so a
 manager built and never entered mints no hold on either path.
 
@@ -27,7 +27,7 @@ manager built and never entered mints no hold on either path.
 correct — that is the policy gate doing its job, and no money has moved. Raising
 *after* it is never acceptable, because the customer has already paid and the
 completion is the thing they bought. So post-call bookkeeping is best-effort and
-logged, never fatal (T5-1); see `_book`.
+logged, never fatal; see `_book`.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def _patch_paths(root: object, overrides: Mapping[tuple[str, ...], object]) -> _
 
     Takes every path at once rather than one at a time because sibling
     overrides share a parent: Anthropic needs both `messages.create` and
-    `messages.stream` replaced (T5-5), and patching them independently would
+    `messages.stream` replaced, and patching them independently would
     build two proxies over `messages`, the second discarding the first.
     """
     direct: dict[str, object] = {}
@@ -139,7 +139,7 @@ def _make_metered_call(
                 response = original(*args, **kwargs)
         except BaseException as exc:
             # The vendor call itself failed, so no money moved — but the hold is
-            # still reserving the agent's budget and would do so forever (T5-4).
+            # still reserving the agent's budget and would do so forever.
             # Release it, then re-raise the vendor's error untouched: that is the
             # information the caller needs, and it must not be replaced by
             # anything that goes wrong while cleaning up.
@@ -147,11 +147,11 @@ def _make_metered_call(
             raise
         # ---------------------------------------------------------------------
         # The vendor has now been paid. Everything below is bookkeeping, and
-        # bookkeeping must never destroy what the customer paid for (T5-1).
+        # bookkeeping must never destroy what the customer paid for.
         # ---------------------------------------------------------------------
         if streaming:
             # A streamed response is an iterator whose usage arrives last, so
-            # booking has to wait until the caller has consumed it (T5-5).
+            # booking has to wait until the caller has consumed it.
             return _metered_stream(adapter, verdict, response, requested_model=model)
         _book(adapter, verdict, response, requested_model=model)
         return response
@@ -168,9 +168,9 @@ def _make_metered_stream_call(
     intent: str | None,
     project: str | None,
 ) -> Callable[..., Any]:
-    """Wrap a vendor streaming *helper* (Anthropic `messages.stream`) — T5-5.
+    """Wrap a vendor streaming *helper* (Anthropic `messages.stream`).
 
-    Returns the manager without authorizing (F-11): the hold is taken in
+    Returns the manager without authorizing: the hold is taken in
     `__enter__`, mirroring the async twin, so a manager that is built and never
     entered mints no hold at all. The previous shape authorized eagerly here,
     which left `mgr = client.messages.stream(...)` without a `with` reserving
@@ -203,7 +203,7 @@ def _make_async_metered_call(
     intent: str | None,
     project: str | None,
 ) -> Callable[..., Any]:
-    """Wrap an async vendor completion call with authorize→call→capture (T5-6).
+    """Wrap an async vendor completion call with authorize→call→capture.
 
     Line-for-line the same shape as `_make_metered_call`, awaited. The
     asymmetry that governs the sync version governs this one identically:
@@ -236,7 +236,7 @@ def _make_async_metered_call(
             raise
         # ---------------------------------------------------------------------
         # The vendor has now been paid. Everything below is bookkeeping, and
-        # bookkeeping must never destroy what the customer paid for (T5-1).
+        # bookkeeping must never destroy what the customer paid for.
         # ---------------------------------------------------------------------
         if streaming:
             return _metered_astream(adapter, verdict, response, requested_model=model)
@@ -298,7 +298,7 @@ def _metered_stream(
     *,
     requested_model: object,
 ) -> Any:
-    """Pass a streamed response through, booking once the stream ends (T5-5).
+    """Pass a streamed response through, booking once the stream ends.
 
     Usage arrives on the *last* chunk (OpenAI sends it only with
     `stream_options={"include_usage": True}`), so the actual cost is unknown
@@ -330,7 +330,7 @@ async def _metered_astream(
     *,
     requested_model: object,
 ) -> Any:
-    """Pass an async streamed response through, booking once it ends (T5-6).
+    """Pass an async streamed response through, booking once it ends.
 
     The async twin of `_metered_stream`, and it books on every exit path for the
     same reason: the vendor generated — and charged for — whatever was streamed
@@ -406,20 +406,20 @@ async def _book_streamed_async(
 
 
 class _MeteredStreamManager:
-    """Proxy for a vendor streaming context manager, metered on exit (T5-5).
+    """Proxy for a vendor streaming context manager, metered on exit.
 
     Anthropic's `client.messages.stream(...)` returns a context manager, not an
     iterator, so it needs its own wrapper: authorize on entry, then read the
     completed message on the way out via the documented
     `stream.get_final_message()` helper.
 
-    Authorizes lazily in `__enter__` (F-11), matching the async twin: a manager
+    Authorizes lazily in `__enter__`, matching the async twin: a manager
     that is constructed and never entered mints no hold, and the vendor's own
     stream is not opened either. The failure ordering inside `__enter__` is the
     gate's: authorize first (raising there is policy working, nothing moved),
     and a vendor failure *after* the hold releases it before re-raising.
 
-    Metering is best-effort, per T5-1: if the vendor's stream object does not
+    Metering is best-effort: if the vendor's stream object does not
     expose what we expect, the caller's stream still works and the authorized
     estimate is booked instead.
     """
@@ -501,7 +501,7 @@ class _MeteredStreamManager:
 
 
 class _MeteredAsyncStreamManager:
-    """Proxy for an async vendor streaming context manager, metered on exit (T5-6).
+    """Proxy for an async vendor streaming context manager, metered on exit.
 
     Holds off on authorizing until `__aenter__`. That is forced rather than
     chosen: the wrapper this replaces is called *synchronously* by `async with`,
@@ -509,9 +509,9 @@ class _MeteredAsyncStreamManager:
 
     It also happens to be the better shape — a manager that is constructed and
     never entered mints no hold at all — which is why the sync
-    `_MeteredStreamManager` was reshaped to match it (F-11).
+    `_MeteredStreamManager` was reshaped to match it.
 
-    Metering stays best-effort per T5-1: if the vendor's stream object does not
+    Metering stays best-effort: if the vendor's stream object does not
     expose what we expect, the caller's stream still works and the authorized
     estimate is booked instead.
     """
@@ -595,7 +595,7 @@ class _MeteredAsyncStreamManager:
 
 
 def _release(verdict: Verdict, reason: str) -> None:
-    """Void a hold whose vendor call failed, never raising (T5-4).
+    """Void a hold whose vendor call failed, never raising.
 
     Called from inside an `except` block, so it must not raise: replacing the
     vendor's own error with a lucnt error would hide the only thing the caller
@@ -617,7 +617,7 @@ def _release(verdict: Verdict, reason: str) -> None:
 
 
 async def _release_async(verdict: Verdict, reason: str) -> None:
-    """Void a hold whose async vendor call failed, never raising (T5-4).
+    """Void a hold whose async vendor call failed, never raising.
 
     Called from inside an `except` block, so it must not raise: replacing the
     vendor's own error with a lucnt error would hide the only thing the caller
@@ -696,7 +696,7 @@ def _book(
 ) -> None:
     """Capture the real cost, never raising — the response is already paid for.
 
-    `meter()`'s failure mode before T5-1 was the expensive one: reading usage,
+    `meter()`'s original failure mode was the expensive one: reading usage,
     pricing it, or reaching the backend could raise *after* `original()` had
     returned, so the customer lost a completion they had just paid the vendor
     for. Metering is worth strictly less than the thing being metered, so this
@@ -704,12 +704,12 @@ def _book(
 
     1. Settle with the actual cost, model, and token counts (the normal path).
     2. If reading or pricing usage failed, capture the hold **as authorized**,
-       flagged `estimated=True` (F-8). The estimate is then what lands in the
+       flagged `estimated=True`. The estimate is then what lands in the
        ledger — worse than the truth, but far better than losing the spend,
        since attribution at the moment of spend is the product (M1) — and the
        flag makes those rows queryable rather than an ERROR-log archaeology dig.
     3. If the backend itself is unreachable, the hold is orphaned. Logged with
-       the authorization id so it can be reconciled (M7) or released (T5-4).
+       the authorization id so it can be reconciled (M7) or released.
 
     `Exception` and not `BaseException`: a `KeyboardInterrupt` or `SystemExit`
     must still propagate. Nothing here is silenced — every branch logs.
@@ -741,7 +741,7 @@ def _book(
     try:
         # No amount override: the authorization's held estimate stands, and the
         # row is flagged as an estimate so the ledger never presents it as
-        # settled truth (F-8).
+        # settled truth.
         capture(verdict, estimated=True)
     except Exception:
         _logger.exception(
@@ -770,11 +770,11 @@ def meter(
     context (they are forwarded to `authorize()` unchanged).
 
     Works on both client flavours — `OpenAI()` and `AsyncOpenAI()`,
-    `Anthropic()` and `AsyncAnthropic()` (T5-6). The returned proxy matches
+    `Anthropic()` and `AsyncAnthropic()`. The returned proxy matches
     whichever it was given, so an async client's metered methods stay awaitable
     and its streams stay `async for` / `async with`.
 
-    **Every call path is governed, not just the documented methods** (F-1).
+    **Every call path is governed, not just the documented methods**.
     Besides wrapping the completion methods, `meter()` installs a governor on
     the client's underlying HTTP transport, so `with_raw_response`,
     `with_streaming_response`, `responses`, `beta.*`, and `embeddings` calls
@@ -796,7 +796,7 @@ def meter(
     one capture while the vendor may have served — and charged for — more than
     one request. Construct it with `max_retries=0` and retry at the lucnt layer
     instead, wrapping the call in `lucnt.operation()` so the retry replays the
-    original hold rather than minting a second one (T5-10).
+    original hold rather than minting a second one.
 
     Args:
         client: The vendor LLM client to wrap (OpenAI or Anthropic, sync or async).
@@ -824,7 +824,7 @@ def meter(
         LucntError: The client type has no adapter, a `pricing` entry is
             malformed, or the client exposes no httpx client to govern —
             failing loud rather than leaving unwrapped call paths silently
-            unmetered (F-1).
+            unmetered.
         PolicyBlocked / BudgetExhausted: A metered call was blocked by policy.
     """
     adapter = resolve_adapter(client, pricing=pricing)
@@ -834,7 +834,7 @@ def meter(
             f"{type(client).__module__}.{type(client).__qualname__} "
             f"(supported: anthropic, openai — sync and async)"
         )
-    # F-1: the safety net under the wrappers below. Installed first so a client
+    # The safety net under the wrappers below. Installed first so a client
     # we cannot govern fails loud before any wrapping half-succeeds.
     install_governor(
         client,
@@ -845,7 +845,7 @@ def meter(
         project=project,
         unmetered=unmetered,
     )
-    # One adapter serves both client flavours; only the wrapper differs (T5-6).
+    # One adapter serves both client flavours; only the wrapper differs.
     if adapter.is_async(client):
         make_call = _make_async_metered_call
         make_stream_call = _make_async_metered_stream_call
@@ -866,7 +866,7 @@ def meter(
             project=project,
         )
     }
-    # T5-5: a vendor with a separate streaming helper needs it wrapped too, or
+    # A vendor with a separate streaming helper needs it wrapped too, or
     # every streamed call slips past unmetered.
     if adapter.stream_method_path is not None:
         stream_original: object = client

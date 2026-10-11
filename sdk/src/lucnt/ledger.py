@@ -7,7 +7,7 @@ gate mid-way. Spend-type-agnostic: a flight, a SaaS seat, and a token batch
 all flow through the same primitive (`model`/`tokens` are optional, for the
 API/LLM subset only).
 
-**Every function has an `_async` twin** (T5-6). The pair shares one
+**Every function has an `_async` twin**. The pair shares one
 `_Call` — the method, path, body, idempotency key, and retry-safety of the
 request — so the two paths cannot disagree about the wire contract. That is the
 point of the indirection: an async variant that forgot to send the idempotency
@@ -74,7 +74,7 @@ _transport_config: LucntConfig | None = None
 _retired_transports: list[Transport] = []
 
 _async_lock = threading.Lock()
-# Keyed by event loop, not process-wide (T5-6). An httpx.AsyncClient's pool holds
+# Keyed by event loop, not process-wide. An httpx.AsyncClient's pool holds
 # loop-bound objects, so a pool built under one `asyncio.run()` cannot serve
 # requests under the next one — a process-wide singleton would hand out a pool
 # bound to a closed loop. Weak keys so a finished loop's entry disappears with
@@ -87,7 +87,7 @@ _async_transports: WeakKeyDictionary[
 def _get_transport() -> Transport:
     """Return the process-wide pooled Transport, rebuilding it if reconfigured.
 
-    Thread-safe on three counts (T5-8):
+    Thread-safe on three counts:
 
     1. The check-and-build is under a lock. Unsynchronized, two threads racing
        the first call each build a pool and one is silently leaked.
@@ -128,7 +128,7 @@ def _require_running_loop() -> asyncio.AbstractEventLoop:
 
 
 def _forbid_running_loop(sync_name: str, async_name: str) -> None:
-    """Refuse a blocking call made from inside an event loop (T5-6).
+    """Refuse a blocking call made from inside an event loop.
 
     The failure this prevents is not the caller's own latency — it is that a
     synchronous request blocks the *whole loop* for up to the request timeout,
@@ -221,7 +221,7 @@ class _Call:
     The sync and async variants of each operation build the *same* `_Call`, so
     the path, body, idempotency key, and retry-safety of a request are decided
     in exactly one place. A drift between the two on any of those is a
-    double-booked spend rather than a cosmetic inconsistency (T5-6).
+    double-booked spend rather than a cosmetic inconsistency.
     """
 
     method: str
@@ -233,7 +233,7 @@ class _Call:
 
 
 def _payload(response: httpx.Response, path: str) -> dict[str, object]:
-    """Read a success body as a JSON object, or raise `ContractError` (T5-10).
+    """Read a success body as a JSON object, or raise `ContractError`.
 
     Every endpoint the SDK calls answers with a JSON object. A body that is not
     one means this SDK version and the backend disagree — which used to escape
@@ -257,7 +257,7 @@ def _payload(response: httpx.Response, path: str) -> dict[str, object]:
 
 
 def _model(model: type[_ModelT], payload: dict[str, object], path: str) -> _ModelT:
-    """Validate a response body into `model`, or raise `ContractError` (T5-10).
+    """Validate a response body into `model`, or raise `ContractError`.
 
     A `pydantic.ValidationError` escaping from here would be both outside the
     SDK's hierarchy and misleading — it reads like the *caller* sent something
@@ -310,7 +310,7 @@ def _resolve_required(explicit: str | None, ambient: str | None, field: str) -> 
 
 
 def _as_decimal(amount: Money, field: str = "amount") -> Decimal:
-    """Normalize an exact money input to `Decimal`, rejecting `float` (T5-10).
+    """Normalize an exact money input to `Decimal`, rejecting `float`.
 
     Converts via the string form so a plain `amount=10` stays exact.
 
@@ -350,11 +350,11 @@ def _as_decimal(amount: Money, field: str = "amount") -> Decimal:
 def _new_idempotency_key() -> str:
     """Mint a key for one logical authorize, reused across its transport retries.
 
-    Auto-generating per call covers the transport-retry case (T5-3): the same
+    Auto-generating per call covers the transport-retry case: the same
     key goes out on every attempt, so a request that reached the server before
     the connection dropped replays instead of minting a second hold. It does
     *not* cover an application-level retry — calling `authorize()` again is a
-    new logical spend and gets a new key. `lucnt.operation()` (T5-11) is the
+    new logical spend and gets a new key. `lucnt.operation()` is the
     mechanism for that case; an explicit `idempotency_key=` still overrides both.
     """
     return uuid.uuid4().hex
@@ -522,7 +522,7 @@ def authorize(
         tokens: Tokens consumed, for LLM/API spend only.
         strict: Raise on a non-approved verdict instead of returning it.
         idempotency_key: Reuse the same key to make a retry replay the original
-            hold instead of minting a second one (T0-6). Resolution order is
+            hold instead of minting a second one. Resolution order is
             this argument, then an ambient `lucnt.operation()` scope, then a key
             generated for this call alone. The auto key covers the SDK's own
             transport retries; if *your* code retries, wrap the call in
@@ -583,7 +583,7 @@ async def authorize_async(
     strict: bool = False,
     idempotency_key: str | None = None,
 ) -> Verdict:
-    """Await a policy verdict on a spend, before any money moves (T5-6).
+    """Await a policy verdict on a spend, before any money moves.
 
     The async twin of `authorize()` — identical semantics, identical wire
     request, identical `task()` / `operation()` context handling (contextvars
@@ -656,7 +656,7 @@ def _capture_call(
         body["tokens"] = tokens
     if estimated:
         # Sent only when True: an older backend never sees a field it does not
-        # know, and False is the wire default anyway (F-8).
+        # know, and False is the wire default anyway.
         body["estimated"] = True
     return _Call(
         "POST",
@@ -699,7 +699,7 @@ def capture(
             as `Decimal`, `int`, or `str`. `float` is rejected.
         model: The actual model used (overrides the authorized value).
         tokens: The actual tokens consumed (overrides the authorized value).
-        estimated: Mark the booked amount as an unsettled estimate (F-8).
+        estimated: Mark the booked amount as an unsettled estimate.
             `meter()` sets this when it cannot read actual usage and books the
             hold's estimate rather than losing the spend; the ledger records
             the flag so an estimate is never presented as settled truth.
@@ -746,7 +746,7 @@ async def capture_async(
             as `Decimal`, `int`, or `str`. `float` is rejected.
         model: The actual model used (overrides the authorized value).
         tokens: The actual tokens consumed (overrides the authorized value).
-        estimated: Mark the booked amount as an unsettled estimate (F-8); see
+        estimated: Mark the booked amount as an unsettled estimate; see
             `capture()`.
 
     Returns:
@@ -791,7 +791,7 @@ def _void_call(verdict: Verdict, *, reason: str | None) -> _Call:
 
 
 def void(verdict: Verdict, *, reason: str | None = None) -> VoidResult:
-    """Release an approved hold whose spend never happened (T5-4).
+    """Release an approved hold whose spend never happened.
 
     An approved-but-uncaptured authorization reserves the agent's budget until it
     is captured or released. So a vendor call that fails *after* `authorize()`
@@ -905,7 +905,7 @@ def spend(
         idempotency_key: Forwarded to the authorize step. If your code retries
             the whole call, wrap it in `lucnt.operation()` (or pass a key here)
             — otherwise the retry mints a second hold and captures it, which is
-            the double-book T0-6 describes.
+            the double-book idempotency exists to prevent.
 
     Returns:
         The booked `Transaction` if approved. With `strict=False`, a blocking
@@ -1039,7 +1039,7 @@ def _check_budget_result(
             monthly_budget=row["monthly_budget"],
             spent=row["spent"],
             remaining=row["remaining"],
-            # Required, not defaulted (F-10): a backend too old to report holds
+            # Required, not defaulted: a backend too old to report holds
             # would otherwise hand a self-regulating agent headroom the gate
             # refuses — the exact inconsistency these fields exist to close.
             reserved=row["reserved"],

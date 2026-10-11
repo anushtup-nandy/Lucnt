@@ -4,8 +4,8 @@ Wraps `client.chat.completions.create(...)`; reads
 `response.usage.prompt_tokens` / `completion_tokens` and `response.model`.
 Detection is by module so `lucnt` never imports `openai`.
 
-Prices live in the packaged data pack (`lucnt/data/pricing.json`), not here
-(T5-12). ⚠️ The OpenAI table is a STARTER SET and intentionally small — OpenAI
+Prices live in the packaged data pack (`lucnt/data/pricing.json`), not here.
+⚠️ The OpenAI table is a STARTER SET and intentionally small — OpenAI
 prices drift; verify it against current OpenAI pricing and extend it (or pass
 `meter(pricing=...)`) for your models before relying on the booked cost.
 `max_completion_tokens` is checked in addition to `max_tokens` for the output
@@ -27,7 +27,7 @@ class OpenAIAdapter(MeterAdapter):
 
     @classmethod
     def matches(cls, client: object) -> bool:
-        """Match any `openai` client by module — `OpenAI` or `AsyncOpenAI` (T5-6)."""
+        """Match any `openai` client by module — `OpenAI` or `AsyncOpenAI`."""
         return type(client).__module__.split(".", 1)[0] == "openai"
 
     def usage_from_response(self, response: object) -> Usage:

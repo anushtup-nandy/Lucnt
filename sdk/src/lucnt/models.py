@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-# What the SDK accepts on a money argument (T5-10).
+# What the SDK accepts on a money argument.
 #
 # `float` is deliberately absent. It was accepted through 0.x and is **rejected
 # from 1.0.0**: this is a ledger, and `Decimal(1.83)` is not `Decimal("1.83")`.
@@ -35,23 +35,23 @@ class LucntConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # SecretStr so the key never lands in a repr/log/traceback (T0-19). Read the
+    # SecretStr so the key never lands in a repr/log/traceback. Read the
     # plaintext with `api_key.get_secret_value()` only where it is actually sent.
     api_key: SecretStr
     base_url: str
     # Overall per-request budget, and the default for phases without their own
     # value. `connect`/`read` split out because they fail for different reasons:
-    # a dead host should give up fast, a slow policy evaluation should not (T5-10).
+    # a dead host should give up fast, a slow policy evaluation should not.
     timeout: float
     connect_timeout: float | None = None
     read_timeout: float | None = None
-    # Retry policy (T5-3). `max_retries` counts retries, not attempts: 2 means up
+    # Retry policy. `max_retries` counts retries, not attempts: 2 means up
     # to 3 requests. Backoff is exponential with full jitter, capped.
     max_retries: int = Field(default=2, ge=0)
     backoff_base: float = Field(default=0.25, gt=0)
     backoff_max: float = Field(default=8.0, gt=0)
     respect_retry_after: bool = True
-    # Server-fetched pricing feed (F-2): the backend serves today's effective
+    # Server-fetched pricing feed: the backend serves today's effective
     # vendor prices and the packaged pack becomes the offline fallback, so a
     # price change (or a lapsing intro rate) never needs a client release.
     pricing_feed: bool = True
@@ -83,22 +83,22 @@ class SpendRequest(BaseModel):
     entity: str
     vendor: str
     amount: Decimal
-    # Mandatory (T1-5): the caller always states the currency it paid in — the one
+    # Mandatory: the caller always states the currency it paid in — the one
     # fact only it knows. Never silently defaulted, so a foreign spend is never
     # mislabelled as domestic. The backend validates the ISO-4217 shape.
     currency: str
     reason: str
     intent: str | None = None
     project: str | None = None
-    # Optional expense category (T1-19): software|ai_compute|travel|marketing|general.
+    # Optional expense category: software|ai_compute|travel|marketing|general.
     # A known value books to that account + drives blocked-ITC; else vendor-inferred.
     category: str | None = None
-    # Tax slab + inclusive/exclusive (T1-10). `tax_category` picks the GST rate slab
+    # Tax slab + inclusive/exclusive. `tax_category` picks the GST rate slab
     # (e.g. "gst_5"; omitted -> standard rate); `tax_inclusive` says whether a
     # domestic amount embeds GST (default) or has it added on top.
     tax_category: str | None = None
     tax_inclusive: bool = True
-    # Service vs goods (TE-4). A cross-border *goods* spend routes to a customs path,
+    # Service vs goods. A cross-border *goods* spend routes to a customs path,
     # not the services reverse charge; defaults to "service" (agent spend is ~all
     # services), so existing callers are unaffected.
     supply_type: Literal["service", "goods"] = "service"
@@ -130,7 +130,7 @@ class Verdict(BaseModel):
 
 
 class VoidResult(BaseModel):
-    """Result of releasing a hold via `void()` (T5-4).
+    """Result of releasing a hold via `void()`.
 
     `already_released` is True when the hold had already been voided, which makes
     a retried `void()` a safe no-op rather than an error to handle — it is called
@@ -151,7 +151,7 @@ class BudgetStatus(BaseModel):
     Mirrors the backend `AgentBudget`. `status` is `ok` | `warning` |
     `exhausted`; every figure is derived server-side from live spend.
 
-    **Self-regulate on `available`, not `remaining`** (F-10). `remaining` is
+    **Self-regulate on `available`, not `remaining`**. `remaining` is
     `monthly_budget − captured spend`; the authorize gate additionally
     subtracts outstanding holds (`reserved`), so `available` is the headroom
     the gate will actually grant. An agent that checks `remaining` can see
@@ -229,11 +229,11 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
-    # F-8: True when `amount` is the authorize-time estimate rather than settled
-    # actual usage — meter()'s T5-1 fallback books that way instead of losing
+    # True when `amount` is the authorize-time estimate rather than settled
+    # actual usage — meter()'s best-effort fallback books that way instead of losing
     # the spend, and the ledger records which rows it happened to.
     estimated: bool = False
-    # F-12: the evidence link passed to `capture()`, persisted on the ledger row.
+    # The evidence link passed to `capture()`, persisted on the ledger row.
     invoice_url: str | None = None
     journal: list[JournalLine] = Field(default_factory=list)
     tax: TaxInfo | None = None

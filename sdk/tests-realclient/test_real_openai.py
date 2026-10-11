@@ -1,6 +1,6 @@
-"""F-1 acceptance against the REAL `openai` client.
+"""Acceptance against the REAL `openai` client.
 
-Every row of the F-1 coverage table that was ❌-silent must now show ledger
+Every row of the coverage table that was ❌-silent must now show ledger
 traffic; the blocked case must surface typed, loud, and unretried.
 """
 
@@ -35,7 +35,7 @@ def test_wrapped_chat_path_settles_actual_usage(
 
 
 def test_with_raw_response_is_governed(harness: tuple[ServerState, str]) -> None:
-    """THE F-1 headline path: LangChain calls `with_raw_response.create`,
+    """THE headline path: LangChain calls `with_raw_response.create`,
     which used to pass the method wrappers entirely — spend, no ledger row."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
@@ -61,7 +61,7 @@ def test_with_streaming_response_is_governed(
 
 
 def test_responses_api_is_governed(harness: tuple[ServerState, str]) -> None:
-    """F-13: the Responses API is where OpenAI is steering new work."""
+    """The Responses API is where OpenAI is steering new work."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
     response = client.responses.create(model="gpt-4o", input="hello there")
@@ -72,7 +72,7 @@ def test_responses_api_is_governed(harness: tuple[ServerState, str]) -> None:
 
 
 def test_embeddings_are_governed(harness: tuple[ServerState, str]) -> None:
-    """F-13: embeddings are real spend and were entirely invisible."""
+    """Embeddings are real spend and were entirely invisible."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
     client.embeddings.create(model="text-embedding-3-small", input="hello")

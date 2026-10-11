@@ -1,4 +1,4 @@
-"""Unit tests for the async surface: AsyncTransport and the `_async` twins (T5-6).
+"""Unit tests for the async surface: AsyncTransport and the `_async` twins.
 
 Driven with `asyncio.run()` inside ordinary sync tests rather than a pytest
 async plugin. That keeps the SDK's dev dependencies to what the package already
@@ -7,7 +7,7 @@ its own async path exercised — and it makes the per-event-loop transport
 behaviour testable, since each `asyncio.run()` is a distinct loop.
 
 All backend interaction is mocked via `httpx.MockTransport`; none of this needs a
-live server, per sdk/PLAN.md §6.
+live server.
 """
 
 from __future__ import annotations
@@ -251,9 +251,9 @@ def test_async_backoff_yields_the_loop_instead_of_blocking_it(
     """The property the whole async path exists for: a backoff must not stall the loop.
 
     Every other test patches `_asleep` away, so none of them would notice
-    `time.sleep` in there — and a blocking backoff is exactly the bug T5-6
-    removes: one retrying request would freeze every unrelated coroutine in the
-    process for the backoff duration.
+    `time.sleep` in there — and a blocking backoff is exactly the bug the
+    async surface removes: one retrying request would freeze every unrelated
+    coroutine in the process for the backoff duration.
 
     Measured by what a concurrent ticker achieves *while the request is
     waiting*, not by the end state: under a blocking sleep the ticker still
@@ -487,7 +487,7 @@ def test_check_budget_async_filters_server_side(
 
     status = asyncio.run(main())
     assert status.remaining == Decimal("60.00")
-    assert status.reserved == Decimal("10.00")  # F-10: holds visible to the read
+    assert status.reserved == Decimal("10.00")  # holds visible to the read
     assert status.available == Decimal("50.00")
     assert not status.exhausted
 
