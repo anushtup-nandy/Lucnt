@@ -65,7 +65,7 @@ jobs:
         # Resolves fresh on purpose (early warning); the image uses requirements.lock.
         run: pip install -e ".[dev]"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           # Default globs match neither `.lock` nor backend/, leaving the cache dead.
           cache-dependency-glob: backend/requirements.lock
