@@ -1,230 +1,217 @@
 # LUCNT
 
-> ⚠️ **Before publishing the SDK or starting a pilot, read [docs/production/plan2.md](docs/production/plan2.md)** —
-> 27 open items compiled at Tier 5 close, split by which gate they block, with the six
-> that need a decision listed first.
+**Financial infrastructure that attaches to your existing AI agents.**
 
-> Financial infrastructure that attaches to your existing agents — policy-gated spend
-> (`authorize` → `capture`), live accounting, and recovery for AI agents that transact.
+[![CI](https://github.com/anushtup-nandy/lucnt/actions/workflows/ci.yml/badge.svg)](https://github.com/anushtup-nandy/lucnt/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
----
+Give an agent's spending a **gate** and a **ledger**. LUCNT sits in the money path: policy runs
+*before* the charge, so it can block; the committed spend is booked into double-entry journals with
+tax treatment applied. It works the same for a flight, a SaaS seat, or a batch of LLM tokens.
 
-## Status
-
-**SDK-first build.** The `lucnt` Python SDK is the product's front door and is built
-contract-first alongside the backend; the dashboard is deferred to the last phase. See
-[`docs/STATUS.md`](docs/STATUS.md) for the full done-vs-planned breakdown and
-[`PLAN.md`](PLAN.md) for the phase-by-phase roadmap.
-
-**Pre-pilot hardening: Tier 3 is complete (8/8 — T3-1…T3-8).** Tiers 0, 1, 1.5 and 2 of
-[`docs/production/plan1.md`](docs/production/plan1.md) were already closed; Tier 3 ("scale,
-performance & operability") adds hot-query indexes, DB-level uniqueness, an explicit connection
-pool + statement timeout, one shared pagination contract, bounded request inputs, Redis-backed
-rate limiting, and the removal of the full-ledger in-memory loads. Tiers 4–5 are open. Details in
-[`CHANGELOG.md`](CHANGELOG.md).
-
-| Component | State |
-|---|---|
-| `sdk/` (`lucnt` package) | `task()`/`authorize()`/`capture()`/`spend()` — done, green (unit-tested, no backend needed) |
-| `backend/` | FastAPI app live (`authorize`→`capture`, books, budgets, policies, recon, intelligence); 33 migrations, head `e1f2a3b4c5d6` |
-| `frontend/` | Not started — **next after Tier 5** (P7 was un-deferred 28 Jul 2026 and now runs before Phase 6) |
+LUCNT does **not** own the "agent" noun. There is no `Agent` class competing with your framework —
+identity is a plain string handle you set once.
 
 ---
 
-## Architecture
+## Quickstart
 
-LUCNT attaches to your existing agents — it does not replace your framework or own the
-"agent" noun. There is no `Agent` class. The SDK's universal primitive is
-**`authorize()` → `capture()`**: policy gets a chance to block *before* money moves, then
-the real spend is committed to the ledger. It works identically for a flight, a SaaS seat,
-or a token batch.
+```bash
+pip install lucnt
+```
 
 ```python
 import lucnt
+
 lucnt.configure()   # reads LUCNT_API_KEY / LUCNT_BASE_URL
 
-with lucnt.task(agent="ops", entity="sg", intent="founder summit"):
-    v = lucnt.authorize(vendor="singapore_airlines", amount=1240, currency="SGD",
-                         reason="SIN->SFO, premium fare")
-    if v.approved:
-        book_flight(...)                    # your own purchase / payment
-        tx = lucnt.capture(v)               # commit the real spend to the ledger
+with lucnt.task(agent="travel-bot", entity="acme-in", intent="founder summit"):
+    verdict = lucnt.authorize(
+        vendor="United Airlines",
+        amount="842.50",
+        currency="USD",
+        reason="SFO->EWR, 12 Aug",
+    )
+
+    if not verdict.approved:
+        print(f"blocked: {verdict.reason}")   # policy said no — nothing was charged
+    else:
+        book_the_flight()                     # your code, your payment rail
+        tx = lucnt.capture(verdict)           # commit the real spend to the ledger
 ```
 
-Full design docs: [`PLAN.md`](PLAN.md) (master plan), [`sdk/PLAN.md`](sdk/PLAN.md),
-[`backend/PLAN.md`](backend/PLAN.md), [`infra/PLAN.md`](infra/PLAN.md).
+`spend()` is the atomic `authorize` + `capture` convenience when you don't need a gap between the
+two. Async variants (`authorize_async`, `capture_async`, …) mirror every call.
 
 ---
 
-## Tech Stack
+## How it works
 
-| Layer | Stack |
-|---|---|
-| **SDK** (`lucnt`, ★ primary deliverable) | Python 3.10+ (library floor), httpx, Pydantic v2 |
-| **Backend** | Python 3.12 (F-23), FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2 |
-| **Database** | PostgreSQL 16 (Docker) |
-| **Rate limiting** | Redis 7 — a **runtime dependency** of the backend (`redis>=5.0` in `backend/pyproject.toml`), not just a compose service |
-| **Frontend** (P7 — built 29 Jul 2026) | React 19, TypeScript 5.9 strict, Vite 8, Tailwind 4, TanStack Query v5 |
+```
+lucnt.authorize()  ──▶  policy engine  ──▶  approved | blocked | review | human_hold
+                                              │
+                              your purchase happens here
+                                              │
+lucnt.capture()    ──▶  transaction committed, then synchronously:
+                          ├─ tax engine        (IN GST reverse-charge, US sales/use, SG)
+                          ├─ journal generator (double-entry against a chart of accounts)
+                          ├─ invoice hook      (attach, or queue for matching)
+                          └─ events            (agent.spend.created, budget.exhausted)
+```
+
+**Authorization runs before money moves.** That is the whole point — it's the only place a spend can
+actually be stopped rather than merely recorded after the fact.
+
+**Capture is source-agnostic.** Spend also enters from a card/wallet rail or from invoice ingestion,
+and commits through the same path, so journals, tax and analytics never care where it came from.
+
+Two more SDK reads let an agent self-regulate: `check_budget()` (returns `reserved` / `available`)
+and `query()`. `meter(client)` auto-instruments an OpenAI or Anthropic client when you want token
+spend booked without writing the calls yourself.
 
 ---
 
-## Quick Start (local dev)
+## Repository layout
+
+| Path | What it is | Stack |
+|---|---|---|
+| `sdk/` | The `lucnt` Python package — the product's front door | Python 3.10+, httpx, Pydantic v2 |
+| `backend/` | FastAPI service: authorize/capture, books, budgets, policies, reconciliation, intelligence | Python 3.12, FastAPI, SQLAlchemy 2.0, Alembic, Postgres 16, Redis 7 |
+| `frontend/` | Dashboard SPA — agents, transactions, books, budgets, policies, approvals, recon, insights | React 19, TypeScript 5.9, Vite 8, Tailwind 4, TanStack Query v5 |
+| `infra/` | Docker Compose, Nginx, Prometheus alerts | |
+
+The SDK installs as `lucnt`; the backend package is `lucnt_api`. They do not collide.
+
+---
+
+## Running locally
 
 ### Prerequisites
-- Python 3.12 for the backend (the SDK as a library supports 3.10+)
-- Docker (for Postgres/Redis/MailHog)
-- **Redis** — rate limiting is on by default (`RATE_LIMIT_ENABLED=true`) and its counters live in
-  Redis, so it must be reachable at `REDIS_URL` for limits to be enforced. An unreachable Redis
-  **fails open**: the request is admitted and a warning is logged, because a cache blip must not
-  take down `authorize()`. The backend test suite therefore still passes without Redis — 11
-  rate-limit tests skip instead of failing.
+- Python 3.12 (backend) — the SDK supports 3.10+
+- Node 22 (frontend)
+- Docker, for Postgres / Redis / Mailpit
 
-### ⚠️ Use separate environments for `backend/` and `sdk/`
-
-Both packages install a top-level Python module literally named `lucnt` (that's the
-published package name — see `sdk/PLAN.md`). In *one shared* environment, whichever
-installs second silently shadows the other's `import lucnt`. This never happens in
-production (the SDK installs into a *customer's* process; the backend runs standalone) —
-it's purely a local-dev footgun. Give each its own venv/conda env.
-
-### 1. Bring up infrastructure
+### 1. Infrastructure
 
 ```bash
 cd infra
-docker compose up -d       # Postgres :5432, Redis :6379, MailHog(mailpit) :8025
+docker compose up -d       # Postgres :5432, Redis :6379, Mailpit :8025
 ```
 
 ### 2. Backend
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate   # separate env from sdk/, see warning above
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env                                 # defaults already match docker compose
+cp .env.example .env        # defaults already match infra/docker-compose.yml
 alembic upgrade head
 uvicorn lucnt_api.main:app --reload --port 8000
 ```
 
-To run the API as a container instead (the deployable artifact, T4-1):
+API docs are served at `/docs` only when `ENVIRONMENT=development`.
+
+To run the API as its deployable container instead:
 
 ```bash
-cd infra && docker compose --profile backend up -d --build   # gunicorn, 2 workers, non-root
-curl localhost:8000/health/ready                             # {"status":"ready", …}
-```
-
-`ENVIRONMENT` is **required** and must be one of `development` / `staging` / `production` — it no
-longer defaults, because a default of `development` meant an unset value in production published
-`/docs`, `/redoc` and `/openapi.json`. API docs are served only when `ENVIRONMENT=development`. To
-inspect the migrated schema directly:
-
-```bash
-docker exec infra-postgres-1 psql -U postgres -d lucnt -c "\dt"
+cd infra && docker compose --profile backend up -d --build
+curl localhost:8000/health/ready
 ```
 
 ### 3. SDK
 
 ```bash
 cd sdk
-python -m venv .venv && source .venv/bin/activate   # separate env from backend/, see warning above
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest   # fully mocked -- no backend or network needed
+pytest                      # fully mocked — no backend or network needed
 ```
 
-`sdk/examples/example_agent.py` is the SDK's E2E acceptance driver and needs a live backend
-(step 2) with a valid `LUCNT_API_KEY`; without one it fails with a connection error.
+`sdk/examples/example_agent.py` is the end-to-end acceptance driver and needs a live backend plus a
+valid `LUCNT_API_KEY`.
 
 ### 4. Frontend
 
-Not started. **Next up after Tier 5** — P7 was un-deferred on 28 Jul 2026 and now runs ahead of
-Phase 6. See [`frontend/PLAN.md`](frontend/PLAN.md).
+```bash
+cd frontend
+npm ci
+npm run dev                 # http://localhost:5173
+```
 
 ---
 
 ## Configuration
 
-All backend settings are read from the environment / `backend/.env` by
-`backend/src/lucnt_api/config.py` (Pydantic Settings). `backend/.env.example` is the canonical
-template and its defaults already match `infra/docker-compose.yml`.
+Backend settings are read from the environment or `backend/.env` by `lucnt_api/config.py`
+(Pydantic Settings). **`backend/.env.example` is the canonical, commented template** and its
+defaults already match `infra/docker-compose.yml`.
 
-`DATABASE_URL` and `SECRET_KEY` are **required**; everything below has a default and only needs
-setting to override it.
+Three variables are required and have no default:
 
-**Connection pool & timeouts** (added in Tier 3, T3-4)
+| Variable | Notes |
+|---|---|
+| `ENVIRONMENT` | One of `development` / `staging` / `production`. Deliberately has no default — an unset value must never silently publish `/docs` in production. |
+| `DATABASE_URL` | Postgres DSN |
+| `SECRET_KEY` | Signs dashboard JWTs. Outside `development` it must be ≥32 chars and must not be the committed example value. |
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `DB_POOL_SIZE` | `10` | Persistent connections per worker process |
-| `DB_MAX_OVERFLOW` | `10` | Extra connections above `DB_POOL_SIZE` under burst |
-| `DB_POOL_TIMEOUT` | `10` | Seconds to wait for a free connection before failing fast |
-| `DB_POOL_RECYCLE` | `1800` | Recycle a connection after this many seconds, below any proxy/Postgres idle reaper |
-| `DB_CONNECT_TIMEOUT` | `10` | TCP connect timeout for a new connection (libpq `connect_timeout`) |
-| `DB_STATEMENT_TIMEOUT_MS` | `30000` | Server-side ceiling on any single statement; a runaway query is killed by Postgres rather than pinning a pool connection |
+Everything else has a working default. The two groups worth knowing about are the connection pool
+(`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_STATEMENT_TIMEOUT_MS`, …) and rate limiting
+(`RATE_LIMIT_ENABLED`, `RATE_LIMIT_DEFAULT_PER_MINUTE`, …); both are documented inline in
+`.env.example`.
 
-Two sizing rules follow from this. Total connections are `(DB_POOL_SIZE + DB_MAX_OVERFLOW) ×
-worker count`, which must stay well under Postgres `max_connections` (100 by default). And
-because every route is a sync `def`, `main.py` pins AnyIO's worker-thread limiter to
-`DB_POOL_SIZE + DB_MAX_OVERFLOW` — so raising the pool raises request concurrency too, and the
-two can never disagree.
+Two things that will bite you if you skip them:
 
-**Rate limiting** (added in Tier 3, T3-7)
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `REDIS_URL` | `redis://localhost:6379/0` | Where the shared counters live |
-| `RATE_LIMIT_ENABLED` | `true` | Kill switch. Turning the feature *off* deliberately — not how you survive a Redis outage (that is already fail-open) |
-| `RATE_LIMIT_DEFAULT_PER_MINUTE` | `600` | Ordinary authenticated calls, per API key |
-| `RATE_LIMIT_AUTH_FAILURE_PER_MINUTE` | `20` | Failed authentications, per client IP |
-| `RATE_LIMIT_EXPENSIVE_PER_MINUTE` | `5` | Ledger-walking endpoints (`/recon/scan`, `/intelligence/recompute`), per API key |
-| `RATE_LIMIT_REDIS_TIMEOUT` | `0.25` | Seconds a limiter round-trip may take before failing open |
-
-> **Deployment requirement.** The `auth_failure` bucket is keyed on the client IP taken from the
-> socket. Once nginx fronts the app it **must** set `set_real_ip_from` / `real_ip_header`, or every
-> client collapses into one bucket and this becomes a lockout for all of them. See
-> [`infra/PLAN.md`](infra/PLAN.md) §5.
+- **Total DB connections are `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × workers`** and must stay well under
+  Postgres `max_connections`. Because every route is a sync `def`, `main.py` pins AnyIO's
+  worker-thread limiter to the same total, so raising the pool raises request concurrency with it and
+  the two can never disagree.
+- **Rate limiting is Redis-backed and keyed on client IP for auth failures.** Once Nginx fronts the
+  app it *must* set `set_real_ip_from` / `real_ip_header`, or every client collapses into one bucket
+  and the limiter becomes a lockout for all of them. An unreachable Redis **fails open** — the
+  request is admitted and a warning logged, because a cache blip must not take down `authorize()`.
 
 ---
 
-## Project Structure
+## Development
 
-```
-lucnt/
-├── sdk/         # ★ primary deliverable — the `lucnt` Python SDK
-├── backend/     # FastAPI application (DB schema done; app not started)
-├── frontend/    # React SPA — P7, next after Tier 5; no code yet
-├── infra/       # docker-compose.yml, Nginx config
-├── docs/        # Design docs, status tracking, production-hardening plan
-└── logs/        # Daily session logs
-```
+Every command below runs on each push and PR — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the authoritative gate, which also covers
+an Alembic upgrade/downgrade round-trip, schema-drift detection, secret scanning over full history,
+a hashed-lockfile dependency audit, and an image build asserting the container runs non-root.
 
----
-
-## Verification
-
-**SDK:** `ruff` + `mypy` clean, **332 tests** green.
 ```bash
+# backend
+cd backend
+ruff check src/ tests/ scripts/ && ruff format --check src/ tests/ scripts/
+mypy src/ scripts/
+alembic upgrade head && pytest
+alembic check                    # must report no new operations
+
+# sdk
 cd sdk
-ruff check src/ tests/
+ruff check . && ruff format --check .
 mypy src/
 pytest
+
+# frontend
+cd frontend
+npm run lint && npm run typecheck && npm run test && npm run build
 ```
 
-**Backend:** `ruff` clean, `mypy` clean over **75 source files**, **395 tests** green, and
-`alembic check` reporting no drift between the models and the migrations. The same gate runs on every
-push/PR (`.github/workflows/ci.yml`), plus a migration round-trip, secret and dependency scans, and an
-image build asserting the container is non-root.
-```bash
-cd backend
-ruff check src/ tests/
-mypy src/
-pytest          # requires `alembic upgrade head` against a running Postgres first
-alembic check   # must report "No new upgrade operations detected."
-```
+The SDK is tested against Python 3.10 and 3.12 in CI — 3.10 is the floor the published package
+promises, 3.12 matches the backend runtime.
 
-With Redis down the suite is still green — 11 rate-limit tests skip rather than fail, so CI
-without Redis is not a false failure.
+With Redis down the backend suite is still green: the rate-limit tests skip rather than fail, so a
+CI environment without Redis is not a false failure.
 
 ---
+
+## Contributing
+
+Issues and pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup and the
+review checklist, and [`SECURITY.md`](SECURITY.md) to report a vulnerability privately.
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE).
