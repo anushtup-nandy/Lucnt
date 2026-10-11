@@ -1,17 +1,6 @@
 /**
- * Hand-kept domain types.
- *
- * `src/types/api.ts` is generated from `contracts/openapi.json` and is the authority
- * on shape; these are the narrow, ergonomic views the pages actually consume,
- * plus the **one thing the generator cannot know**.
- *
- * That one thing is `verdict_code`. `Verdict.code` is an open string on the
- * wire by design — a new policy rule adds a code, and a new code must never
- * break an older SDK — so the generator emits `string` and no schema gate can
- * see the value set move. The
- * union below is therefore hand-kept against `contracts/verdict-codes.json`, which
- * `backend/tests/unit/test_api_contract.py` and `sdk/tests/test_verdict_codes.py`
- * both gate. Widening it to `string` is what the two tests exist to prevent.
+ * Hand-kept views over the generated `api.ts`. `verdict_code` is an open string
+ * on the wire, so its union is maintained by hand against verdict-codes.json.
  */
 
 /** Mirrors `contracts/verdict-codes.json`. Keep in step with it, by hand. */

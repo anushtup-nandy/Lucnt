@@ -1,10 +1,4 @@
-/**
- * Routes — 15 of them (12 nav + 2 detail + login).
- *
- * Each nav route is wrapped in its `RoleGate`, which reads the *same* `nav` key
- * the server's `require_nav` gates on. Detail routes inherit their parent's
- * key: a transaction detail is part of the Transactions domain.
- */
+/** Routes. Each `RoleGate` uses the same nav key as the server's `require_nav`. */
 
 import { useEffect, type ReactNode } from 'react'
 import { Route, Routes } from 'react-router'
@@ -44,8 +38,7 @@ function NotFound(): ReactNode {
 }
 
 export default function App(): ReactNode {
-  // One silent refresh on cold load: the access token is memory-only, so a
-  // browser refresh starts with nothing but the httpOnly cookie.
+  // The access token is memory-only, so a page reload must refresh from the cookie.
   useEffect(() => {
     void bootstrapSession()
   }, [])

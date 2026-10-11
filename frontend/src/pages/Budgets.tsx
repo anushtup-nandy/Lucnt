@@ -1,13 +1,6 @@
 /**
- * Budgets — allocated / deployed / available, and a live stepper per agent.
- *
- * **`reserved` and `available` are shown, not just `spent`**. An
- * approved-but-uncaptured hold is real money: it has already been promised to a
- * vendor and the gate already counts it. A page that showed only `spent` would
- * tell a CFO they have headroom the policy engine will refuse to grant.
- *
- * The stepper is disabled without `perms.can_write_budgets` — and the endpoint
- * 403s regardless, which is the part that actually matters.
+ * Budgets with a per-agent stepper. Shows `reserved`/`available`, not just
+ * `spent`: uncaptured holds already count against the budget.
  */
 
 import { useState, type ReactNode } from 'react'
@@ -140,8 +133,7 @@ export function Budgets(): ReactNode {
     entities.find((e) => e.id === entityId)?.currency ?? 'USD'
 
   const agents = query.data?.agents ?? []
-  // Only meaningful within one currency; the consolidated view says so rather
-  // than adding rupees to dollars.
+  // Only meaningful within one currency (no FX).
   const currencies = new Set(agents.map((a) => currencyFor(a.entity_id)))
   const singleCurrency = currencies.size === 1 ? [...currencies][0] : null
 

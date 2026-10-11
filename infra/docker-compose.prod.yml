@@ -2,28 +2,14 @@
 #
 #     docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 #
-# Three deliberate differences from the dev stack:
-#
-# * **Nothing but nginx publishes a port.** The backend and Redis are reachable
-#   only on the internal network, so the API cannot be hit except through TLS,
-#   and Redis — which holds rate-limit counters and no credentials — is not
-#   addressable from outside at all.
-# * **Every secret is required, none has a default.** `${VAR:?message}` fails the
-#   `up` with that message rather than starting with a placeholder credential.
-#   This is the direct fix for a stack whose password was `postgres`.
-# * **Postgres is external by default.** A managed database gives you backups,
-#   PITR and failover, none of which this file can. A ledger is exactly the wrong
-#   place to discover you had no point-in-time recovery. A self-hosted service is
-#   provided below, commented, for a pilot that genuinely needs it.
-#
-# MIGRATIONS run from the same image as the app, as a one-shot before rollout:
+# Only nginx publishes ports; every secret is required (`:?`); Postgres is external
+# (managed backups/PITR). Run migrations before rollout:
 #
 #     docker compose -f docker-compose.prod.yml run --rm migrate
 
 services:
   nginx:
-    # Digest-pinned — the tag is for humans, the digest is the pin.
-    # Re-pin deliberately with: docker buildx imagetools inspect <tag>
+    # Digest is the pin; re-pin with: docker buildx imagetools inspect <tag>
     image: nginx:1.27-bookworm@sha256:6784fb0834aa7dbbe12e3d7471e69c290df3e6ba810dc38b34ae33d3c1c05f7d
     ports:
       - "80:80"
@@ -42,33 +28,26 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    # No `ports`: nginx reaches it over the compose network. Publishing 8000 here
-    # would bypass TLS, the body caps and the /metrics deny rule in one line.
+    # Never publish 8000: it would bypass TLS, body caps and the /metrics deny.
     expose:
       - "8000"
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      # Required, and validated — outside development it must be >=32 chars
-      # and must not be the committed example. `:?` so a missing one fails at
-      # `compose up`, not at the first login.
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (>=32 chars, not the committed example)}
       # Exact dashboard origins. Never a wildcard: allow_credentials is on.
       CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS to the dashboard origin(s)}
       LOG_FORMAT: json
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Raise only together with Postgres `max_connections`: the ceiling is
-      # workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW). See `gunicorn.conf.py`.
+      # DB connections = workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW); mind max_connections.
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       redis:
         condition: service_healthy
     healthcheck:
-      # Readiness, not liveness: nginx must not receive traffic until the schema
-      # is confirmed at head. The image's own HEALTHCHECK stays on liveness so a
-      # database blip never triggers a restart storm.
+      # Readiness gates nginx; the image HEALTHCHECK stays liveness to avoid restart storms.
       test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4).status == 200 else 1)"]
       interval: 15s
       timeout: 6s
@@ -76,8 +55,7 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # One-shot schema upgrade. Same image as `backend`, so the migrations that run
-  # are by construction the ones the running code expects.
+  # One-shot schema upgrade from the backend image.
   migrate:
     image: ${BACKEND_IMAGE:-lucnt-backend:latest}
     build:
@@ -87,15 +65,13 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      # `Settings()` is constructed at import by `alembic/env.py`, so every
-      # required setting must be present even for a migration-only container.
+      # alembic/env.py builds Settings(), so required settings must be set here too.
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (>=32 chars, not the committed example)}
     restart: "no"
 
   redis:
     image: redis:7.4-bookworm@sha256:595cc6f2bb3af6e03347b90deb6123c6aa2c81dea05ce08128de8a174b6ac67b
-    # Internal only. Not published, so the absence of a Redis password is
-    # contained by the network boundary rather than by hope.
+    # Never publish: Redis has no password.
     expose:
       - "6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
@@ -106,12 +82,10 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Self-hosted Postgres, for a pilot without a managed database. If you enable
-  # this, you own backups and restore drills. Point DATABASE_URL at `postgres`.
+  # Self-hosted Postgres (you own backups). Point DATABASE_URL at `postgres`.
   #
   # postgres:
-  #   # Match the base OS of whatever created the data directory — a glibc change
-  #   # under an existing cluster invalidates collation-dependent indexes.
+  #   # Keep the data directory's base OS: a glibc change breaks collation indexes.
   #   image: postgres:16.14-trixie
   #   environment:
   #     POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
@@ -128,21 +102,16 @@ services:
   #     retries: 5
   #   restart: unless-stopped
 
-  # Certificate issuance/renewal. Opt-in via the `certs` profile so it
-  # never runs as part of a normal `up`. First issuance (port 80 must already
-  # be serving the ACME webroot via nginx):
+  # Certificate issuance/renewal (opt-in `certs` profile). First issuance, with
+  # nginx already serving the ACME webroot on port 80:
   #
   #     docker compose -f docker-compose.prod.yml --profile certs run --rm \
   #       certbot certonly --webroot -w /var/www/certbot \
   #       -d <your-api-hostname> --email <ops-email> --agree-tos --no-eff-email
   #
-  # Certificates land under ${TLS_CERT_DIR}/live/<hostname>/ — point nginx's
-  # ssl_certificate at them (or symlink fullchain.pem/privkey.pem into
-  # ${TLS_CERT_DIR} directly), then UNCOMMENT the HSTS line in nginx.conf and
-  # reload. Renewal is `... run --rm certbot renew` from cron/systemd.
+  # Then point nginx at ${TLS_CERT_DIR}/live/<hostname>/, uncomment HSTS in
+  # nginx.conf and reload. Renew with `... run --rm certbot renew` from cron.
   certbot:
-    # Was a bare untagged `certbot/certbot` (i.e. :latest) — the exact drift
-    # digest-pinning exists to stop on a certificate-issuing container.
     image: certbot/certbot:latest@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
     profiles: ["certs"]
     volumes:
@@ -150,12 +119,8 @@ services:
       - certbot_webroot:/var/www/certbot
     restart: "no"
 
-# The compose network is pinned to a fixed subnet so nginx.conf's
-# `set_real_ip_from` can trust EXACTLY this network instead of the whole
-# 172.16.0.0/12 — under the /12, any address in that range that could reach
-# the edge was able to forge X-Forwarded-For and pick its own rate-limit
-# bucket. Change the subnet only together with nginx.conf (two places:
-# set_real_ip_from and the /metrics allow).
+# Fixed subnet so nginx `set_real_ip_from` trusts only this network (no XFF forging).
+# Change together with nginx.conf (set_real_ip_from and the /metrics allow).
 networks:
   default:
     ipam:

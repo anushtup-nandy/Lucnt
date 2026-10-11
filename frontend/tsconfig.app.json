@@ -16,7 +16,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Strict mode is mandatory — no `any`, no implicit any. */
+    /* Strict mode is mandatory. */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "paths": { "@/*": ["./src/*"] },

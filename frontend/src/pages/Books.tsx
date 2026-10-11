@@ -1,15 +1,6 @@
 /**
- * Books — six subtabs, one per existing `/books/*` endpoint.
- *
- * **Balance is the backend's word, not ours.** TB and BS surface the server's
- * own `balanced` boolean instead of summing the rows client-side. Summing
- * decimal strings in JavaScript to check a ledger balances is how a page ends
- * up disagreeing with the database it is displaying — and the page would be the
- * one that is wrong.
- *
- * Every statement is grouped by currency, for the same reason the recon inbox
- * is: without an FX conversion, adding ₹ to $ produces a number that means
- * nothing.
+ * Books: one subtab per `/books/*` endpoint. Shows the server's `balanced` flag
+ * rather than re-summing; statements are grouped by currency (no FX).
  */
 
 import { useState, type ReactNode } from 'react'

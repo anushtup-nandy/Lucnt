@@ -1,11 +1,4 @@
-/**
- * Verdict → tag mapping.
- *
- * Mislabelling `blocked` as `approved` inverts the product's central claim — a
- * dashboard that shows a refused spend as fine is worse than one that shows
- * nothing. Every status the backend can emit is asserted here against the
- * closed `VerdictStatus` enum, so adding a status without adding a tag fails.
- */
+/** Verdict → tag mapping, exhaustive over the backend's `VerdictStatus`. */
 
 import { describe, expect, it } from 'vitest'
 
@@ -32,15 +25,14 @@ describe('verdictTag', () => {
   })
 
   it('shows an unknown status as itself instead of guessing', () => {
-    // A new blocking status must never render as "Approved" because this build
-    // predates it. Showing the raw value is the honest failure mode.
+    // An unknown status must render raw, never as "Approved".
     expect(verdictTag('quarantined')).toEqual({ tone: 'info', label: 'quarantined' })
   })
 })
 
 describe('transactionTag', () => {
   it('prefers reversed over estimated', () => {
-    // A reversed estimate is first of all reversed: the money came back.
+    // Reversal takes precedence over estimate.
     expect(transactionTag({ is_reversed: true, estimated: true }).label).toBe('Reversed')
   })
 

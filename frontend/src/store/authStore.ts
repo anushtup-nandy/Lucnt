@@ -1,12 +1,6 @@
 /**
- * Session state: the access token, the user, and their resolved permissions.
- *
- * **The access token lives in memory only**. Not
- * `localStorage`, not `sessionStorage`: both are readable by any script that
- * gets injected, and a token that outlives the tab is a token that outlives the
- * user's intent. The cost is that a hard refresh has no token — which is why
- * `bootstrap()` exists: it spends one silent `POST /auth/refresh` against the
- * httpOnly cookie to get a new one.
+ * Session state. The access token is memory-only (web storage is XSS-readable);
+ * `bootstrap()` restores it from the httpOnly refresh cookie.
  */
 
 import { create } from 'zustand'
@@ -64,11 +58,5 @@ export const useAuthStore = create<AuthState>((set) => ({
   setBootstrapped: () => set({ bootstrapping: false }),
 }))
 
-/**
- * Read the token outside React.
- *
- * The axios request interceptor needs it, and an interceptor is not a component
- * — it cannot call a hook. Reading the store imperatively is the supported
- * escape hatch, and it keeps exactly one copy of the token in the process.
- */
+/** Read the token outside React (for the axios interceptor). */
 export const getAccessToken = (): string | null => useAuthStore.getState().accessToken

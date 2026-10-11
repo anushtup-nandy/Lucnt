@@ -1,10 +1,4 @@
-/**
- * Policies — one card per rule, with the count of what it actually stopped.
- *
- * "Blocked N times" is the number that makes a policy real. A toggle with no
- * evidence behind it is a settings screen; a toggle that says it refused four
- * spends is a control.
- */
+/** Policies: one card per rule, with how many spends it blocked. */
 
 import type { ReactNode } from 'react'
 

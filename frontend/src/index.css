@@ -1,19 +1,7 @@
 /*
- * LUCNT design system — a port of the HTML design mockup, not a redesign.
- *
- * Translation, not invention: port the tokens, don't redesign. The mockup is already a coherent system, so its CSS
- * is carried over close to verbatim rather than dissolved into utility classes.
- * Two reasons: a utility rewrite is a rewrite (every value becomes a chance to
- * drift from the approved design), and a component class like `.tbl-r` reads
- * the same in the mockup and in the React tree, which is what makes the two
- * comparable at all.
- *
- * Tailwind is still here for layout and one-off spacing; the tokens below are
- * exposed to it through `@theme`, so `bg-paper2` / `text-lime-ink` work.
- *
- * Fonts are self-hosted via @fontsource. The mockup preconnects to Google
- * Fonts; a finance dashboard must not leak every page view to a third-party
- * CDN, and the demo has to work with no network.
+ * LUCNT design system: the mockup's CSS ported near-verbatim to avoid drift.
+ * Tokens are exposed to Tailwind via `@theme`. Fonts are self-hosted so page
+ * views don't leak to a third-party CDN.
  */
 
 @import '@fontsource/inter/400.css';
@@ -113,9 +101,7 @@ a { color: inherit; text-decoration: none; }
 ::-webkit-scrollbar-thumb { background: #e2e1da; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* Visible keyboard focus. The mockup has none — an omission, not a decision:
-   §8 requires keyboard operability, and `outline: none` without a replacement
-   makes the app unusable without a mouse. */
+/* Visible keyboard focus (accessibility). */
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
 
 /* ===== APP SHELL ===== */
@@ -451,9 +437,7 @@ a { color: inherit; text-decoration: none; }
 .toast .ti { color: var(--lime); font-weight: 700; }
 .toast.bad .ti { color: #ff9e8c; }
 
-/* ===== STATES (not in the mockup, which only ever renders the happy path) =====
-   §11: no error is swallowed into an empty table. An empty table means "no
-   rows", always — so loading, empty and error each get their own treatment. */
+/* ===== STATES ===== loading, empty and error are distinct; never an empty table. */
 .state { padding: 44px 10px; text-align: center; color: var(--gray); font-size: 13.5px; }
 .state .st-t { font-family: Newsreader, serif; font-size: 19px; color: var(--ink); margin-bottom: 6px; }
 .state .st-d { font-size: 12.5px; color: var(--gray2); margin-top: 8px; font-family: 'JetBrains Mono'; }

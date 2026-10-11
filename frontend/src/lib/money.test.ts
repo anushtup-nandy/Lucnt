@@ -1,12 +1,4 @@
-/**
- * `formatMoney` — float drift in a ledger is invisible until it isn't.
- *
- * The point of these tests is not the comma placement. It is that a
- * `Numeric(18,4)` value with more precision than a JS `number` can hold survives
- * formatting *exactly*. `parseFloat("60000000000000.1234")` loses the tail
- * silently, and the resulting page disagrees with the database while looking
- * completely plausible.
- */
+/** `formatMoney` must preserve `Numeric(18,4)` precision a JS number would lose. */
 
 import { describe, expect, it } from 'vitest'
 
@@ -26,8 +18,7 @@ describe('formatMoney', () => {
   })
 
   it('truncates rather than rounds to the requested precision', () => {
-    // Truncation, deliberately: rounding a ledger figure for display can make a
-    // column of rows fail to sum to its own stated total.
+    // Truncates, not rounds, so displayed rows still sum to the displayed total.
     expect(formatMoney('10.9999', 'USD')).toBe('$10.99')
   })
 

@@ -1,11 +1,4 @@
-/**
- * Approvals — the `human_hold` queue, and the `approver` persona's landing page.
- *
- * Every row here is money that has **not** moved. The hold was taken, policy
- * routed it to a human, and the agent is blocked until someone answers. That is
- * why the age column exists: an unanswered queue is an agent that has stopped
- * working.
- */
+/** Approvals: the `human_hold` queue. Each row is an agent blocked until answered. */
 
 import type { ReactNode } from 'react'
 
@@ -40,9 +33,7 @@ export function Approvals(): ReactNode {
       pushToast(variables.decision === 'approve' ? 'Approved — the agent may spend' : 'Rejected')
       void queryClient.invalidateQueries({ queryKey: key })
     },
-    // Approving re-checks the budget server-side, so an approval can legitimately
-    // fail. Surfacing that is the point: a silently-failed approval leaves the
-    // agent blocked while the queue looks clear.
+    // Approval re-checks the budget and can fail; surface it.
     onError: (error: unknown) => pushToast(describeFailure(error).message, 'bad'),
   })
 

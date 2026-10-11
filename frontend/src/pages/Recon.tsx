@@ -1,14 +1,4 @@
-/**
- * Reconciliation — an inbox, ordered by money at stake.
- *
- * `POST /recon/scan` is limited to **5 per minute per principal** and the 429 is
- * surfaced honestly rather than swallowed into a spinner that never resolves
- * (§11). Scanning walks the whole ledger; that limit is the reason the endpoint
- * is safe to expose at all.
- *
- * Totals are per currency because they arrive per currency: ranking ₹5,000
- * against $100 without an FX conversion produces an ordering that is wrong.
- */
+/** Reconciliation inbox by money at stake. Scan is rate-limited (429 shown); totals per currency. */
 
 import { useState, type ReactNode } from 'react'
 

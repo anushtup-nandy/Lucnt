@@ -36,13 +36,7 @@ export async function login(email: string, password: string): Promise<Session> {
   return loadSession()
 }
 
-/**
- * Restore a session on a cold load.
- *
- * The access token is memory-only, so a refresh of the browser starts with
- * none. This spends one silent `/auth/refresh` against the httpOnly cookie; if
- * that fails there simply is no session, which is not an error worth surfacing.
- */
+/** Restore a session on cold load via the refresh cookie; failure just means logged out. */
 export async function bootstrapSession(): Promise<Session | null> {
   const store = useAuthStore.getState()
   try {

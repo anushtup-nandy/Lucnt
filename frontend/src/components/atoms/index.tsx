@@ -1,11 +1,4 @@
-/**
- * The shared atoms, in one file on purpose.
- *
- * Each is three to ten lines over a class from the ported design system. Eight
- * files of five lines each would be eight imports and eight places to look; the
- * grouping is the DRY rule applied to the file count rather
- * than only to the code.
- */
+/** Shared atoms, kept in one file because each is only a few lines. */
 
 import clsx from 'clsx'
 import type { ReactNode } from 'react'
@@ -28,11 +21,7 @@ export function Tag({ tag }: { tag: TagSpec }): ReactNode {
 
 /* --------------------------------------------------------------------- Bar */
 
-/**
- * A budget heat bar. Width is clamped to 100%; the *label* still tells the
- * truth about an over-budget agent, because a bar that stops at full and a
- * number that says 130% are both needed — one to scan, one to believe.
- */
+/** A budget heat bar; width clamps at 100% but the label shows the true percentage. */
 export function Bar({ pct }: { pct: number }): ReactNode {
   return (
     <div className="bar" role="presentation">
@@ -101,14 +90,7 @@ export function Empty({ title, hint }: { title: string; hint?: string }): ReactN
   )
 }
 
-/**
- * Every status renders as itself.
- *
- * No error is ever collapsed into an empty table: an empty table means "no
- * rows", always. A 403 says which role was refused, a 429 says how long to
- * wait, a 5xx shows the request id so the user's screenshot and the server's
- * log line can be joined.
- */
+/** Status-specific error state; never collapsed into an empty table. */
 export function Failure({
   failure,
   onRetry,

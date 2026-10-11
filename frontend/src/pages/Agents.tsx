@@ -1,11 +1,4 @@
-/**
- * Agents — the first page built end-to-end.
- *
- * The list an `agent_owner` sees is narrowed **server-side** (`scope_agents` in
- * the SQL). This page does no filtering of its own, on purpose: a client-side
- * filter over a paginated response would report the wrong total and would put
- * the other owner's rows in the browser's memory before hiding them.
- */
+/** Agents. Scoping is server-side only; never filter client-side. */
 
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router'

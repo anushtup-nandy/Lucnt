@@ -1,12 +1,6 @@
 /**
- * The one HTTP client. Access-token injection, 401 → single silent refresh.
- *
- * **One refresh, not N**. A dashboard page fires five
- * or six queries at once; when the access token expires they all 401 within a
- * few milliseconds. Without the shared `refreshInFlight` promise below, each
- * would start its own refresh, and because `/auth/refresh` rotates the cookie,
- * the later ones would present a rotated-away token and log the user out — a
- * bug that only appears after fifteen idle minutes, i.e. mid-demo.
+ * The HTTP client: access-token injection, 401 → one shared silent refresh.
+ * Shared because `/auth/refresh` rotates the cookie; parallel refreshes log out.
  */
 
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
@@ -16,24 +10,17 @@ import { getAccessToken, useAuthStore } from '@/store/authStore'
 export const API_BASE_URL: string =
   (import.meta.env['VITE_API_BASE_URL'] as string | undefined) ?? 'http://localhost:8000'
 
-/** Header the backend stamps on every response; shown in 5xx states (§11). */
+/** Header the backend stamps on every response; shown in 5xx states. */
 export const REQUEST_ID_HEADER = 'x-request-id'
 
 export const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  // Required for the refresh cookie to be sent cross-origin. Pairs with the
-  // backend's exact `CORS_ORIGINS` — a wildcard origin would be rejected here.
+  // Sends the refresh cookie cross-origin; requires exact CORS_ORIGINS.
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
-/**
- * A bare client for the refresh call itself, so it can never recurse.
- *
- * Exported only so tests can mount a mock adapter on it — without that seam a
- * refresh test makes a real socket connection to a backend that is not running,
- * which is slow, noisy, and tests the wrong thing.
- */
+/** Bare client for the refresh call so it can't recurse; exported for test mocks. */
 export const refreshClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
@@ -47,12 +34,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 let refreshInFlight: Promise<string | null> | null = null
 
-/**
- * Exchange the httpOnly refresh cookie for a new access token.
- *
- * Concurrent callers share one in-flight request; the promise is cleared only
- * once it settles, so the *next* expiry starts a fresh one.
- */
+/** Exchange the refresh cookie for an access token; concurrent callers share one request. */
 export function refreshAccessToken(): Promise<string | null> {
   refreshInFlight ??= refreshClient
     .post<{ access_token: string }>('/auth/refresh')
@@ -81,9 +63,7 @@ api.interceptors.response.use(
     const config = error.config as RetriableConfig | undefined
     const status = error.response?.status
 
-    // One retry, and never for the auth endpoints themselves: a 401 from
-    // /auth/login means "wrong password", and refreshing on it would turn a
-    // failed login into an infinite loop.
+    // Never retry auth endpoints: a login 401 is a wrong password, not an expiry.
     const isAuthCall = config?.url?.startsWith('/auth/') ?? false
     if (status === 401 && config && !config._retried && !isAuthCall) {
       config._retried = true
@@ -97,7 +77,7 @@ api.interceptors.response.use(
   },
 )
 
-/** What the UI needs to render a failure honestly (§11). */
+/** What the UI needs to render a failure. */
 export interface ApiFailure {
   status: number | null
   message: string
@@ -124,14 +104,7 @@ function extractFieldErrors(detail: unknown): Record<string, string> {
   return fields
 }
 
-/**
- * Normalise anything thrown by axios into something a component can render.
- *
- * Every status renders as itself (§11): 403 says your role cannot do this, 429
- * surfaces the retry-after, 5xx shows the request id so a bug report and a log
- * line can be joined. Nothing is flattened into "something went wrong", and
- * nothing is swallowed into an empty table.
- */
+/** Normalise an axios error into a renderable, status-specific failure. */
 export function describeFailure(error: unknown): ApiFailure {
   if (!axios.isAxiosError(error)) {
     return {

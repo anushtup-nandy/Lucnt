@@ -1,14 +1,4 @@
-/**
- * Overview — attention cards composed **client-side** from existing reads.
- *
- * There is deliberately no `GET /overview` aggregate:
- * four small reads the dashboard already makes are cheaper to build, cheaper to
- * keep honest, and cannot drift from the pages they link to. If this page ever
- * feels slow, that is the signal to add the aggregate — not before.
- *
- * A card only appears when it has something to say. An empty Overview is the
- * *good* outcome, and it says so rather than showing four zeroes.
- */
+/** Overview: attention cards composed client-side from existing reads; shown only when non-empty. */
 
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router'

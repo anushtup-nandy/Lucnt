@@ -1,8 +1,6 @@
 version: 2
 
-# backend/ is deliberately absent: its hashed requirements.lock is produced by
-# `uv pip compile`, which Dependabot cannot regenerate, so every backend PR would
-# fail the lockfile gate. Upgrade it by hand (see the CI advisory step).
+# backend/ omitted: Dependabot can't regenerate its uv-compiled hashed lock.
 updates:
   - package-ecosystem: github-actions
     directory: /

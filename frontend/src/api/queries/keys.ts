@@ -1,14 +1,6 @@
 /**
- * Query keys. **Every key carries the user id and the entity code.**
- *
- * Switching either must not serve the other scope's
- * cached rows. Without the user id, logging out as a CFO and in as an
- * `agent_owner` on the same machine shows the CFO's agent list until the first
- * refetch lands — a scoping leak produced entirely in the browser, against a
- * backend that scoped the query correctly.
- *
- * `scope()` is therefore the only way keys are built here, and pages call these
- * helpers rather than writing array literals.
+ * Query keys. Every key carries user id and entity code so switching either never
+ * serves another scope's cached rows. Always build keys via `scope()`.
  */
 
 import { useAuthStore } from '@/store/authStore'

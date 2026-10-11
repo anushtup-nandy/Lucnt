@@ -1,9 +1,4 @@
-/**
- * The authenticated shell: sidebar + topbar + routed content.
- *
- * Also the one place `GET /entities` is fetched, because the switcher lives in
- * the sidebar and every page's query key depends on the selection.
- */
+/** The authenticated shell: sidebar + topbar + routed content. Fetches entities. */
 
 import { useEffect, type ReactNode } from 'react'
 import { Outlet, useLocation } from 'react-router'
@@ -19,8 +14,7 @@ import { useUiStore } from '@/store/uiStore'
 function Toasts(): ReactNode {
   const toasts = useUiStore((s) => s.toasts)
   if (toasts.length === 0) return null
-  // Only the newest is shown; a stack of toasts is a log, and a log belongs on
-  // the Developers page, not floating over the content.
+  // Only the newest toast is shown.
   const toast = toasts[toasts.length - 1]
   if (!toast) return null
   return (
@@ -46,8 +40,7 @@ export function AppShell(): ReactNode {
     if (entities.data) setEntities(entities.data)
   }, [entities.data, setEntities])
 
-  // Focus management on route change (§8): move focus to the main region so a
-  // keyboard user does not land back at the top of the sidebar every time.
+  // Move focus to main on route change for keyboard users.
   useEffect(() => {
     setSidebarOpen(false)
     document.getElementById('main-content')?.focus()

@@ -4,32 +4,16 @@ version = "0.1.0"
 description = "Backend API for the LUCNT platform"
 requires-python = ">=3.12"
 dependencies = [
-    # Was `fastapi[standard]`, which pulls `fastapi-cli`,
-    # `fastapi-cloud-cli` (a deployment client that talks to a third-party
-    # service), `rich-toolkit`, `jinja2`, `python-multipart` and
-    # `email-validator` into the deployable image. None is imported anywhere in
-    # `src/` — no templates, no form parsing, no `EmailStr` — and every
-    # documented workflow invokes `uvicorn` directly, never `fastapi dev`. Six
-    # fewer packages in the runtime image, one of which makes network calls.
+    # Not `fastapi[standard]`: its extras (incl. a cloud CLI) are unused.
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0,<2.1",
-    # Dev/CI convenience: the binary wheel needs no compiler. The IMAGE replaces
-    # it with a source build of `psycopg2` (see `Dockerfile`), because the binary
-    # wheel bundles its own OpenSSL, which `apt-get upgrade` can never patch.
+    # The Dockerfile swaps this for a source build (bundled OpenSSL is unpatchable).
     "psycopg2-binary>=2.9",
     "alembic>=1.13",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    # P7.0 dashboard auth. An earlier cleanup removed `python-jose` and `bcrypt`
-    # here with standing instructions: "Reinstate them only alongside the auth
-    # feature that needs them, and prefer `argon2`/`bcrypt` over `python-jose`,
-    # which is thinly maintained." That feature is here, and the instruction is followed —
-    # `python-jose` stays out. It pulled in `ecdsa`, whose Minerva timing attack
-    # (PYSEC-2026-1325) the maintainers declared out of scope with **no planned
-    # fix**, plus three `pyasn1` CVEs: four of the six findings `pip-audit` once
-    # reported. `pyjwt` has neither dependency; `argon2-cffi` is memory-hard and
-    # is what hashes `users.password_hash`. See `security.py`.
+    # pyjwt, not python-jose (its ecdsa/pyasn1 deps carry unfixed CVEs).
     "pyjwt>=2.8",
     "argon2-cffi>=23.1",
     "structlog>=24.0",
@@ -37,17 +21,13 @@ dependencies = [
     "uuid6>=2024.1.12",
     "redis>=5.0",
     "prometheus-client>=0.20",
-    # Process manager for the deployable image. `uvicorn.workers` is
-    # deprecated in favour of the separately released `uvicorn-worker`, which is
-    # what `infra/gunicorn.conf.py` loads.
+    # `uvicorn.workers` is deprecated in favour of `uvicorn-worker`.
     "gunicorn>=22.0",
     "uvicorn-worker>=0.2",
 ]
 
 [project.optional-dependencies]
-# Error reporting is opt-in: with `SENTRY_DSN` unset, `sentry_sdk` is never
-# imported. Kept out of the default set so the deployable image carries no
-# dependency on a third-party service unless someone deliberately configures one.
+# Opt-in: sentry_sdk is imported only when SENTRY_DSN is set.
 sentry = ["sentry-sdk>=2.0"]
 dev = [
     "pytest>=8.0",
@@ -66,23 +46,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/lucnt_api"]
 
-# -----------------------------------------------------------------------------
-# Pytest
-# -----------------------------------------------------------------------------
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
 
-# -----------------------------------------------------------------------------
-# Ruff
-# -----------------------------------------------------------------------------
 [tool.ruff]
 target-version = "py312"
 line-length = 88
 src = ["src"]
-# Same guard as sdk/pyproject.toml: ruff ≥0.16 formats code blocks in markdown;
-# docs are prose, not gated code.
+# ruff ≥0.16 formats markdown code blocks; docs aren't gated code.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
@@ -113,9 +86,6 @@ known-first-party = ["lucnt_api"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "N"]
 
-# -----------------------------------------------------------------------------
-# mypy
-# -----------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
 mypy_path = "src"

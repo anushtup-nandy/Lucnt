@@ -1,10 +1,4 @@
-/**
- * Login. On success, redirect to `perms.landing` — **not** a hardcoded `/`.
- *
- * Which page a role lands on is a product decision the backend already made
- * (`resolve_perms`); repeating it here would be a second source of truth that
- * silently disagrees the first time a role's landing page changes.
- */
+/** Login. On success, redirect to the server-chosen `perms.landing`. */
 
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Navigate, useNavigate } from 'react-router'

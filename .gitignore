@@ -82,8 +82,7 @@ CLAUDE.local.md
 graphify-out/
 .venv-realclient/
 
-# `uv run` regenerates this; the committed lockfile is `backend/requirements.lock`
-# (hashed, what the image and CI install from).
+# The committed lock is backend/requirements.lock.
 backend/uv.lock
 
 # Internal planning material — not part of the public repo.

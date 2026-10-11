@@ -61,8 +61,7 @@ export function AgentProfile(): ReactNode {
       const { data } = await api.get<Paginated<Policy>>('/policies', {
         params: { active: true, limit: 100 },
       })
-      // Company-wide policies govern every agent; agent-scoped ones only this
-      // one. The backend applies exactly this rule at authorize time.
+      // Same rule the backend applies: company-wide plus this agent's policies.
       return data.items.filter((p) => p.scope_type === 'company' || p.scope_id === agentId)
     },
     { enabled: Boolean(agentId) && canSee('policies') },

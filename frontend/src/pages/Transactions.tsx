@@ -1,16 +1,6 @@
 /**
- * Transactions — the demo's best moment, and the page D5 was written for.
- *
- * **Each chip is one endpoint, one status value.** `transactions.status` has a
- * single member (`completed`), so blocked and held spends are not transactions
- * at all — they are `authorizations` rows. The chips therefore switch *data
- * source*, and each reads exactly one endpoint so pagination stays correct. A
- * client-side union over paginated pages reports "3 of 3" while page 2 holds
- * four more, which is the bug this shape exists to prevent.
- *
- * The counts strip above the chips is deliberate: the policy block is the
- * single best thing this product does, and it must be visible on the default
- * view rather than one click away.
+ * Transactions. Each chip reads exactly one endpoint (blocked/held spends are
+ * authorizations, not transactions) so pagination stays correct.
  */
 
 import { useState, type ReactNode } from 'react'
@@ -33,7 +23,7 @@ interface ChipSource {
   params: Record<string, string>
 }
 
-/** One chip, one endpoint, one status value (D5). */
+/** One chip, one endpoint, one status value. */
 const SOURCES: Record<ChipKey, ChipSource> = {
   captured: { label: 'Captured', path: '/transactions', params: {} },
   estimated: { label: 'Estimated', path: '/transactions', params: { estimated: 'true' } },
@@ -63,8 +53,7 @@ export function Transactions(): ReactNode {
     return data
   })
 
-  // The counts strip. Three cheap `limit=1` reads — the endpoints return a
-  // `total` for the full filtered set, so a single row is enough to learn it.
+  // `limit=1` reads: the response `total` gives the count.
   const counts = useLiveQuery(scope('txn-counts', userId, entity), async () => {
     const ask = async (path: string, params: Record<string, string>): Promise<number> => {
       const { data } = await api.get<{ total: number }>(path, {

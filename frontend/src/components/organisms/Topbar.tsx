@@ -1,11 +1,4 @@
-/**
- * The topbar: breadcrumb, entity badge, and the `/` search palette.
- *
- * Search is client-side over the agent list, deliberately: there is no search
- * endpoint, and inventing one for the demo would be a façade.
- * What it does do — jump to an agent by name — is the thing
- * the mockup's palette is actually used for.
- */
+/** The topbar: breadcrumb, entity badge, and `/` search (client-side over agents). */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router'
@@ -57,7 +50,7 @@ export function Topbar(): ReactNode {
     { enabled: canSeeAgents },
   )
 
-  // `/` focuses search, `Esc` closes it (§8).
+  // `/` focuses search, `Esc` closes it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null

@@ -1,12 +1,4 @@
-/**
- * One transaction, in full: who spent, why, what tax applied, how it booked.
- *
- * The balanced badge is displayed as **fact, not as a client-side calculation**.
- * Σdebit == Σcredit is asserted at write time in the journal generator and
- * again by a database constraint; recomputing it here in floating point would
- * be strictly less trustworthy than the thing it claims to verify, and would
- * eventually disagree with it.
- */
+/** One transaction: who spent, why, tax, and journal. Balance is enforced server-side. */
 
 import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router'
@@ -195,7 +187,7 @@ export function TransactionDetail(): ReactNode {
         <div className="jr">
           <h6>
             <span>Journal entry</span>
-            {/* Asserted at write time, so displayed as fact — see the module note. */}
+            {/* Balance is enforced at write time and by a DB constraint. */}
             <span className="bal">balanced</span>
           </h6>
           {txn.journal.map((line, index) => (

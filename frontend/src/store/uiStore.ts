@@ -24,8 +24,7 @@ export const useUiStore = create<UiState>((set) => ({
   pushToast: (message, tone = 'ok') => {
     const id = nextToastId++
     set((state) => ({ toasts: [...state.toasts, { id, message, tone }] }))
-    // Self-dismiss. A toast is an acknowledgement, not a log; if the user needs
-    // to act on it, it should have been an inline error instead.
+    // Self-dismiss; actionable errors belong inline.
     setTimeout(() => {
       set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
     }, 3200)

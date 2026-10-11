@@ -1,14 +1,6 @@
 /**
- * Nav rendering. **The sidebar is data, never a hardcoded array.**
- *
- * This is non-negotiable: the list comes from `perms.nav` on `/auth/me`. The server
- * gates the same tuple (`require_nav`), so a link that is not rendered is also
- * an endpoint that 403s — the two cannot drift apart.
- *
- * The only thing hardcoded here is the *icon* per domain key, which is
- * decoration. An unknown key still renders, with a neutral glyph, rather than
- * disappearing: a nav item the backend sent and the frontend silently dropped
- * would be the same class of bug in the other direction.
+ * Nav rendering from server `perms.nav` (same list `require_nav` gates), never a
+ * hardcoded array. Unknown keys render with a neutral icon rather than vanish.
  */
 
 import type { NavItem } from '@/store/authStore'

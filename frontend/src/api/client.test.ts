@@ -1,12 +1,4 @@
-/**
- * The token-refresh race, and error normalisation.
- *
- * **Concurrent 401s must trigger one refresh, not N**.
- * `/auth/refresh` rotates the cookie, so a second concurrent refresh presents a
- * token the server has already rotated away and logs the user out. The bug only
- * appears after the access token expires — fifteen idle minutes, i.e. exactly
- * when someone is mid-sentence on stage.
- */
+/** Token-refresh race (concurrent 401s → one refresh) and error normalisation. */
 
 import MockAdapter from 'axios-mock-adapter'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -86,9 +78,7 @@ describe('refreshAccessToken', () => {
       refreshAccessToken(),
     ])
 
-    // The whole point: three callers, one rotation. `/auth/refresh` rotates the
-    // cookie, so a second concurrent call would present a token the server has
-    // already invalidated and would log the user out.
+    // Refresh rotates the cookie, so a second concurrent call would log out.
     expect(calls).toBe(1)
     expect(results).toEqual(['fresh', 'fresh', 'fresh'])
     expect(useAuthStore.getState().accessToken).toBe('fresh')
@@ -159,8 +149,7 @@ describe('request interceptor', () => {
   })
 
   it('does not try to refresh a failed login', async () => {
-    // A 401 from /auth/login means "wrong password". Refreshing on it would
-    // turn a failed login into a loop.
+    // A login 401 is a wrong password; refreshing on it would loop.
     let calls = 0
     mock.onPost('/auth/login').reply(() => {
       calls += 1

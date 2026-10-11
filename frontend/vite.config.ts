@@ -2,8 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-// `vitest/config` re-exports `defineConfig` with the `test` block typed; the
-// one from `vite` does not know about it.
+// From vitest/config so the `test` block is typed.
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
@@ -12,10 +11,7 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
-    // The API is called cross-origin on purpose, not through a dev proxy: the
-    // backend's CORS + credentialed-cookie setup is then exercised in
-    // development exactly as in production. A proxy would hide a misconfigured
-    // `CORS_ORIGINS` until deploy day.
+    // No dev proxy: calling cross-origin exercises CORS + cookies as in production.
     port: 5173,
     strictPort: true,
   },

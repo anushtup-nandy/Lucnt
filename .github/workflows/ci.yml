@@ -1,21 +1,7 @@
 name: CI
 
-# The repo's mandated "Green CI" gate, enforced on every push/PR:
-# ruff + mypy + pytest for both packages, plus an Alembic reversibility round-trip
-# and a schema-drift check for the backend. Runs the exact commands used locally
-# so CI never diverges.
-#
-# Beyond lint/type/test, this workflow also runs:
-#   * a Redis service — the rate limiter made Redis a real runtime dependency,
-#     and a suite that only ever ran with it absent proves the fail-open path
-#     and nothing else;
-#   * `alembic check`, which is only meaningful now that `alembic/env.py` turns on
-#     `compare_type`/`compare_server_default` (it immediately found real drift);
-#   * a dedicated TEST_DATABASE_URL, so the destructive downgrade round-trip
-#     provably runs somewhere other than the database the suite reads;
-#   * secret and dependency scanning;
-#   * a Docker build, because an image that only builds on the author's laptop is
-#     not a deployable artifact.
+# Green CI gate: lint/type/test for every package, migration round-trip, schema
+# drift, secret + dependency scans, and a Docker build. Same commands as local.
 
 on:
   push:
@@ -57,24 +43,13 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      # `DATABASE_URL` stays pointed at `lucnt` so the round-trip below cannot be
-      # the thing that migrates the database the tests then assert against.
-      #
-      # `TEST_DATABASE_URL` is deliberately NOT set here — only on the `pytest`
-      # step. The validator in `config.py` rejects a config where the two
-      # are equal, and the alembic steps below have to point `DATABASE_URL` at
-      # the throwaway database; with both in job scope they collide and every
-      # `Settings()` construction raises before doing any work. Scoping each var
-      # to the steps that actually read it keeps the guard's intent — the
-      # *suite's* destructive fixtures must never target the read database —
-      # without the two ever being in scope together.
+      # TEST_DATABASE_URL is set only on the pytest step: config.py rejects it equal
+      # to DATABASE_URL, which the alembic steps repoint at the throwaway DB.
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lucnt
       TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/lucnt_test
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: development
-      # SECRET_KEY is required — it signs dashboard JWTs, so an unset one
-      # is a startup failure by design (`config.py`). CI is `development`, where
-      # the committed example value is accepted.
+      # Required (signs JWTs); the example value is accepted only in development.
       SECRET_KEY: dev_secret_change_me_before_deploying_lucnt
       CORS_ORIGINS: http://localhost:5173
     defaults:
@@ -87,44 +62,21 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install
-        # Resolves fresh, deliberately: CI is the early-warning system for a
-        # dependency that breaks us, while `requirements.lock` keeps the *image*
-        # reproducible. The drift check below stops the two diverging silently.
+        # Resolves fresh on purpose (early warning); the image uses requirements.lock.
         run: pip install -e ".[dev]"
 
       - uses: astral-sh/setup-uv@v5
         with:
-          # Without this the action warns "No file matched to
-          # [**/uv.lock,**/requirements*.txt]. The cache will never get invalidated" —
-          # its default globs match neither `requirements.lock` (`.lock`, not `.txt`)
-          # nor this job's `backend/` working directory, so the uv cache was dead
-          # weight rather than a cache.
+          # Default globs match neither `.lock` nor backend/, leaving the cache dead.
           cache-dependency-glob: backend/requirements.lock
       - name: Lockfile is in sync with pyproject.toml
-        # Blocking gate: does `requirements.lock` still satisfy what `pyproject.toml`
-        # declares? A lock that has genuinely diverged means the image ships something
-        # other than what pyproject says, and nothing else in CI would notice.
-        #
-        # The check is SEEDED with the committed lock (the `cp` below), because
-        # `uv pip compile` treats an existing output file as preferences and keeps its
-        # pins. Unseeded — as this step was originally written — it resolved fresh from
-        # the index on every run, so the gate went red whenever any of ~60 direct or
-        # transitive dependencies published a new version, with no change to the repo
-        # at all. That is exactly what broke `370fc21`: `fastapi 0.140.7` reached PyPI
-        # 44 minutes before the push, and the identical workflow had passed the day
-        # before. Seeded, the gate fires only on real divergence — a dependency added
-        # to or removed from pyproject, or a constraint the lock's pins no longer
-        # satisfy. Verified by injecting a dependency into a throwaway pyproject and
-        # confirming the seeded check still catches it.
-        #
-        # Picking up newer versions is a deliberate act: see the advisory step below.
+        # Seeded with the committed lock (`uv pip compile` keeps existing pins), so it
+        # fires only on real pyproject divergence, not on any new upstream release.
         run: |
           cp requirements.lock /tmp/requirements.check
           uv pip compile pyproject.toml --universal --python-version 3.12 \
             --generate-hashes --quiet -o /tmp/requirements.check
-          # uv's header echoes its own `-o` path, so that one line always differs
-          # and is dropped from both sides rather than stripped from the
-          # committed file, which stays self-documenting.
+          # uv's header echoes the `-o` path, so drop that line from both sides.
           strip() { sed '/^#    uv pip compile/d' "$1"; }
           if ! diff -u <(strip requirements.lock) <(strip /tmp/requirements.check); then
             echo "::error::requirements.lock no longer satisfies pyproject.toml. Regenerate with:" >&2
@@ -134,15 +86,7 @@ jobs:
           fi
 
       - name: Newer dependency versions available (advisory)
-        # Preserves the early-warning value the blocking gate used to supply, without
-        # taxing unrelated pushes. Resolves fresh from the index and reports what a
-        # deliberate `--upgrade` would move. Never fails the build.
-        #
-        # Note `--upgrade` is REQUIRED to see this: a plain
-        # `uv pip compile ... -o requirements.lock` over an existing lock preserves its
-        # pins, so it is a no-op for version bumps. The old error message told people
-        # to run exactly that, which would have shown them an empty diff and sent them
-        # back to a still-red build.
+        # Reports what `--upgrade` would move; without it compile keeps existing pins.
         continue-on-error: true
         run: |
           uv pip compile pyproject.toml --universal --python-version 3.12 \
@@ -164,36 +108,19 @@ jobs:
         run: psql -h localhost -U postgres -c 'CREATE DATABASE lucnt_test'
 
       - name: Lint (ruff)
-        # `tests/` and the gunicorn config are linted too: the original job only
-        # covered `src/`, so a lint error in either was invisible to CI.
         run: ruff check src/ tests/ scripts/ gunicorn.conf.py alembic/env.py
       - name: Format (ruff format --check)
-        # Formatting is a gate, not a habit — drift had reached 29 files
-        # before this step existed.
         run: ruff format --check src/ tests/ scripts/ gunicorn.conf.py alembic/env.py
       - name: Types (mypy)
         run: mypy src/ scripts/ gunicorn.conf.py
 
       - name: API contract is current
-        # Gates `contracts/api-contract.json` (a normalized projection of every path,
-        # field, type, required flag and enum) and `contracts/verdict-codes.json`.
-        #
-        # A *projection*, not a byte-diff of `openapi.json`, deliberately: the raw
-        # document moves with fastapi/pydantic bumps ($ref naming, anyOf ordering,
-        # generated titles) with zero repo change — the `370fc21` failure mode.
-        #
-        # `verdict-codes.json` is separate because `Verdict.code` is an open string
-        # on the wire, so `VerdictCode` never reaches OpenAPI, while the SDK
-        # branches on the literal "budget_exhausted". No schema gate can see that
-        # move; this one can.
+        # A normalized projection, not a byte-diff: raw openapi.json churns with
+        # fastapi/pydantic bumps. Verdict codes are open strings, so gated separately.
         run: python scripts/export_contract.py --check
 
       - name: Migrations round-trip (upgrade → downgrade → upgrade)
-        # Against the throwaway database, deliberately: `downgrade base` drops
-        # every table it can reach. Alembic reads `DATABASE_URL` only
-        # (`alembic/env.py` imports `settings` at module scope), so pointing it at
-        # the throwaway database is the whole mechanism — and why
-        # `TEST_DATABASE_URL` must not also be in scope here.
+        # Throwaway DB only: `downgrade base` drops every table. Alembic reads DATABASE_URL.
         env:
           DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: |
@@ -202,16 +129,11 @@ jobs:
           alembic upgrade head
 
       - name: Schema drift (alembic check)
-        # Fails if the models imply a migration nobody wrote. Only sharp now that
-        # type and server-default comparison were enabled.
         env:
           DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: alembic check
 
       - name: Tests (pytest)
-        # The one step that reads `TEST_DATABASE_URL`: `tests/conftest.py` builds
-        # its engine from it and warns when it is unset. `DATABASE_URL` keeps the
-        # job-level value, so the two differ and the `config.py` validator is satisfied.
         env:
           TEST_DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: pytest
@@ -232,8 +154,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Assert the image does not run as root
-        # A regression here is silent and serious, so it is asserted rather than
-        # trusted to the Dockerfile staying correct.
         run: |
           uid=$(docker run --rm lucnt-backend:ci id -u)
           echo "image uid: $uid"
@@ -249,14 +169,8 @@ jobs:
     name: sdk (ruff · mypy · pytest · py${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
-      # The SDK is a customer-facing library: `requires-python = ">=3.10"` is a
-      # promise, so 3.10 stays in the matrix (the floor customers may run) while
-      # 3.12 matches the backend's runtime.
-      #
-      # fail-fast off: a failure on one Python must not cancel the other leg —
-      # "does this break on 3.10, 3.12, or both?" is exactly the signal a
-      # version matrix exists to give (learned 30 Jul: a format failure on the
-      # 3.10 leg cancelled 3.12 and hid whether the failure was version-bound).
+      # 3.10 is the SDK's supported floor; 3.12 matches the backend. No fail-fast so
+      # each leg reports independently.
       fail-fast: false
       matrix:
         python: ["3.10", "3.12"]
@@ -272,8 +186,6 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint (ruff)
-        # The whole tree: `tests-realclient/` and `examples/` are code too —
-        # they carry per-file-ignores in pyproject rather than being unlinted.
         run: ruff check .
       - name: Format (ruff format --check)
         run: ruff format --check .
@@ -298,10 +210,7 @@ jobs:
       - name: Install
         run: npm ci
       - name: Generated API types are current
-        # The backend job gates `contracts/openapi.json` being current; this gates the
-        # other half — that `src/types/api.ts` was regenerated from it. Without
-        # this, a backend contract change leaves the frontend typed against the
-        # old wire format and nothing goes red.
+        # src/types/api.ts must be regenerated whenever the backend contract changes.
         run: |
           npm run gen:types
           git diff --exit-code -- src/types/api.ts
@@ -323,10 +232,8 @@ jobs:
           # gitleaks needs history to scan commits, not just the tree.
           fetch-depth: 0
       - name: Secret scan (gitleaks)
-        # Run the upstream image rather than `gitleaks/gitleaks-action`, which
-        # gates on a paid licence key for organisation-owned repositories.
-        # `--redact` keeps any finding out of the public build log. Scans history,
-        # not just the tree — a key deleted in a later commit is still leaked.
+        # Upstream image: gitleaks-action needs a paid licence for org repos.
+        # `--redact` keeps findings out of the public log.
         run: |
           docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
             detect --source=/repo --redact --verbose
@@ -335,10 +242,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Dependency audit (pip-audit)
-        # Blocking since 30 Jul 2026: the lockfile now pins the whole
-        # input set (with hashes), so the audit runs against exactly what the
-        # image ships — no fresh resolve, no unrelated-PR flakiness. A CVE in a
-        # pinned version is a real fact about the artifact and should be red.
+        # Audits the hashed lock, i.e. exactly what the image ships.
         run: |
           pip install pip-audit
           pip-audit -r backend/requirements.lock --require-hashes --desc

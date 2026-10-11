@@ -1,14 +1,4 @@
-/**
- * **The nav is data, not JSX.**
- *
- * This is non-negotiable. A hardcoded sidebar array is the exact failure mode: it
- * renders a link the server will 403, or hides one the role is entitled to, and
- * either way the two halves of the permission model have silently diverged.
- *
- * These tests drive the component from `perms.nav` alone. If someone replaces
- * the render with a literal list, the second test fails — it feeds a nav item
- * that no static array could contain.
- */
+/** The nav must render from `perms.nav`, never a hardcoded list. */
 
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
@@ -59,16 +49,14 @@ describe('Sidebar', () => {
 
     expect(screen.getByRole('link', { name: /Agents/ })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Budgets/ })).toBeInTheDocument()
-    // Books is a real domain this build knows about. It must NOT appear, because
-    // the server did not grant it.
+    // Known domain, but not granted by the server.
     expect(screen.queryByRole('link', { name: /Books/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Developers/ })).not.toBeInTheDocument()
     expect(screen.getAllByRole('link')).toHaveLength(2)
   })
 
   it('renders a nav item this build has never heard of', () => {
-    // The proof that the list is data. No hardcoded array can contain this key,
-    // so a component that fell back to one would drop the item silently.
+    // No hardcoded array could contain this key.
     mount([{ key: 'treasury', label: 'Treasury', path: '/treasury' }])
     const link = screen.getByRole('link', { name: /Treasury/ })
     expect(link).toHaveAttribute('href', '/treasury')
@@ -86,7 +74,7 @@ describe('Sidebar', () => {
     mount([{ key: 'agents', label: 'Agents', path: '/agents' }], 'agent_owner')
     expect(screen.getByText('Arvind Sharma')).toBeInTheDocument()
     expect(screen.getByText('agent owner')).toBeInTheDocument()
-    // Initials, not an avatar service — no third-party request from a dashboard.
+    // Initials, not an avatar service (no third-party requests).
     expect(screen.getByText('AS')).toBeInTheDocument()
   })
 

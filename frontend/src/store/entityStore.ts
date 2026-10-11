@@ -1,10 +1,4 @@
-/**
- * The workspace entity switcher.
- *
- * The selected entity code is part of every live query key, so switching it
- * refetches every view rather than showing another entity's cached rows.
- * `null` means "all entities" — the consolidated view a CFO starts on.
- */
+/** The entity switcher; part of every query key. `null` = consolidated view. */
 
 import { create } from 'zustand'
 

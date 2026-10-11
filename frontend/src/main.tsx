@@ -9,9 +9,7 @@ import './index.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // A 401 is handled by the axios interceptor (one silent refresh); a 403
-      // or 404 will never succeed on retry. Retrying either only delays the
-      // honest error state by several seconds.
+      // The interceptor handles 401; 403/404 never succeed on retry.
       retry: (failureCount, error: unknown) => {
         const status = (error as { response?: { status?: number } })?.response?.status
         if (status && status >= 400 && status < 500) return false

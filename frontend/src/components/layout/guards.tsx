@@ -1,12 +1,4 @@
-/**
- * Route guards.
- *
- * `ProtectedRoute` requires a session; `RoleGate` requires the route to be in
- * `perms.nav`. Both are **convenience, not security** — the endpoint behind
- * every page 403s independently (`require_nav` server-side). What they buy is
- * that a user typing a URL they cannot use sees an explanation instead of a
- * page full of red error states.
- */
+/** Route guards. UX only, not security: the server enforces `require_nav`. */
 
 import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router'
@@ -27,8 +19,7 @@ function Splash(): ReactNode {
 export function ProtectedRoute({ children }: { children: ReactNode }): ReactNode {
   const session = useAuthStore((s) => s.session)
   const bootstrapping = useAuthStore((s) => s.bootstrapping)
-  // Without this wait, a hard refresh redirects to /login for the ~100ms the
-  // silent refresh takes, and the user watches themselves get logged out.
+  // Wait for the silent refresh, or a reload briefly redirects to /login.
   if (bootstrapping) return <Splash />
   if (!session) return <Navigate to="/login" replace />
   return children
