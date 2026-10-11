@@ -4,10 +4,8 @@ Revision ID: a7b8c9d0e1f2
 Revises: f6a7b8c9d0e1
 Create Date: 2026-07-22 15:15:00.000000
 
-The compliance record for India s.195 withholding on a captured India → non-resident
-payment — the second regime beside GST. Form ids are nullable
-(15CA/15CB generation deferred); the authorize-time block lives on the
-authorization's verdict, not here.
+Form ids are nullable (15CA/15CB generation deferred); the authorize-time block
+lives on the authorization's verdict, not here.
 """
 
 from __future__ import annotations

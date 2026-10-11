@@ -4,22 +4,8 @@ Revision ID: f2a3b4c5d6e7
 Revises: e1f2a3b4c5d6
 Create Date: 2026-07-28 12:00:00.000000
 
-An approved-but-uncaptured hold reserves an agent's budget indefinitely
-(`services/spend_window.py::reserved_spend`), so a vendor error after
-`authorize()` — or a crash between authorize and capture — silently and
-permanently shrinks what that agent may spend. Two independent releases:
-
-* `released_at` / `release_reason` — an explicit `POST /transactions/void`.
-* `expires_at` — a TTL stamped at authorize, evaluated at read time so no sweep
-  job is needed.
-
-**Existing rows are left with NULL in all three columns, deliberately.**
-Back-filling `expires_at` from `created_at` would release every historical hold
-the instant this migration ran, which is a silent budget *increase* across every
-agent in production — the opposite of the fail-closed behaviour those rows were
-written under. NULL means "never expires", so history keeps its old semantics and
-only holds created after the deploy carry a TTL.
-
+Existing rows stay NULL ("never expires"): back-filling expires_at would release
+every historical hold at once, a silent budget increase.
 """
 
 from __future__ import annotations
@@ -52,9 +38,7 @@ def upgrade() -> None:
         "authorizations",
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
     )
-    # `reserved_spend` filters (agent_id, status, released_at, expires_at) on the
-    # blocking path of every authorize(); without this it degrades to a seq scan
-    # on the two new predicates.
+    # reserved_spend filters on these on every authorize(); avoids a seq scan.
     op.create_index(
         _INDEX,
         "authorizations",
@@ -64,12 +48,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the release/expiry columns and their index.
-
-    Reverting loses which holds were voided, so every previously-released hold
-    starts reserving budget again — tighter, not looser, which is the safe
-    direction for a rollback.
-    """
+    """Drop the columns; released holds reserve again (the safe direction)."""
     op.drop_index(_INDEX, table_name="authorizations")
     op.drop_column("authorizations", "expires_at")
     op.drop_column("authorizations", "release_reason")

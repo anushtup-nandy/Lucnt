@@ -1,10 +1,4 @@
-"""Integration tests for manual journals + funding + the unmapped bucket.
-
-Exercises the write path the ledger previously lacked: a funding/opening-balance
-entry (so the balance sheet isn't negative from day one), a balanced manual
-journal (accrual/adjustment), and the loud `unmapped` bucket that surfaces a
-posting whose account code resolves to no CoA account instead of dropping it.
-"""
+"""Manual journals, funding, and the `unmapped` bucket for codes outside the CoA."""
 
 from __future__ import annotations
 

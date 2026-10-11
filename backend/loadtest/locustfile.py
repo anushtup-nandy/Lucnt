@@ -1,10 +1,5 @@
 """Load test for the authorize→capture money path.
 
-Until this existed, every performance claim in the plans was *reasoned*
-(`WEB_CONCURRENCY=2` from connection arithmetic, hot-path indexes from query
-shape) and none was measured. For a synchronous gate sitting in an agent's
-money path, latency IS the product — this file measures it.
-
 Usage (backend running, `scripts/seed_dev.py` applied):
 
     export LUCNT_API_KEY=lucnt_live_...   # printed by seed_dev.py
@@ -46,9 +41,7 @@ class LucntAgent(HttpUser):
 
     @task(10)
     def authorize_then_capture(self) -> None:
-        """The critical pair. A blocked verdict (e.g. a seeded velocity policy
-        firing under load) is a correct gate answer, not a failure — the
-        authorize latency is still the number being measured."""
+        """Authorize then capture; a blocked verdict is valid, not a failure."""
         verdict = self.client.post(
             "/transactions/authorize",
             json={

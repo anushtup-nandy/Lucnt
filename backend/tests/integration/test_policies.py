@@ -1,8 +1,4 @@
-"""Integration tests for the Phase 3 policy engine wired into `authorize`.
-
-Policies are inserted directly against the test's rolled-back session; the
-verdict + machine-readable `code` come back through the real HTTP endpoint.
-"""
+"""Policy engine verdicts and codes through the real `authorize` endpoint."""
 
 from __future__ import annotations
 
@@ -32,7 +28,6 @@ from lucnt_api.security import generate_api_key, hash_api_key
 
 @pytest.fixture
 def client(db_session: Session) -> Iterator[TestClient]:
-    """A TestClient wired to the test's own rolled-back `db_session`."""
     app.dependency_overrides[get_db] = lambda: db_session
     with TestClient(app) as test_client:
         yield test_client
@@ -42,7 +37,6 @@ def client(db_session: Session) -> Iterator[TestClient]:
 def _seed(
     db_session: Session, *, monthly_budget: Decimal = Decimal("100000")
 ) -> tuple[Company, Agent, str]:
-    """A company (+ live key), an SG entity, and one agent with a large budget."""
     company = Company(name="Acme", slug=f"acme-{uuid.uuid4().hex[:8]}")
     db_session.add(company)
     db_session.flush()
@@ -181,7 +175,6 @@ def test_velocity_blocks_after_cap_reached(
     )
     db_session.flush()
 
-    # First spend: no prior transactions -> approved -> capture commits one.
     first = _authorize(client, key, amount="10")
     assert first["status"] == "approved"
     captured = client.post(
@@ -191,7 +184,6 @@ def test_velocity_blocks_after_cap_reached(
     )
     assert captured.status_code == 200
 
-    # Second spend within the hour: one prior spend reaches the cap of 1.
     second = _authorize(client, key, amount="10")
     assert second["status"] == "blocked"
     assert second["code"] == "velocity_exceeded"
@@ -212,7 +204,6 @@ def test_agent_scoped_policy_only_applies_to_that_agent(
     )
     db_session.add(other)
     db_session.flush()
-    # Block coinbase, but only for the OTHER agent.
     db_session.add(
         Policy(
             company_id=company.id,
@@ -225,9 +216,7 @@ def test_agent_scoped_policy_only_applies_to_that_agent(
     )
     db_session.flush()
 
-    # `ops` is unaffected by a policy scoped to `other`.
     assert _authorize(client, key, vendor="coinbase")["status"] == "approved"
-    # `other` is blocked.
     blocked = _authorize(client, key, agent="other", vendor="coinbase")
     assert blocked["status"] == "blocked"
 

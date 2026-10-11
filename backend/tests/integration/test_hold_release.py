@@ -1,18 +1,7 @@
-"""Orphaned-hold release: `void()` and the server-side TTL.
+"""Orphaned-hold release via `void()` and the server-side TTL.
 
-An approved-but-uncaptured hold reserves the agent's budget — deliberately,
-so an agent cannot authorize N times before capturing. The cost of that
-fail-closed choice is that a hold nobody ever captures reserves budget *forever*:
-one vendor error after `authorize()` returns, or one crash between authorize and
-capture, permanently and silently shrinks what the agent may spend.
-
-Two independent releases fix that, and they behave differently on purpose:
-
-* `void()` — the caller states the spend did not happen. Stops reserving, and a
-  later capture is refused (the caller already said the money never moved).
-* the TTL — age alone. Stops reserving, but a later capture is still booked: a
-  slow-but-real spend is a real spend, and dropping it from the ledger is worse
-  than a stale forecast.
+`void()` refuses a later capture (caller said no money moved); TTL expiry still
+books it (a slow-but-real spend is real).
 """
 
 from __future__ import annotations
@@ -128,8 +117,7 @@ def _capture(client: TestClient, key: str, auth_id: str):
 def test_void_frees_the_reserved_budget(
     client: TestClient, db_session: Session
 ) -> None:
-    """The headline: without void(), the second $60 stays blocked forever because
-    the first hold never stops reserving."""
+    """Without void(), the uncaptured first hold would block the second forever."""
     key = _seed(db_session, budget="100")
 
     first = _authorize(client, key, "60")
@@ -156,8 +144,7 @@ def test_void_records_when_and_why(client: TestClient, db_session: Session) -> N
 
 
 def test_void_is_idempotent(client: TestClient, db_session: Session) -> None:
-    """The SDK calls void() from a failure path, so a retry must not become a
-    second failure to handle."""
+    """The SDK calls void() from a failure path, so retries must succeed."""
     key = _seed(db_session)
     auth_id = _authorize(client, key, "10")["authorization_id"]
 
@@ -193,8 +180,7 @@ def test_void_is_scoped_to_the_calling_company(
 def test_capturing_a_voided_hold_is_refused(
     client: TestClient, db_session: Session
 ) -> None:
-    """The caller said the spend did not happen; booking it afterwards would
-    contradict them."""
+    """The caller said the spend did not happen."""
     key = _seed(db_session)
     auth_id = _authorize(client, key, "10")["authorization_id"]
     _void(client, key, auth_id, reason="never happened")
@@ -233,8 +219,7 @@ def test_authorize_stamps_an_expiry(client: TestClient, db_session: Session) -> 
 def test_an_expired_hold_stops_reserving(
     client: TestClient, db_session: Session
 ) -> None:
-    """Age alone releases the reservation, so no sweep job is needed and a
-    restarted backend cannot leave a backlog of stale reservations behind."""
+    """Age alone releases the reservation; no sweep job needed."""
     key = _seed(db_session, budget="100")
 
     first = _authorize(client, key, "60")
@@ -251,9 +236,7 @@ def test_an_expired_hold_stops_reserving(
 def test_an_expired_hold_can_still_be_captured(
     client: TestClient, db_session: Session
 ) -> None:
-    """A slow-but-real spend arriving after the TTL is still a real spend.
-    Refusing it would lose money from the ledger, which is strictly worse than
-    the stale reservation the TTL already released."""
+    """A spend arriving after the TTL is still booked; losing it is worse."""
     key = _seed(db_session)
     auth_id = _authorize(client, key, "10")["authorization_id"]
 
@@ -268,9 +251,7 @@ def test_an_expired_hold_can_still_be_captured(
 def test_a_hold_with_no_expiry_keeps_reserving(
     client: TestClient, db_session: Session
 ) -> None:
-    """Rows written before the TTL column existed carry NULL, and must keep the
-    fail-closed behaviour they were written under — the migration must not
-    release every historical hold at once."""
+    """NULL expiry (pre-TTL rows) stays fail-closed, not released en masse."""
     key = _seed(db_session, budget="100")
 
     first = _authorize(client, key, "60")
@@ -288,8 +269,7 @@ def test_a_hold_with_no_expiry_keeps_reserving(
 def test_a_voided_hold_no_longer_counts_against_velocity(
     client: TestClient, db_session: Session
 ) -> None:
-    """Velocity counts uncaptured holds to catch a runaway, but a hold the
-    caller correctly cleaned up is not runaway activity."""
+    """Velocity counts uncaptured holds, but not ones the caller cleaned up."""
     key = _seed(db_session, budget="10000")
     auth_id = _authorize(client, key, "1")["authorization_id"]
 

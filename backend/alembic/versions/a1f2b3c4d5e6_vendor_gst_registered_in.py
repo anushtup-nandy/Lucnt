@@ -4,15 +4,8 @@ Revision ID: a1f2b3c4d5e6
 Revises: f5a6b7c8d9e0
 Create Date: 2026-07-22 09:30:00.000000
 
-The reverse-charge decision must key off *where the vendor is GST-registered*, not
-its home country and never its invoice currency. The legal
-test for India RCM is "is the vendor GST-registered in the buyer's country": a
-foreign vendor OIDAR-registered in India charges forward IGST (domestic
-treatment), while a domestic vendor not registered in India is reverse charge
-under CGST s.9(4). A single ``is_registered`` boolean cannot express "registered
-*where*", so it is replaced by ``gst_registered_in`` (a list of ISO-3166 alpha-2
-country codes). The old boolean meant "charges forward GST in its own country", so
-it back-fills to ``[country]``.
+India RCM keys off "GST-registered in the buyer's country", which a boolean can't
+express; replaced by an ISO-3166 alpha-2 list, back-filled to ``[country]``.
 """
 
 from __future__ import annotations
@@ -42,9 +35,7 @@ def upgrade() -> None:
             server_default="{}",
         ),
     )
-    # A vendor previously flagged registered (charging forward GST) in its own
-    # country becomes registered-in-[country]. Rows with no country cannot be
-    # placed and stay empty (they will route to the recon queue).
+    # Rows with no country stay empty (they route to the recon queue).
     op.execute(
         sa.text(
             "UPDATE vendors SET gst_registered_in = ARRAY[country] "

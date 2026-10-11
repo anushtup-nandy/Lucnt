@@ -1,13 +1,6 @@
-"""Request-input bounds.
+"""Request-input bounds: oversized input must 422, not 500 as a Postgres DataError.
 
-The failure these prevent is specific: a schema looser than the column it feeds
-lets oversized input pass validation and blow up in Postgres as a 500 `DataError`.
-The caller gets an opaque server error for what is really a bad request, and the
-traceback lands in the logs as if the service were broken.
-
-So each test asserts the *rejection*, and the money-path ones assert the bound
-equals the column width — a bound that drifted wider than its column would pass a
-naive "is it bounded?" test while still 500ing.
+Money-path bounds must equal their column width; wider still 500s.
 """
 
 from __future__ import annotations
@@ -105,7 +98,7 @@ def test_spend_request_rejects_empty_required_text(field: str) -> None:
 
 
 def test_spend_request_still_normalises_currency() -> None:
-    """Regression guard: adding bounds must not disturb the currency rules."""
+    """Bounds must not disturb the currency rules."""
     assert SpendRequest(**_spend(currency="sgd")).currency == "SGD"
     with pytest.raises(ValidationError):
         SpendRequest(**_spend(currency="SGDD"))

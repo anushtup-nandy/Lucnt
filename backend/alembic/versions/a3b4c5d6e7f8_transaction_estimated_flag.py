@@ -1,14 +1,7 @@
 """mark estimate-booked captures on the ledger
 
-The degradation path captures a hold *as authorized* when actual usage
-cannot be read after the vendor was paid — correct priority (never lose a
-spend), but the booked amount is an estimate and the ledger presented it as
-settled truth, visible only in an ERROR log. `estimated` makes that state a
-queryable fact on the row instead.
-
-Existing rows get ``false`` via the server default, deliberately: every
-historical capture was booked as settled truth under the pre-flag contract,
-and re-labelling history would falsify the record rather than repair it.
+Flags captures booked at the authorized amount because actual usage was
+unreadable. Existing rows stay ``false``: relabelling history would falsify it.
 
 Revision ID: a3b4c5d6e7f8
 Revises: f2a3b4c5d6e7

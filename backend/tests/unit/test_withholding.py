@@ -1,8 +1,4 @@
-"""Unit tests for the pure India s.195 withholding engine (no DB).
-
-Rates + threshold are injected (they live in config, provisional pending CA
-review); these tests state them explicitly.
-"""
+"""Pure India s.195 withholding engine tests; rates/threshold injected."""
 
 from __future__ import annotations
 

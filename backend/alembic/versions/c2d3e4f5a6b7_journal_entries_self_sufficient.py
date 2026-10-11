@@ -22,12 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add company_id/entity_id/posting_date; backfill; make transaction_id nullable.
-
-    Journal lines become self-sufficient so the books read path scopes
-    and periodises off the line itself, and manual/funding/settlement journals can
-    post with no transaction. Existing rows are backfilled from their transaction.
-    """
+    """Add company_id/entity_id/posting_date; backfill; make transaction_id nullable."""
     op.add_column(
         "journal_entries", sa.Column("company_id", sa.Uuid(), nullable=True)
     )
@@ -38,7 +33,6 @@ def upgrade() -> None:
         "journal_entries", sa.Column("posting_date", sa.Date(), nullable=True)
     )
 
-    # Backfill from the transaction every existing line already references.
     op.execute(
         sa.text(
             """
@@ -75,11 +69,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Reverse: drop the new columns and re-require transaction_id.
-
-    Manual/funding/settlement lines (no transaction) are deleted first so the
-    NOT NULL restore is clean on populated data.
-    """
+    """Reverse; deletes transaction-less lines first so NOT NULL can be restored."""
     op.execute(
         sa.text("DELETE FROM journal_entries WHERE transaction_id IS NULL")
     )

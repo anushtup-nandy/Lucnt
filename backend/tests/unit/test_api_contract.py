@@ -1,17 +1,7 @@
-"""The committed contract artifacts must match the code that generates them.
+"""Committed contract artifacts must match the code that generates them.
 
-Two gates, because one of them cannot be expressed
-in OpenAPI at all:
-
-1. `contracts/api-contract.json` — a normalized projection of every path, field, type,
-   required flag and enum. Catches "someone renamed a response field" without
-   going red every time fastapi reorders an `anyOf`.
-2. `contracts/verdict-codes.json` — the `VerdictCode` value set. `Verdict.code` is an
-   open string on the wire by design, so the enum never reaches the OpenAPI
-   document; `sdk/src/lucnt/ledger.py` nonetheless branches on the literal
-   `"budget_exhausted"` to raise `BudgetExhausted` rather than `PolicyBlocked`.
-   Rename that value and OpenAPI shows nothing while every budget block silently
-   downgrades. The SDK half of this pair lives in `sdk/tests/test_verdict_codes.py`.
+Verdict codes are gated separately: they never reach OpenAPI, but the SDK
+branches on `"budget_exhausted"`.
 """
 
 from __future__ import annotations
@@ -75,11 +65,7 @@ def test_generation_is_deterministic(document: dict[str, object]) -> None:
 
 
 def test_the_raw_openapi_artifact_exists(document: dict[str, object]) -> None:
-    """Not byte-gated (dependency bumps move it), but it must not be missing.
-
-    `frontend` generates `src/types/api.ts` from this file, so an absent artifact
-    breaks the frontend build rather than the backend's.
-    """
+    """Not byte-gated, but the frontend generates its types from it."""
     assert exporter.OPENAPI_PATH.exists()
     committed = json.loads(exporter.OPENAPI_PATH.read_text())
     assert sorted(committed["paths"]) == sorted(document["paths"])  # type: ignore[index]

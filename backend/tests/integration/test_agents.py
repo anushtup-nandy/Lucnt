@@ -1,4 +1,4 @@
-"""Integration tests for the read-only agents router (Phase 1 (A))."""
+"""Read-only agents router."""
 
 from __future__ import annotations
 

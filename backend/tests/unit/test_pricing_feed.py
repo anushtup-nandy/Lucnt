@@ -1,10 +1,4 @@
-"""Unit tests for the server-side pricing feed.
-
-The feed owns date-ranged rates so the client never needs a date engine: the
-server resolves *today's* price and serves a flat pack the SDK merges over its
-packaged fallback. The forcing example is claude-sonnet-5's introductory
-$2/$10 rate through 2026-08-31 against a $3/$15 list rate.
-"""
+"""Server-side pricing feed: resolves date-ranged rates to today's flat prices."""
 
 from __future__ import annotations
 
@@ -48,9 +42,7 @@ def test_models_without_windows_serve_their_flat_rate() -> None:
 
 
 def test_resolved_feed_never_leaks_rate_windows_or_numbers() -> None:
-    """The client is deliberately date-dumb: it must receive flat string
-    prices with the `rates` machinery stripped, and money as strings only —
-    a JSON number would arrive client-side as a float."""
+    """Flat string prices only: no `rates` windows, no JSON numbers (floats)."""
     resolved = resolve_feed(date(2026, 7, 29))
     vendors = resolved["vendors"]
     assert isinstance(vendors, dict)

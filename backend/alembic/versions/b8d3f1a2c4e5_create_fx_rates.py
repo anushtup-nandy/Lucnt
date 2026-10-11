@@ -24,11 +24,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# Baseline USD-anchored FX rates (usd_per_unit) effective 2026-01-01, so any
-# transaction dated in the pilot window resolves a rate; the resolver fails
-# closed only for a currency not seeded here. Reference data lives in the
-# migration (not `seed_dev.py`) so every environment -- tests, staging, prod --
-# has it. Refresh/extend via a rate feed later.
+# Baseline usd_per_unit rates; the resolver fails closed for unseeded currencies.
+# Seeded here (not seed_dev.py) so every environment has the reference data.
 _BASELINE_RATES: tuple[tuple[str, str], ...] = (
     ("USD", "1.0"),  # anchor
     ("INR", "0.0117"),  # ~85.5 INR / USD

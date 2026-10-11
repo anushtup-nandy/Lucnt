@@ -1,16 +1,4 @@
-"""Dashboard auth end-to-end: login, refresh, the discriminator, and scoping.
-
-Four things here can be silently wrong:
-
-* the **auth-context discriminator** — two principal types on one header, where a
-  mis-parse is an auth bypass rather than a 401;
-* the **cross-owner leak** — an `agent_owner` must not be able to read
-  another owner's agent, and the closing evidence is this test, not a hidden nav
-  item;
-* **role gating** — a page a role cannot see must have an endpoint it cannot call;
-* **token type confusion** — a refresh token accepted as a bearer credential
-  silently turns a 15-minute window into a 7-day one.
-"""
+"""Dashboard auth: login, refresh, key-vs-JWT discriminator, role/owner scoping."""
 
 from __future__ import annotations
 
@@ -302,13 +290,12 @@ def test_logout_clears_the_cookie(client: TestClient, world: World) -> None:
 def test_an_agent_owner_cannot_list_another_owners_agent(
     client: TestClient, world: World
 ) -> None:
-    """**Closes the cross-owner leak.** Scoping is in the SQL, not in the sidebar."""
+    """Owner scoping is in the SQL, not the sidebar."""
     token = _login(client, world.users[UserRole.AGENT_OWNER])
     body = client.get("/agents", headers=_auth(token)).json()
     slugs = {item["slug"] for item in body["items"]}
     assert slugs == {"mine"}
-    # `total` must reflect the scoped query too: a total of 2 over one visible
-    # row is the same leak, told as a number.
+    # An unscoped `total` would leak the same thing as a number.
     assert body["total"] == 1
 
 
@@ -361,7 +348,6 @@ def test_an_agent_owner_cannot_reach_the_approval_queue(
 
 
 def test_an_auditor_cannot_write_a_budget(client: TestClient, world: World) -> None:
-    """The §10.3 checklist item, exercised rather than asserted in prose."""
     token = _login(client, world.users[UserRole.AUDITOR])
     response = client.patch(
         f"/budgets/{world.owned_agent.id}",

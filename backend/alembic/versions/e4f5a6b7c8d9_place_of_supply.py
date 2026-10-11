@@ -27,8 +27,7 @@ def upgrade() -> None:
     op.add_column(
         "entities", sa.Column("gst_state", sa.String(length=10), nullable=True)
     )
-    # Back-fill the recipient country from the regime it already implies; gst_state
-    # is set per-entity later (needed only to split India intra- vs inter-state).
+    # gst_state is set per-entity later (only India intra/inter-state needs it).
     op.execute(
         sa.text(
             """
@@ -45,7 +44,6 @@ def upgrade() -> None:
     op.add_column(
         "tax_records", sa.Column("tax_head", sa.String(length=10), nullable=True)
     )
-    # Existing rows are the unsplit path: GST for GST/GST_RCM, NONE for US sales tax.
     op.execute(
         sa.text(
             """

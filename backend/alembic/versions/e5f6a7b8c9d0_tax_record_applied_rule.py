@@ -4,14 +4,8 @@ Revision ID: e5f6a7b8c9d0
 Revises: d4e5f6a7b8c9
 Create Date: 2026-07-22 13:30:00.000000
 
-An auditor must be able to answer "why was this taxed this way" without
-reverse-engineering the rate tables months later. Each
-`tax_records` row now links to the exact `tax_rates` row that produced it
-(`applied_rule_id`) and snapshots its provenance (`applied_rule_source`).
-Nullable: the conservative paths that apply no rate (UNCLASSIFIED, CUSTOMS,
-US-unconfigured) leave it null. The `effective_to` close-out column landed with
-US sales/use tax; the resolver already honours it (a closed rate is not applied
-after its close date).
+Records which rate row produced each tax record, for audit. Null on paths that
+apply no rate (UNCLASSIFIED, CUSTOMS, US-unconfigured).
 """
 
 from __future__ import annotations

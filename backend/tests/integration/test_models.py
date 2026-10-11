@@ -1,4 +1,4 @@
-"""Integration tests for the Phase 0 ORM models against the migrated schema."""
+"""ORM models against the migrated schema."""
 
 from __future__ import annotations
 

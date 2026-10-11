@@ -1,16 +1,4 @@
-"""List-endpoint bounds and the batched spend aggregate.
-
-`GET /budgets` and `GET /approvals` previously returned every matching row, and
-`/budgets` cost two spend queries *per agent* plus one lazy-load per workflow.
-Adding a bound is only safe if two properties hold, which is what most of these
-tests pin:
-
-* **A rollup must not silently shrink.** Workflow spend sums *all* member agents,
-  so paginating the `agents` array must not change a workflow's total — a budget
-  that under-reports because a member fell off page 1 is worse than a slow one.
-* **The batched aggregate must equal the per-agent form** it replaced, including
-  reversal signs and the today-window, or the numbers move under a perf fix.
-"""
+"""List bounds must not shrink rollups; batched spend must equal per-agent spend."""
 
 from __future__ import annotations
 
@@ -48,7 +36,6 @@ from lucnt_api.services.spend_window import (
 
 @pytest.fixture
 def client(db_session: Session) -> Iterator[TestClient]:
-    """A TestClient wired to the test's own rolled-back `db_session`."""
     app.dependency_overrides[get_db] = lambda: db_session
     with TestClient(app) as test_client:
         yield test_client
@@ -114,7 +101,6 @@ def _spend(
     when: datetime | None = None,
     reverses: uuid.UUID | None = None,
 ) -> Transaction:
-    """Book a committed transaction; budget spend derives from the ledger."""
     txn = Transaction(
         company_id=company.id,
         agent_id=agent.id,
@@ -238,12 +224,7 @@ def test_budgets_agent_filter_is_company_scoped(
 def test_workflow_rollup_includes_members_off_the_page(
     client: TestClient, db_session: Session
 ) -> None:
-    """The correctness property pagination must not break.
-
-    Both members spend, but `limit=1` returns only one agent. The workflow total
-    must still be the full 700 — a rollup that shrank with the page size would
-    silently under-report a shared budget.
-    """
+    """Workflow total counts members that fell off the `limit=1` page."""
     company, key = _company(db_session)
     entity = _entity(db_session, company)
     first = _agent(db_session, company, entity, "aaa-first")
@@ -279,8 +260,7 @@ def test_batched_spend_matches_per_agent_form(db_session: Session) -> None:
     ]
     _spend(db_session, company, sg, agents[0], Decimal("120"))
     _spend(db_session, company, us, agents[2], Decimal("75"))
-    # agents[1] deliberately has no spend — it must be absent from the map, and
-    # the caller's zero default must reproduce the per-agent form's Decimal("0").
+    # agents[1] has no spend: absent from the map, caller defaults to zero.
 
     batched = company_period_committed_spend(db_session, company.id, [sg, us])
     entities = {sg.id: sg, us.id: us}
@@ -292,8 +272,7 @@ def test_batched_spend_matches_per_agent_form(db_session: Session) -> None:
 
 
 def test_batched_spend_subtracts_reversals(db_session: Session) -> None:
-    """A refund frees budget — the signed sum is duplicated in the
-    batched query, so it needs its own coverage."""
+    """A reversal frees budget in the batched query too."""
     company, _ = _company(db_session)
     entity = _entity(db_session, company)
     agent = _agent(db_session, company, entity, "ops")

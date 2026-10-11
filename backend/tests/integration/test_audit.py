@@ -1,8 +1,4 @@
-"""Audit trail for governance mutations.
-
-Every budget/policy/approval/recon mutation must leave an append-only record of
-who did what, before → after — non-negotiable for a financial-controls product.
-"""
+"""Governance mutations leave an append-only before/after audit record."""
 
 from __future__ import annotations
 

@@ -4,12 +4,7 @@ Revision ID: b2c3d4e5f6a7
 Revises: a1f2b3c4d5e6
 Create Date: 2026-07-22 10:15:00.000000
 
-When a spend hits a vendor with no place-of-supply data, the tax engine can no
-longer silently guess import-vs-domestic from currency. It
-books a conservative no-phantom treatment and the money path opens a recon
-exception so a finance admin enriches the vendor. That needs a new
-`recon_exception_type` value — this one is *capture-emitted*, unlike the ledger
-detectors' types.
+Capture-emitted when a vendor lacks place-of-supply data, so finance can enrich it.
 """
 
 from __future__ import annotations
@@ -27,24 +22,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add the tax_unclassified value to the recon_exception_type enum.
-
-    Postgres 12+ allows ADD VALUE inside a transaction as long as the new value is
-    not *used* in the same transaction (it is not — only rows written later use it).
-    """
+    """Add tax_unclassified; ADD VALUE is safe in a txn since it's unused here."""
     op.execute(
         "ALTER TYPE recon_exception_type ADD VALUE IF NOT EXISTS 'tax_unclassified'"
     )
 
 
 def downgrade() -> None:
-    """Rebuild the enum without tax_unclassified.
+    """Recreate the enum without tax_unclassified (Postgres can't drop one value).
 
-    Postgres cannot DROP a single enum value, so the type is recreated and the
-    column re-cast. Rows holding the value are deleted first: they are
-    capture-emitted flags with no meaning in the pre-feature schema, and a full
-    ``downgrade base && upgrade head`` must stay runnable (same convention as the
-    enum-type drop fixes).
+    Rows holding the value are deleted first so the re-cast succeeds.
     """
     op.execute(
         "DELETE FROM reconciliation_exceptions "

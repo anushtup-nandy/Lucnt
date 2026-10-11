@@ -1,9 +1,4 @@
-"""Integration tests for the Phase 3 budgets and policies routers.
-
-NOTE: the seed helpers below mirror those in `test_transactions.py` /
-`test_policies.py`; consolidating them into `conftest.py` is a tracked cleanup
-(kept local here to avoid churning the already-green sibling test files).
-"""
+"""Budgets and policies routers."""
 
 from __future__ import annotations
 
@@ -104,12 +99,7 @@ def _spend(
     agent: Agent,
     amount: Decimal,
 ) -> None:
-    """Book a committed transaction this month so the derived budget window sees it.
-
-    Budget spend is derived from the current-month ledger (`local_amount`), not the
-    stored `spent_ytd` counter, so budget tests must seed real
-    transactions rather than set the counter.
-    """
+    """Book a transaction this month; budget spend derives from the ledger."""
     db.add(
         Transaction(
             company_id=company.id,
@@ -225,11 +215,7 @@ def test_workflow_rollup_sums_member_spend(
 def test_budget_spend_resets_at_month_boundary(
     client: TestClient, db_session: Session
 ) -> None:
-    """Prior-month spend does not count against the current-month budget.
-
-    The old `spent_ytd` counter never reset, so a $100/mo agent on a $1000 budget
-    read "exhausted" by month 11. The derived window must exclude last month.
-    """
+    """Prior-month spend does not count against the current-month budget."""
     from datetime import timedelta
 
     company, key = _company(db_session)
@@ -414,12 +400,7 @@ def _authorize(client: TestClient, key: str, amount: str) -> dict[str, object]:
 def test_budget_reports_reserved_holds_and_available(
     client: TestClient, db_session: Session
 ) -> None:
-    """`check_budget()` must see what the authorize gate sees.
-
-    The gate subtracts outstanding holds; `remaining` never did. An agent
-    self-regulating on the read saw headroom the gate would refuse — so the
-    read now carries `reserved` and `available = remaining - reserved`.
-    """
+    """`check_budget()` reports holds: `available = remaining - reserved`."""
     company, key = _company(db_session)
     entity = _entity(db_session, company)
     _agent(db_session, company, entity, monthly_budget=Decimal("100"))

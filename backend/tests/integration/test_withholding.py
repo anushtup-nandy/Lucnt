@@ -1,11 +1,4 @@
-"""Integration tests for the India s.195 withholding gate.
-
-An India entity paying a foreign (non-resident) vendor owes s.195 withholding
-beside GST. Missing the treaty documentation (TRC / Form 10F) above the 15CB
-threshold blocks the remittance at authorize (`human_hold`) — governance before
-money moves; otherwise the withholding is recorded at capture (treaty vs domestic
-rate). Rates are provisional (config) — confirm with a CA.
-"""
+"""India s.195 withholding: missing TRC/10F above threshold holds at authorize."""
 
 from __future__ import annotations
 
@@ -40,7 +33,6 @@ def client(db_session: Session) -> Iterator[TestClient]:
 
 
 def _make_in_company(db_session: Session) -> tuple[Company, str]:
-    """An India entity + a big-budget agent + a live admin key."""
     company = Company(name="Bharat AI", slug=f"in-{uuid.uuid4().hex[:8]}")
     db_session.add(company)
     db_session.flush()

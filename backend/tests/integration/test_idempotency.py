@@ -1,10 +1,4 @@
-"""Idempotent authorize + capture.
-
-A timed-out `spend()` that actually committed server-side must not double-book
-when retried. The client sends the same `Idempotency-Key`; the server returns the
-original hold (authorize) and the original transaction (capture) instead of
-minting fresh ones.
-"""
+"""Idempotent authorize + capture: a retried `spend()` must not double-book."""
 
 from __future__ import annotations
 
@@ -154,12 +148,10 @@ def test_different_idempotency_keys_create_distinct_holds(
 def test_spend_retry_does_not_double_book(
     client: TestClient, db_session: Session
 ) -> None:
-    """The full spend() retry: same idempotency key -> one hold, one transaction,
-    budget charged once (the double-book the old code allowed)."""
+    """spend() retry with the same key: one hold, one transaction, one charge."""
     company, agent, key = _seed(db_session)
     idem = str(uuid.uuid4())
 
-    # First spend(): authorize + capture.
     v1 = _authorize(client, key, amount="100", idem=idem)
     cap1 = client.post(
         "/transactions/capture",

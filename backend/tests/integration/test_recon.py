@@ -1,9 +1,7 @@
-"""Integration tests for the Phase 4 reconciliation (recovery) layer.
+"""Reconciliation (recovery) layer.
 
-Transaction rows are inserted directly so the tests control `transaction_date`
-(the duplicate/subscription detectors are time-sensitive). The per-file
-company/agent/entity helpers mirror the other integration files (a conftest
-consolidation is a deferred cleanup).
+Transactions are inserted directly to control `transaction_date`; the detectors
+are time-sensitive.
 """
 
 from __future__ import annotations
@@ -35,7 +33,6 @@ _NOW = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
 
 @pytest.fixture
 def client(db_session: Session) -> Iterator[TestClient]:
-    """A TestClient wired to the test's own rolled-back `db_session`."""
     app.dependency_overrides[get_db] = lambda: db_session
     with TestClient(app) as test_client:
         yield test_client
@@ -161,7 +158,6 @@ def test_scan_detects_duplicate(client: TestClient, db_session: Session) -> None
     assert exc["exception_type"] == "duplicate"
     assert exc["status"] == "open"
     assert Decimal(exc["amount_at_stake"]) == Decimal("49.00")
-    # the recovery agent drafted a plan into evidence
     assert exc["evidence"]["recovery_plan"]["method"] == "vendor_email"
 
 
@@ -286,16 +282,14 @@ def test_inbox_summary_and_ordering(client: TestClient, db_session: Session) -> 
 
     inbox = client.get("/recon", headers=_auth_headers(key)).json()
     assert inbox["open_count"] == 2
-    # Per-currency: both are USD here, so one bucket summing 90 + 5.
     assert Decimal(inbox["total_at_stake"]["USD"]) == Decimal("95")
-    # highest $ at stake first (within the currency)
+    # highest $ at stake first
     assert inbox["items"][0]["exception_type"] == "overcharge"
 
 
 def test_inbox_summary_is_per_currency(client: TestClient, db_session: Session) -> None:
     """'$ at stake' is bucketed per currency, never summed across them."""
     company, key, agent, entity = _setup(db_session)
-    # A USD duplicate ($5) and a JPY duplicate (¥1500) — different currencies.
     for currency, amount in [("USD", "5"), ("JPY", "1500")]:
         for minute in (0, 1):
             _make_transaction(
@@ -320,8 +314,7 @@ def test_dismissed_subscription_not_reflagged_next_month(
 ) -> None:
     """A dismissed recurring charge stays dismissed on a new month's txn.
 
-    The dedup_key (recurring identity) suppresses re-flagging even though the
-    latest transaction row — the one the subscription detector points at — differs.
+    The dedup_key (recurring identity) suppresses it though the latest row differs.
     """
     company, key, agent, entity = _setup(db_session)
     for i in range(3):  # 3 monthly charges -> subscription
@@ -344,7 +337,6 @@ def test_dismissed_subscription_not_reflagged_next_month(
         headers=_auth_headers(key),
     )
 
-    # A 4th monthly charge arrives; re-scan must not re-flag the same identity.
     _make_transaction(
         db_session,
         company,
@@ -496,7 +488,6 @@ def test_resolve_transitions_and_updates_summary(
     assert resolved["fix_notes"] == "vendor refunded"
     assert resolved["resolved_at"] is not None
 
-    # resolved exception leaves the active summary (no active rows -> empty map)
     inbox = client.get("/recon", headers=_auth_headers(key)).json()
     assert inbox["open_count"] == 0
     assert inbox["total_at_stake"] == {}
@@ -536,9 +527,7 @@ def test_get_exception_not_found(client: TestClient, db_session: Session) -> Non
 def test_resolved_ledger_fact_is_not_reflagged(
     client: TestClient, db_session: Session
 ) -> None:
-    """A detected ledger fact is immutable: once an exception exists for a
-    (transaction, type) — even resolved/dismissed — a later scan must not
-    re-flag it (the unique constraint holds across all statuses)."""
+    """A resolved (transaction, type) exception is never re-flagged by a later scan."""
     company, key, agent, entity = _setup(db_session)
     _make_transaction(
         db_session, company, agent, entity, vendor="s", amount="5", when=_NOW
@@ -559,8 +548,6 @@ def test_resolved_ledger_fact_is_not_reflagged(
         json={"action": "resolve", "fix_notes": "vendor refunded"},
         headers=_auth_headers(key),
     )
-    # re-scan: the resolved duplicate (its ledger rows still exist) is NOT
-    # re-flagged — no nagging on an already-handled fact.
     rescan = client.post("/recon/scan", headers=_auth_headers(key)).json()
     assert rescan["created"] == 0
     assert client.get("/recon", headers=_auth_headers(key)).json()["total"] == 1

@@ -4,14 +4,8 @@ Revision ID: c3d4e5f6a7b8
 Revises: b2c3d4e5f6a7
 Create Date: 2026-07-22 11:30:00.000000
 
-US sales/use tax was a hardcoded 0% stub — the default
-outcome for the primary GTM market. This gives `tax_rates` a per-state
-``jurisdiction`` (``US-TX``…; NULL for the regime-level IN/SG rows), a
-``rule_type`` (standard / use_tax / exempt / no_tax / disputed), and an
-``effective_to`` close-out (lands here because US tax needs the column), plus
-``entities.us_state`` for the buyer's state. All 51 jurisdictions (50 states + DC)
-are seeded from Appendix A §1.5.5, B2B branch for split states. **Rates are the
-co-founder's research — confirm with a CPA before relying on them.**
+Seeds all 51 jurisdictions (B2B branch for split states). **Rates are unverified
+research; confirm with a CPA before relying on them.**
 """
 
 from __future__ import annotations
@@ -32,11 +26,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# Appendix A §1.5.5 — US SaaS taxability, B2B branch. Effective rates (TX already
-# nets its 80%-of-charge rule to ~5.0%). Split states resolved to their business
-# branch: CT 1% / MD 3% are taxable-B2B; CO / IL / IA are B2B-exempt at state level
-# (home-rule city tax — Denver, Chicago — is out of MVP scope). VT is disputed →
-# routed to the exception queue by the engine, never auto-applied.
+# US SaaS taxability, B2B branch (TX nets its 80% rule to ~5%). City home-rule tax
+# is out of scope. VT is disputed: routed to the exception queue, never applied.
 _US_TAXABLE: dict[str, str] = {
     "AZ": "0.056", "DC": "0.06", "HI": "0.04", "IN": "0.07", "KY": "0.06",
     "LA": "0.05", "MA": "0.0625", "MS": "0.07", "NE": "0.055", "NM": "0.05",
@@ -51,7 +42,6 @@ _US_EXEMPT: tuple[str, ...] = (
 _US_NO_TAX: tuple[str, ...] = ("AK", "DE", "MT", "NH", "OR")
 _US_DISPUTED: dict[str, str] = {"VT": "0.06"}
 
-# All US per-state rows are the standard SaaS slab, in force from this baseline.
 _US_CATEGORY = "standard"
 _US_EFFECTIVE_FROM = date(2020, 1, 1)
 
@@ -105,11 +95,10 @@ def upgrade() -> None:
     op.add_column(
         "tax_rates", sa.Column("effective_to", sa.Date(), nullable=True)
     )
-    # New rows carry an explicit rule_type from the app; the default only back-filled.
+    # The default only back-filled; the app sets rule_type explicitly.
     op.alter_column("tax_rates", "rule_type", server_default=None)
 
-    # Uniqueness now includes jurisdiction: many US rows share (regime, category,
-    # effective_from) and differ only by state.
+    # US rows differ only by jurisdiction, so it joins the unique key.
     op.drop_constraint(
         "uq_tax_rates_regime_category_effective_from", "tax_rates", type_="unique"
     )

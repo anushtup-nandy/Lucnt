@@ -4,12 +4,7 @@ Revision ID: f6a7b8c9d0e1
 Revises: e5f6a7b8c9d0
 Create Date: 2026-07-22 14:30:00.000000
 
-India s.195 withholding on a remittance to a foreign vendor is charged at the DTAA
-treaty rate only when a Tax Residency Certificate + Form 10F are on file (and
-unexpired); otherwise the higher domestic rate applies.
-Collecting these at vendor onboarding (build-order item 3, sequenced before the
-withholding engine) means the rate is known before the remittance — collecting
-after the fact is far more friction.
+The s.195 DTAA treaty rate applies only with an unexpired TRC + Form 10F on file.
 """
 
 from __future__ import annotations
@@ -45,7 +40,6 @@ def upgrade() -> None:
             server_default=sa.text("false"),
         ),
     )
-    # New rows carry explicit values from the app; the default only back-filled.
     op.alter_column("vendors", "trc_on_file", server_default=None)
     op.alter_column("vendors", "form_10f_on_file", server_default=None)
 

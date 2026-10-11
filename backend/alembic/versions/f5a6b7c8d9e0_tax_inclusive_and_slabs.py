@@ -24,8 +24,6 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# India GST rate slabs so a caller can state a 0/5/12/28% supply instead of
-# always paying the 18% "standard" rate the compile-time constant assumed.
 _IN_SLABS: tuple[tuple[str, str], ...] = (
     ("gst_0", "0.00"),
     ("gst_5", "0.05"),
@@ -51,8 +49,6 @@ def upgrade() -> None:
                 server_default=sa.text("true"),
             ),
         )
-        # The default was only needed to back-fill existing rows; new rows carry an
-        # explicit value from the app.
         op.alter_column(table, "tax_inclusive", server_default=None)
 
     tax_rates = sa.table(

@@ -22,13 +22,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add authorization idempotency.
-
-    A client-supplied ``idempotency_key`` lets a retried ``authorize`` (e.g. a
-    timed-out ``spend()``) return the original hold instead of minting a fresh
-    one — which, followed by a capture, would double-book. ``verdict_code``
-    persists the machine-readable code so an idempotent replay returns the exact
-    original verdict (it cannot be re-derived — policies/spend move on).
+    """Add idempotency_key (retried authorize returns the original hold) and
+    verdict_code (a replay must return the original verdict; it can't be re-derived).
     """
     op.add_column(
         "authorizations",

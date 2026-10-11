@@ -8,20 +8,9 @@ Three artifacts, two of which are gated:
 | `contracts/verdict-codes.json` | yes | `VerdictCode` set — never reaches OpenAPI |
 | `contracts/openapi.json` | no | raw doc; feeds `openapi-typescript` → frontend types |
 
-Why a *projection* rather than a byte-diff of `openapi.json`: the raw document
-moves with every fastapi/pydantic bump (`$ref` naming, `anyOf` ordering, generated
-`title`s) with zero repo change — the `370fc21` failure mode, where CI went red
-because a dependency published a new version 44 minutes before the push. The
-projection drops titles, descriptions, examples and orders every set, so it moves
-only when the *contract* moves.
-
-Why `verdict-codes.json` is separate: `Verdict.code` is deliberately an open
-string on the wire (`schemas/transaction.py`), so the `VerdictCode` enum never
-appears in the OpenAPI document at all. `sdk/src/lucnt/ledger.py` nonetheless
-branches on the literal `"budget_exhausted"` to choose `BudgetExhausted` over
-`PolicyBlocked`. Renaming that enum value produces an empty OpenAPI diff and two
-green suites while every budget block silently downgrades. An OpenAPI-only gate
-cannot see it; this file can.
+The projection (not a byte-diff) ignores cosmetic churn from fastapi/pydantic
+bumps. Verdict codes are gated separately: they never reach OpenAPI, yet the SDK
+branches on `"budget_exhausted"`.
 
 Usage::
 
@@ -59,12 +48,7 @@ def _ref_name(ref: str) -> str:
 
 
 def _type_of(node: Any) -> str:
-    """Render a JSON-Schema node as one stable, order-independent type string.
-
-    Composites are sorted so that a pydantic version reordering `anyOf` members
-    is not a diff. Everything cosmetic (`title`, `description`, `examples`,
-    `default`) is dropped on the floor.
-    """
+    """Render a JSON-Schema node as a stable, order-independent type string."""
     if not isinstance(node, dict):
         return "any"
     if "$ref" in node:
@@ -95,11 +79,7 @@ def _enum_of(node: dict[str, Any]) -> list[str] | None:
 
 
 def _project_schema(schema: dict[str, Any]) -> Any:
-    """Project one component schema to `{field: {type, required, enum}}`.
-
-    A bare enum schema (which is what a Python `str, Enum` becomes) projects to
-    its member list instead — it has no fields.
-    """
+    """Project a schema to `{field: {type, required, enum}}`; enums to members."""
     enum_values = _enum_of(schema)
     if enum_values is not None:
         return {"enum": enum_values, "type": _type_of({"type": schema.get("type")})}
@@ -208,8 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.check:
-        # Not `all(...)` over a generator: both artifacts are checked so both
-        # diffs print, rather than the first failure hiding the second.
+        # Check every artifact (no short-circuit) so all diffs print.
         current = True
         for path, text in gated.items():
             current = _check(path, text) and current
@@ -228,8 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     for path, text in gated.items():
         path.write_text(text)
         print(f"wrote {path.relative_to(_REPO_ROOT)}")
-    # Not gated: the raw document moves with dependency bumps. It exists so the
-    # frontend can generate types without a running backend.
+    # Ungated: churns with dependency bumps; only feeds frontend type generation.
     OPENAPI_PATH.write_text(_dump(document))
     print(f"wrote {OPENAPI_PATH.relative_to(_REPO_ROOT)} (artifact, not gated)")
     return 0

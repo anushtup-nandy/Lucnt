@@ -1,14 +1,7 @@
-"""Shared pytest fixtures: a transactional DB session against the migrated schema.
+"""Shared fixtures: rolled-back DB sessions against the migrated schema.
 
-Requires `alembic upgrade head` to have been run against the target database
-first -- these are integration tests against the real migrated schema, not a
-SQLAlchemy `create_all()` shortcut.
-
-**Which database.** Set `TEST_DATABASE_URL` and the suite runs against
-it; leave it unset and it falls back to `DATABASE_URL`, i.e. the developer's own
-database, with a warning. The fallback is safe for the suite itself (every
-fixture rolls its transaction back) but not for CI's migration round-trip, which
-runs `alembic downgrade base` against whatever it is pointed at.
+Requires `alembic upgrade head` first. Uses `TEST_DATABASE_URL`, else falls back
+to `DATABASE_URL` (safe for tests, not for a migration downgrade round-trip).
 """
 
 from __future__ import annotations
@@ -49,15 +42,7 @@ def resolved_engine() -> Engine:
 
 @pytest.fixture(autouse=True, scope="session")
 def _startup_checks_off() -> Iterator[None]:
-    """Skip the lifespan readiness check for the suite.
-
-    `TestClient(app)` runs the real lifespan, whose check pings the module-level
-    engine in `database.py`. Tests never use that engine -- routes are served
-    sessions through `dependency_overrides` -- so the check would be asserting
-    about a database the suite does not touch, and would fail the entire suite
-    whenever `DATABASE_URL` happens to be down. The check itself is covered
-    directly in `tests/integration/test_startup_and_health.py`.
-    """
+    """Skip the lifespan DB check: it pings an engine the suite never uses."""
     original = settings.startup_checks_enabled
     settings.startup_checks_enabled = False
     try:
@@ -68,13 +53,9 @@ def _startup_checks_off() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _rate_limiting_off() -> Iterator[None]:
-    """Disable rate limiting for the suite, and say why explicitly.
+    """Disable rate limiting: buckets would persist in Redis across tests/runs.
 
-    Redis runs in local compose, so leaving the limiter on would make the suite
-    depend on wall-clock windows and on counters surviving between runs: the
-    `auth_failure` bucket is keyed by IP, every test shares `testclient`, and
-    several tests deliberately send bad keys. Tests that *exercise* the limiter
-    re-enable it and use a unique identity per test so their window starts empty.
+    Limiter tests re-enable it with a unique identity so their window starts empty.
     """
     original = settings.rate_limit_enabled
     settings.rate_limit_enabled = False
@@ -88,13 +69,9 @@ def _rate_limiting_off() -> Iterator[None]:
 
 @pytest.fixture
 def db_session() -> Iterator[Session]:
-    """A DB session bound to a transaction that is rolled back after the test.
+    """A DB session whose outer transaction is rolled back after the test.
 
-    `join_transaction_mode="create_savepoint"` lets route/dependency code call
-    `session.commit()` (as `routers/transactions.py` and `dependencies.py` do)
-    without ending the outer transaction early -- each commit becomes a
-    SAVEPOINT release instead, so the final rollback below still discards
-    everything the test wrote (SQLAlchemy's external-transaction test recipe).
+    `create_savepoint` turns app-side `commit()` into a SAVEPOINT release.
     """
     connection = engine.connect()
     transaction = connection.begin()

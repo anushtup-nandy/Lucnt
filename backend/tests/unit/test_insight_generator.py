@@ -1,4 +1,4 @@
-"""Unit tests for the pure insight/memory generator (Phase 5, M8)."""
+"""Unit tests for the pure insight/memory generator."""
 
 from __future__ import annotations
 
@@ -62,8 +62,7 @@ def _features(
 
 
 def _cost_unit(unit: str, avg: str, *, count: int = 2) -> CostUnit:
-    # count defaults to 2: a cost spike needs a repeated charge, not a one-off.
-    # total_spent is avg * count to stay internally consistent.
+    # count=2: a cost spike needs a repeated charge, not a one-off.
     return CostUnit(
         unit=unit,
         dimension="project",
@@ -186,8 +185,7 @@ def test_derive_memories_full_agent() -> None:
 
 
 def test_derive_memories_cold_start_row_when_learning() -> None:
-    # Has spend but no baseline yet -> a single "still learning" cold-start row so a
-    # new agent is not blank on the Memory page.
+    # Spend but no baseline -> one "still learning" cold-start row.
     bare = FingerprintFeatures(
         enough_data=False,
         home_currency="USD",

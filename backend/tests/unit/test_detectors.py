@@ -1,9 +1,4 @@
-"""Unit tests for the pure reconciliation detectors (no DB, no session).
-
-`TxnView` value objects are constructed in memory; the tests assert on the
-detection logic. Persistence / idempotency (the partial unique index) is covered
-by the integration tests (Phase 4c).
-"""
+"""Pure reconciliation detector tests (in-memory `TxnView`s, no DB)."""
 
 from __future__ import annotations
 
@@ -71,11 +66,7 @@ def test_duplicate_outside_window_is_not_flagged() -> None:
 
 
 def test_duplicate_at_exact_window_boundary_not_flagged() -> None:
-    """A gap of *exactly* the window is a cadence, not a double-charge.
-
-    Guards the regression where clockwork billing at a fixed period (== window)
-    was flagged as a duplicate every cycle.
-    """
+    """A gap of *exactly* the window is a cadence, not a double-charge."""
     hits = detect_duplicates(
         [_txn(when=_BASE), _txn(when=_BASE + timedelta(minutes=5))]
     )
@@ -128,19 +119,13 @@ def test_overcharge_needs_minimum_samples() -> None:
 
 
 def test_overcharge_requires_baseline_excluding_candidate() -> None:
-    """Leave-one-out: a 3-charge group has only a 2-charge baseline per
-    candidate — below min_samples — so the outlier is not flagged; the naive
-    median-of-all would have flagged it."""
+    """Leave-one-out: a 3-charge group's 2-charge baseline is below min_samples."""
     txns = [_txn(amount="10"), _txn(amount="10"), _txn(amount="100")]
     assert detect_overcharges(txns) == []
 
 
 def test_overcharge_does_not_mix_currencies() -> None:
-    """A lone foreign-currency charge is not judged against a USD baseline.
-
-    A ¥1500 charge among three $10 charges lives in its own (agent, vendor, JPY)
-    group of one — no baseline — so it is never flagged as a ~$1489 overcharge.
-    """
+    """A lone foreign-currency charge is not judged against a USD baseline."""
     txns = [
         _txn(amount="10", currency="USD"),
         _txn(amount="10", currency="USD"),
@@ -195,20 +180,13 @@ def test_unused_subscription_ignores_non_monthly_cadence() -> None:
 
 
 def test_unused_subscription_requires_consecutive_monthly_run() -> None:
-    """Scattered monthly gaps among irregular ones are not a subscription.
-
-    Days 0, 30, 35, 65 → gaps [30, 5, 30]: two monthly gaps but no consecutive run
-    of two, so nothing is flagged.
-    """
+    """Gaps [30, 5, 30]: two monthly gaps but no consecutive run, so no flag."""
     txns = [_txn(amount="99", when=_BASE + timedelta(days=d)) for d in (0, 30, 35, 65)]
     assert detect_unused_subscriptions(txns) == []
 
 
 def test_unused_subscription_rounds_gaps_not_truncates() -> None:
-    """A 24.6-day gap rounds to 25 (in the monthly window), not 24 (out).
-
-    Truncating `.days` would silently miss a genuine ~monthly subscription.
-    """
+    """A 24.6-day gap rounds to 25 (in the monthly window), not 24 (out)."""
     step = timedelta(days=24, hours=15)  # 24.625 days -> rounds to 25
     txns = [_txn(amount="99", when=_BASE + step * i) for i in range(3)]
     hits = detect_unused_subscriptions(txns)

@@ -1,8 +1,6 @@
 """Health split, startup readiness, request context and metrics.
 
-The readiness check is exercised directly here rather than through the app
-lifespan, because `conftest` disables the lifespan check for the suite (it would
-otherwise assert about the module-level engine, which no test uses).
+Readiness is called directly: `conftest` disables the lifespan check suite-wide.
 """
 
 from __future__ import annotations
@@ -52,9 +50,7 @@ def test_readiness_reports_ready_against_a_migrated_database(
     body = response.json()
     assert body["status"] == "ready"
     assert body["database"] == "up"
-    # The suite runs against a migrated schema, so the head comparison must have
-    # actually happened -- `None` here would mean the scripts weren't found and
-    # the check silently degraded to a bare ping.
+    # `None` would mean the head check silently degraded to a bare ping.
     assert body["schema_at_head"] is True
 
 
@@ -78,7 +74,6 @@ def test_readiness_is_503_when_the_database_is_unreachable(
     body = response.json()
     assert body["status"] == "not_ready"
     assert body["database"] == "down"
-    # The DSN must not leak to an unauthenticated prober.
     assert body["detail"] == "database unreachable"
 
 

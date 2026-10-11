@@ -1,12 +1,4 @@
-"""Money-integrity guards.
-
-Two layers of defence against the "negative amount refunds an agent's budget"
-theft primitive and other non-positive money:
-
-* the Pydantic wire schema rejects zero/negative amounts with 422;
-* the DB CHECK constraints reject them for *any* writer that bypasses the
-  schema — a future card rail, a manual SQL, a backfill.
-"""
+"""Non-positive money is rejected at the wire (422) and by DB CHECKs."""
 
 from __future__ import annotations
 
@@ -272,7 +264,7 @@ def test_db_rejects_two_sided_journal_line(db_session: Session) -> None:
                 account_name="Wallet",
                 account_code="1010",
                 debit=Decimal("5"),
-                credit=Decimal("5"),  # two-sided line is corruption
+                credit=Decimal("5"),
                 ledger="sg",
                 currency="SGD",  # set so the one-sided CHECK is what fails
             )

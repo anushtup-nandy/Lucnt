@@ -1,16 +1,7 @@
 """record the human actor on governance mutations (P7.0)
 
-`audit_logs` could only name an API key. With the dashboard, budgets, policies,
-approvals and reconciliation resolutions are mutated by signed-in humans, and a
-governance product that writes those rows with a NULL actor is not recording
-them at all.
-
-P7.0 was scoped as "no new tables, no migration". This is the
-deliberate exception, and the smallest one available: one nullable column, no
-backfill, no FK. No backfill because historical rows genuinely had no human
-actor — every one of them was an API key, and `actor_api_key_id` already says so.
-No FK for the same reason `actor_api_key_id` has none: a deleted user's history
-must survive them, since an audit trail a delete can erase is no trail.
+No backfill (historical actors were all API keys). No FK: a deleted user's audit
+history must survive them.
 
 Revision ID: c5d6e7f8a9b0
 Revises: b4c5d6e7f8a9

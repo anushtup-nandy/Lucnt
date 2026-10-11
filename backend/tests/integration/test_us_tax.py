@@ -1,10 +1,4 @@
-"""Integration tests for US per-state sales/use tax.
-
-A US entity's spend is taxed by the buyer's **state** (the `tax_rates` per-state
-rows seeded from Appendix A), not a blanket 0%: a taxable state self-accrues use
-tax (a payable, never reclaimable), an exempt state books nothing, and a disputed
-or unconfigured state routes to the recon exception queue rather than guessing.
-"""
+"""US use tax by buyer state; disputed/unconfigured states go to recon, not a guess."""
 
 from __future__ import annotations
 
@@ -59,7 +53,6 @@ def _make_key(db_session: Session, company: Company) -> str:
 def _make_us_company(
     db_session: Session, *, us_state: str | None
 ) -> tuple[Company, str]:
-    """A US entity (USD functional currency) with the given buyer state + a key."""
     company = Company(name="Acme US", slug=f"us-{uuid.uuid4().hex[:8]}")
     db_session.add(company)
     db_session.flush()
@@ -156,7 +149,7 @@ def test_taxable_state_tx_self_assesses_use_tax(
     assert Decimal(body["tax"]["tax_amount"]) == Decimal("5.0000")  # 100 * 5%
     assert body["tax"]["is_reclaimable"] is False
     assert body["tax"]["self_invoice_generated"] is False
-    # Wallet pays the vendor 100; a US Use Tax Payable (2400) leg carries the 5.
+    # 2400 = US Use Tax Payable.
     assert _credit(db_session, tx_id, "1010") == Decimal("100.0000")
     assert _credit(db_session, tx_id, "2400") == Decimal("5.0000")
     row = _tax_rows(db_session, tx_id)[0]

@@ -22,12 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add DB-level money integrity CHECKs.
-
-    The last line of defence for the ledger: even a writer that bypasses the
-    Pydantic schema (a future card rail, a backfill, a manual SQL) cannot post a
-    non-positive amount or a two-sided / negative journal line.
-    """
+    """Add DB-level money CHECKs; they hold even for writers that bypass Pydantic."""
     op.create_check_constraint(
         "ck_authorizations_amount_positive", "authorizations", "amount > 0"
     )

@@ -24,9 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Snapshot the hold's functional-currency value on authorizations.
 
-    Nullable — only holds that reach policy evaluation carry a snapshot, and only
-    APPROVED holds reserve budget. Existing holds are backfilled at rate 1.0 so
-    an approved-but-uncaptured hold keeps reserving after the upgrade.
+    Existing holds backfill at rate 1.0 so uncaptured holds keep reserving budget.
     """
     op.add_column(
         "authorizations",

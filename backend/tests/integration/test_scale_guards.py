@@ -1,19 +1,4 @@
-"""Scale, uniqueness and pool guards.
-
-Three classes of guard, none of which any prior test covered:
-
-* **Uniqueness at the DB.** A duplicate entity code makes every
-  ``authorize()`` for that entity raise ``MultipleResultsFound`` (a 500 that
-  takes the spend path down); a duplicate ``transaction_hash`` lets a redelivered
-  card webhook double-book a spend. Both must be rejected by the schema itself,
-  for *any* writer, and both must stay scoped per-company.
-* **The hot-path indexes exist.** Asserted against ``pg_indexes`` so a
-  future migration (or a stale model ``__table_args__``) cannot silently drop the
-  indexes that keep ``authorize()`` off a sequential scan. ``alembic check``
-  catches model/DB drift; this catches the DB losing them outright.
-* **The pool is configured.** A bare ``create_engine()`` has no liveness
-  check and no server-side statement cap.
-"""
+"""DB uniqueness (per company), hot-path indexes, and engine pool guards."""
 
 from __future__ import annotations
 
@@ -149,9 +134,7 @@ def test_same_transaction_hash_allowed_across_companies(db_session: Session) -> 
 # --- The hot-path indexes are present in the live schema ---
 
 
-# The subset whose absence is a latency bug on the blocking money path, not just
-# a slow dashboard: two scans of `transactions` and two of `authorizations` per
-# authorize(), plus the per-call policy fetch.
+# Indexes whose absence puts authorize() on a sequential scan.
 _MONEY_PATH_INDEXES = (
     "ix_transactions_agent_id_transaction_date",
     "ix_authorizations_agent_id_status_created_at",

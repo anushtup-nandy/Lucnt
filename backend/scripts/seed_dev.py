@@ -1,14 +1,6 @@
 """Dev-only seed: a company, entities, mockup agents, persona logins, one API key.
 
-Unblocks `sdk/examples/example_agent.py` end-to-end, which needs `agent=ops` /
-`entity=sg` and `agent=research` / `entity=in` to exist. Agent identity/roster
-matches the dashboard mockup's AGENTS array; `spent_ytd`/`spent_today` are
-seeded at 0 rather than copied from the mockup, whose numbers are a demo
-snapshot (e.g. "research" shown budget-exhausted) rather than a sane starting
-state for a fresh install. Idempotent on company/entities/agents (matched by
-slug/code); always issues one fresh API key.
-
-Prints the plaintext key exactly once -- only its hash is ever persisted.
+Idempotent except the API key: a fresh one is issued and printed once per run.
 
     python scripts/seed_dev.py
 """
@@ -184,15 +176,8 @@ _AGENTS = [
 ]
 
 
-# (name, country, gst_registered_in) — the vendors `example_agent.py` spends to,
-# enriched so place of supply (not currency) decides tax. Names match the
-# example's vendor strings exactly (normalized lower/trim) so the capture path's
-# resolve-or-create finds these rows instead of auto-creating unenriched ones —
-# without this the demo's imported spends classify UNCLASSIFIED and its reverse-
-# charge assertion fails. `openai`/`anthropic`/etc. are foreign (US), unregistered
-# in the buyer's country -> IGST reverse charge; `singapore_airlines` is a domestic
-# SG supply -> forward-charge GST. `coinbase` is policy-blocked before capture, so
-# it never needs a row.
+# (name, country, gst_registered_in). Names must match `example_agent.py`'s vendor
+# strings, else capture auto-creates unenriched vendors that classify UNCLASSIFIED.
 _VENDORS: list[tuple[str, str, list[str]]] = [
     ("singapore_airlines", "SG", ["SG"]),  # domestic SG -> forward-charge GST
     ("openai", "US", []),  # foreign, unregistered -> RCM (IGST)
@@ -229,12 +214,9 @@ def _get_or_create_entities(db: Session, company: Company) -> dict[str, Entity]:
                 currency=currency,
                 accounting_std=std,
                 tax_regime=regime,
-                # Place of supply of the recipient: the entity's country is
-                # its 2-letter code upper-cased (sg->SG, in->IN, us->US). Without it
-                # every spend classifies UNCLASSIFIED — tax can't be decided.
+                # Without a country every spend classifies UNCLASSIFIED.
                 country=code.upper(),
-                # US buyer state for sales/use-tax lookup. Delaware has no
-                # state sales tax, so a US spend books cleanly (no use-tax accrual).
+                # Delaware: no state sales tax, so no use-tax accrual.
                 us_state="DE" if code == "us" else None,
                 timezone=tz,
             )
@@ -272,16 +254,8 @@ def _get_or_create_agents(
     db.flush()
 
 
-# --- Dashboard personas (P7.0) ---------------------------------------------
-# One user per role in `UserRole`, so the dashboard persona switch demos
-# against real server-side scoping rather than a UI toggle. `owner` names the
-# agent slugs assigned to that user's `agents.owner_user_id` — all seven were
-# NULL before this, which made `agent_scope="owned"` untestable.
-#
-# The password is DEV-ONLY and identical for all five, deliberately: it is
-# printed by the seed, typed on stage, and the whole company lives in a
-# throwaway database. `ENVIRONMENT != development` is not a supported target for
-# this script.
+# One user per `UserRole`, to demo server-side scoping. Shared DEV-ONLY password;
+# never run this script outside development.
 _DEV_PASSWORD = "lucnt-demo-2026"
 
 # (email local part, name, role, owned agent slugs)
@@ -349,9 +323,7 @@ def _get_or_create_vendors(db: Session, company: Company) -> None:
     db.flush()
 
 
-# (name, rule_type, config, description) — company-wide defaults. Chosen NOT to
-# block the example_agent's normal spends: crypto exchanges nobody uses, and a
-# review threshold well above the demo amounts.
+# (name, rule_type, config, description). Must not block example_agent's spends.
 _POLICIES: list[tuple[str, PolicyRuleType, dict[str, object], str]] = [
     (
         "No crypto exchanges",
@@ -413,8 +385,6 @@ def main() -> None:
         credentials = _get_or_create_users(db, company)
         _get_or_create_vendors(db, company)
         _get_or_create_policies(db, company)
-        # Default Chart of Accounts so the Books layer has accounts to post to
-        # (capture self-heals this too, but seed it explicitly for a clean start).
         ensure_default_accounts(db, company.id)
         plaintext = _issue_api_key(db, company)
         db.commit()

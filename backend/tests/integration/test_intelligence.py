@@ -1,15 +1,7 @@
-"""Integration tests for the Phase 5 Intelligence layer (M8).
+"""Intelligence layer (M8).
 
-Transactions are inserted directly (bypassing capture) so the tests control
-amounts, projects, and dates. Dates are relative to real ``now`` because
-``/intelligence/recompute`` and ``/intelligence/query`` read the wall clock; every
-inserted spend lands in the current calendar month.
-
-Determinism note: a single outlier of value B over ``k`` identical baseline points
-of value b has z-score exactly ``sqrt(k)`` (independent of b, B). So ``9×10 + 1×100``
-gives an anomaly score of exactly ``3.0`` — comfortably over the 2.5σ threshold.
-
-The per-file company/agent/entity helpers mirror the other integration files.
+Transactions are inserted directly, dated in the current month because the
+endpoints read the wall clock.
 """
 
 from __future__ import annotations
@@ -452,8 +444,7 @@ def test_query_live_financial_memory(client: TestClient, db_session: Session) ->
 
     mem = client.get("/intelligence/query?agent=research", headers=_auth(key)).json()
     assert mem["currency"] == "USD"
-    # Budget spend is derived from this month's committed ledger (4 x 10), not the
-    # never-reset spent_ytd=500 counter.
+    # Budget spend derives from this month's ledger (4 x 10), not spent_ytd=500.
     assert Decimal(mem["budget"]["spent"]) == Decimal("40")
     assert mem["projection"]["on_track"] is True  # huge budget
     assert mem["fingerprint"]["total_records"] == 4
@@ -502,12 +493,7 @@ def test_query_unknown_agent_404(client: TestClient, db_session: Session) -> Non
 def test_query_falls_back_to_live_without_a_recompute(
     client: TestClient, db_session: Session
 ) -> None:
-    """The documented contract: `query()` needs no prior recompute.
-
-    Pinned explicitly because the fast path below reads a stored fingerprint —
-    an agent that has never been recomputed must still get real statistics, not
-    a null block.
-    """
+    """`query()` needs no prior recompute: no fingerprint still yields real stats."""
     company, key, agent, entity = _setup(db_session)
     _make_transaction(db_session, company, agent, entity, amount="10")
     assert (
@@ -546,12 +532,7 @@ def test_query_serves_the_persisted_fingerprint_after_recompute(
 def test_query_budget_stays_live_when_the_fingerprint_is_stale(
     client: TestClient, db_session: Session
 ) -> None:
-    """The deliberate staleness tradeoff, stated as a test.
-
-    After a recompute, new spend does NOT move the stored statistics — but it
-    MUST move `budget`, which is a live SQL sum. Budget headroom is the figure an
-    agent gates on, so it is the one that may never be stale.
-    """
+    """Stored stats may go stale after new spend; `budget` (live SQL) may not."""
     company, key, agent, entity = _setup(db_session)
     _make_transaction(db_session, company, agent, entity, amount="10")
     client.post("/intelligence/recompute", headers=_auth(key))
@@ -568,12 +549,9 @@ def test_query_budget_stays_live_when_the_fingerprint_is_stale(
 def test_sql_cost_units_match_the_pure_function(
     client: TestClient, db_session: Session
 ) -> None:
-    """The drift guard between the SQL aggregate and the engine it mirrors.
+    """Drift guard: `_cost_units_for_agent` (SQL) matches `cost_per_output`.
 
-    `_cost_units_for_agent` reimplements `cost_per_output` in SQL. Comments cannot
-    stop those diverging; this can. Covers the awkward cases: an unattributed
-    group, a group where only some rows carry tokens (so token metrics must be
-    suppressed), and two currencies.
+    Covers unattributed groups, partial token data, and two currencies.
     """
     company, _key, agent, entity = _setup(db_session)
     rows = [
@@ -606,11 +584,7 @@ def test_sql_cost_units_match_the_pure_function(
 def test_sql_month_to_date_matches_the_python_form(
     client: TestClient, db_session: Session
 ) -> None:
-    """Same guard for the MTD sum — including its two quirks.
-
-    It filters to the home currency and does NOT sign-flip reversals, which is
-    what makes it different from `spend_window.committed_spend`.
-    """
+    """Drift guard for MTD: home currency only, reversals not sign-flipped."""
     company, _key, agent, entity = _setup(db_session)
     _make_transaction(db_session, company, agent, entity, amount="10")
     _make_transaction(db_session, company, agent, entity, amount="20")

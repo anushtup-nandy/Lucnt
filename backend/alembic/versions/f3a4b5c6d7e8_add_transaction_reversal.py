@@ -22,13 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Support refunds/reversals as a linked contra transaction.
-
-    A reversal is a real transaction (positive amount, contra journal) pointing at
-    the original via ``reverses_transaction_id``; the original is flagged
-    ``is_reversed``. No negative amounts (the money CHECKs stay intact) and no
-    enum change — status stays COMPLETED for both rows.
-    """
+    """Model reversals as a linked positive contra transaction (money CHECKs hold)."""
     op.add_column(
         "transactions",
         sa.Column("reverses_transaction_id", sa.Uuid(), nullable=True),

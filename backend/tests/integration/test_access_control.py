@@ -1,9 +1,4 @@
-"""API-key scope + mode gating.
-
-Separation of duties: a runtime agent key can spend but cannot raise its own
-budget or edit the policies governing it; a test-mode key cannot drive the live
-ledger; the interactive docs are off outside development.
-"""
+"""API-key scope and mode gating: runtime keys can't govern, test keys can't go live."""
 
 from __future__ import annotations
 
@@ -116,7 +111,7 @@ def test_runtime_key_can_authorize(client: TestClient, db_session: Session) -> N
 def test_runtime_key_cannot_raise_its_own_budget(
     client: TestClient, db_session: Session
 ) -> None:
-    """The separation-of-duties fix: the governed principal can't be the governor."""
+    """The governed principal can't be the governor."""
     company, agent = _seed(db_session)
     runtime_key = _make_key(db_session, company, scope=ApiKeyScope.RUNTIME)
 
@@ -151,7 +146,6 @@ def test_test_mode_key_cannot_touch_live_ledger(
 def test_test_mode_key_can_read(client: TestClient, db_session: Session) -> None:
     company, _ = _seed(db_session)
     test_key = _make_key(db_session, company, mode=ApiKeyMode.TEST)
-    # A read endpoint is fine for a test key.
     assert client.get("/transactions", headers=_hdrs(test_key)).status_code == 200
 
 

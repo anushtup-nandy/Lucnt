@@ -1,9 +1,4 @@
-"""Integration tests for the Books router (Phase 2, Module 2/4).
-
-Captures a known mix of transactions, then asserts the financial statements
-derived from them — most importantly the double-entry identities: the trial
-balance nets to zero and the balance sheet balances.
-"""
+"""Books router: statements over a known spend mix; TB nets to zero, BS balances."""
 
 from __future__ import annotations
 
@@ -157,8 +152,7 @@ def books_client(client: TestClient, db_session: Session) -> tuple[TestClient, s
     _make_vendor(
         db_session, company, "localcorp", country="SG", gst_registered_in=["SG"]
     )
-    # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
-    # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
+    # USD->SGD = 2.0; dated 2026-01-02 to override the 2026-01-01 baseline.
     db_session.add(
         FxRate(
             currency="SGD",
@@ -280,8 +274,7 @@ def test_books_date_filter_scopes_period(
 def test_company_level_statements_are_per_currency(
     client: TestClient, db_session: Session
 ) -> None:
-    """A company spanning currencies gets per-currency totals, never a single
-    mixed 'balanced' total. Each currency balances independently."""
+    """Multi-currency books get per-currency totals; each balances independently."""
     company, key = _make_company_with_key(db_session)
     sg = _make_entity(db_session, company)  # SGD, SG-GST
     us = Entity(
@@ -349,12 +342,7 @@ def test_company_level_statements_are_per_currency(
 def test_general_ledger_listing_omits_entries_but_reports_the_count(
     books_client: tuple[TestClient, str],
 ) -> None:
-    """The listing must not serialise every journal line.
-
-    Journal lines run 2-5x transaction count, so returning them all was the one
-    unbounded *response* among the bounded books endpoints. `entry_count` is what
-    keeps an empty `entries` from reading as "this account has no postings".
-    """
+    """The listing omits journal lines; `entry_count` shows postings exist."""
     client, key = books_client
     gl = client.get("/books/gl", headers=_headers(key)).json()
     by_code = {a["account_code"]: a for a in gl["accounts"]}
@@ -366,7 +354,7 @@ def test_general_ledger_listing_omits_entries_but_reports_the_count(
 def test_general_ledger_totals_match_the_trial_balance(
     books_client: tuple[TestClient, str],
 ) -> None:
-    """Both statements now read the same grouped aggregate — they cannot disagree."""
+    """Both statements read the same grouped aggregate, so they cannot disagree."""
     client, key = books_client
     gl = client.get("/books/gl", headers=_headers(key)).json()
     tb = client.get("/books/tb", headers=_headers(key)).json()

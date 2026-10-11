@@ -1,9 +1,4 @@
-"""Budget reservation, hold-aware velocity, and concurrency.
-
-The moat guarantee — "block *before* money moves" — must hold under a hostile or
-buggy caller that authorizes many times before (or without) capturing, and under
-genuine concurrency. These tests exercise that the way the old code could not.
-"""
+"""Budget reservation, hold-aware velocity, and concurrent authorizes."""
 
 from __future__ import annotations
 
@@ -109,8 +104,7 @@ def _authorize(client: TestClient, key: str, amount: str, vendor: str = "x") -> 
 def test_holds_reserve_budget_before_capture(
     client: TestClient, db_session: Session
 ) -> None:
-    """Two $60 authorizes on a $100 budget: the second is blocked by the first's
-    outstanding hold — with no capture in between (the old N-before-capture hole)."""
+    """Two $60 authorizes on $100: the first's uncaptured hold blocks the second."""
     _, _, _, key = _seed(db_session, budget="100")
 
     first = _authorize(client, key, "60")
@@ -124,8 +118,7 @@ def test_holds_reserve_budget_before_capture(
 def test_committed_and_reserved_combine(
     client: TestClient, db_session: Session
 ) -> None:
-    """After capture the hold becomes committed spend (from the ledger), still
-    counted; a captured hold stops double-reserving."""
+    """A captured hold counts as committed spend, not also as a reservation."""
     _, _, _, key = _seed(db_session, budget="100")
 
     first = _authorize(client, key, "60")
@@ -138,8 +131,7 @@ def test_committed_and_reserved_combine(
 
     # committed 60 + 60 = 120 > 100 -> blocked
     assert _authorize(client, key, "60")["status"] == "blocked"
-    # committed 60 + 40 = 100 <= 100 -> approved (proves the captured hold is not
-    # ALSO still reserved, which would wrongly block at 60 + 60 + 40)
+    # committed 60 + 40 = 100 <= 100 -> approved (hold not double-counted)
     assert _authorize(client, key, "40")["status"] == "approved"
 
 
@@ -172,24 +164,11 @@ def test_velocity_counts_uncaptured_holds(
 
 
 def test_concurrent_authorizes_cannot_bust_budget(resolved_engine: Engine) -> None:
-    """Two parallel $60 authorizes on a $100 budget: the FOR UPDATE agent lock
-    lets exactly one through. Deliberately skips the rollback fixture so the two
-    requests hold separate transactions and really commit, as production would.
+    """Two parallel $60 authorizes on $100: the FOR UPDATE agent lock admits one.
 
-    Bound to `resolved_engine` — the engine the suite is configured against — not
-    to the module-level `SessionLocal`. `SessionLocal` follows `DATABASE_URL`,
-    which is *not* where the suite lives:
-
-      * in CI only `TEST_DATABASE_URL` is migrated, so `SessionLocal` hit an empty
-        database and this test failed with `relation "companies" does not exist`;
-      * on a developer machine `DATABASE_URL` is their own database, so the test
-        created and then `DELETE`d rows in it — exactly what
-        `TEST_DATABASE_URL` exists to stop.
-
-    The override below mirrors `get_db` (a fresh session per request, closed
-    afterwards) rather than reusing the savepoint-based `db_session` fixture: one
-    shared connection would serialise the two workers and the row lock this test
-    exists to prove would never be contended.
+    Uses real committing sessions (one per request) on `resolved_engine`, not
+    `SessionLocal` (follows DATABASE_URL, not the test DB) nor the shared-connection
+    `db_session`, which would serialise the workers so the lock is never contended.
     """
     session_factory = sessionmaker(bind=resolved_engine)
 
@@ -276,7 +255,6 @@ def test_concurrent_authorizes_cannot_bust_budget(resolved_engine: Engine) -> No
         thread.join()
 
     try:
-        # Exactly one approved, one blocked — never two approvals busting budget.
         assert sorted(results) == ["approved", "blocked"], results
     finally:
         cleanup = session_factory()
@@ -295,8 +273,6 @@ def test_concurrent_authorizes_cannot_bust_budget(resolved_engine: Engine) -> No
         finally:
             cleanup.close()
             setup.close()
-            # This test installs its own override instead of using the `client`
-            # fixture, so it is responsible for removing it. Leaving it in place
-            # would hand later tests real committing sessions instead of their
-            # rolled-back ones.
+            # Own override (no `client` fixture): leaking it would give later
+            # tests committing sessions.
             app.dependency_overrides.pop(get_db, None)

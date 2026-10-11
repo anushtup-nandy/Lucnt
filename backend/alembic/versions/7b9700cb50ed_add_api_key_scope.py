@@ -22,11 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add api_keys.scope (runtime|admin) for separation of duties.
-
-    Existing keys default to `admin` (server_default) so they keep full power;
-    agent runtime keys are provisioned `runtime` explicitly.
-    """
+    """Add api_keys.scope (runtime|admin); existing keys default to admin."""
     api_key_scope = sa.Enum("runtime", "admin", name="api_key_scope")
     api_key_scope.create(op.get_bind(), checkfirst=True)
     op.add_column(

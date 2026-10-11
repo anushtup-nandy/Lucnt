@@ -1,10 +1,4 @@
-"""Unit tests for the pure tax engine (no DB).
-
-The statutory ``rate`` is injected — resolved from the effective-dated
-`tax_rates` table on the money path, so these unit tests state the rate under
-test explicitly. Effective-dated resolution itself is covered in
-`tests/integration/test_tax_rates.py`.
-"""
+"""Pure tax engine tests; the statutory rate is injected explicitly."""
 
 from __future__ import annotations
 
@@ -377,13 +371,7 @@ def test_domestic_unregistered_vendor_is_reverse_charge() -> None:
 
 
 def test_foreign_vendor_registered_in_buyer_country_is_forward_charge() -> None:
-    """OIDAR: a foreign vendor GST-registered in India charges forward IGST, not RCM.
-
-    The key case — registration in the buyer's country, not home country,
-    decides. Currency (USD) and home country (US) both say "import"; the India
-    registration makes it a domestic forward-charge IGST supply with reclaimable
-    ITC and no self-invoice.
-    """
+    """OIDAR: registration in the buyer's country, not home country, decides."""
     t = compute_tax(
         tax_regime="IN-GST",
         functional_amount=Decimal("118"),
@@ -404,11 +392,7 @@ def test_foreign_vendor_registered_in_buyer_country_is_forward_charge() -> None:
 
 
 def test_domestic_vendor_registered_in_buyer_country_forward_charge() -> None:
-    """Case B: a domestic India vendor billing in USD is still domestic.
-
-    Home country IN + registered in IN → forward-charge CGST/SGST despite the
-    foreign invoice currency (which the old heuristic would have called an import).
-    """
+    """A domestic India vendor billing in USD is still domestic forward charge."""
     t = compute_tax(
         tax_regime="IN-GST",
         functional_amount=Decimal("118"),
@@ -426,11 +410,7 @@ def test_domestic_vendor_registered_in_buyer_country_forward_charge() -> None:
 
 
 def test_foreign_vendor_billing_local_currency_is_import_rcm() -> None:
-    """Case A: a foreign, IN-unregistered vendor billing in INR is still RCM.
-
-    Currency (INR) says "domestic"; country (US) + no India registration correctly
-    says imported → IGST reverse charge with a self-invoice.
-    """
+    """A foreign, IN-unregistered vendor billing in INR is still import RCM."""
     t = compute_tax(
         tax_regime="IN-GST",
         functional_amount=Decimal("100"),
@@ -448,13 +428,7 @@ def test_foreign_vendor_billing_local_currency_is_import_rcm() -> None:
 
 
 def test_unenriched_vendor_is_unclassified_not_guessed() -> None:
-    """No vendor country -> conservative UNCLASSIFIED, never a currency guess.
-
-    The old heuristic read USD != INR as "import" and self-assessed RCM. With the
-    fallback retired, an unenriched vendor asserts nothing: no RCM, no ITC, no
-    self-invoice, whole amount expensed, and ``confidence="exception"`` so the
-    money path flags it for enrichment.
-    """
+    """No vendor country -> UNCLASSIFIED (asserts nothing), never a currency guess."""
     t = compute_tax(
         tax_regime="IN-GST",
         functional_amount=Decimal("100"),
@@ -528,7 +502,7 @@ def test_domestic_tax_exclusive_adds_gst_on_top() -> None:
 
 
 def test_slab_rate_extracts_at_that_rate() -> None:
-    """A 5% slab extracts 5% embedded GST, not 18% (wrong-rate fix)."""
+    """A 5% slab extracts 5% embedded GST, not 18%."""
     t = compute_tax(
         tax_regime="IN-GST",
         functional_amount=Decimal("105"),

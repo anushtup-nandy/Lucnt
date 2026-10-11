@@ -4,18 +4,8 @@ Revision ID: c9d0e1f2a3b4
 Revises: b8c9d0e1f2a3
 Create Date: 2026-07-23 22:55:00.000000
 
-Recompute used to delete every un-applied insight and re-insert fresh rows, which
-churned ids (racing a human's "apply" → 404) and regenerated a reviewed insight
-forever. This adds:
-
-- `dedup_key` — a stable natural key (type:agent:subject) so recompute upserts an
-  insight *in place* (preserving id / is_applied) instead of delete+insert.
-- `is_dismissed` / `dismissed_at` — a reviewed-but-not-applied insight can be
-  dismissed; a dismissed insight is suppressed from regeneration.
-
-`dedup_key` is nullable (no uniqueness constraint — the recompute dedups in-app and
-self-heals) and back-filled from existing rows so the first post-migration recompute
-matches them in place rather than orphaning them.
+`dedup_key` lets recompute upsert in place (stable ids); no unique constraint, the
+app dedups. Dismissed insights are suppressed from regeneration.
 """
 
 from __future__ import annotations
@@ -48,10 +38,8 @@ def upgrade() -> None:
         "insights",
         sa.Column("dismissed_at", sa.DateTime(timezone=True), nullable=True),
     )
-    # Drop the server_default: the model owns the Python-side default from here.
     op.alter_column("insights", "is_dismissed", server_default=None)
-    # Back-fill dedup_key to match the generator's key (type:agent:subject, where
-    # subject is the cost_spike project or empty for the per-agent types).
+    # Must match the generator's key so existing rows are upserted, not orphaned.
     op.execute(
         """
         UPDATE insights

@@ -1,9 +1,4 @@
-"""Unit tests for the pure policy engine (no DB, no session).
-
-`Policy` ORM objects are constructed in memory — never flushed — so `policy.id`
-is `None`; these tests assert on the verdict logic, while hit/block-counter
-bumping (which needs real ids) is covered in the integration tests (Phase 3c).
-"""
+"""Pure policy engine tests; policies are unflushed, so `policy.id` is None."""
 
 from __future__ import annotations
 

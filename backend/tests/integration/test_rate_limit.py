@@ -1,13 +1,7 @@
-"""Rate limiting against a live Redis.
+"""Rate limiting against a live Redis; skipped when Redis is unreachable.
 
-The suite disables the limiter globally (see `conftest._rate_limiting_off`), so
-every test here re-enables it and uses a **uuid identity per test**, which makes
-its fixed window start empty regardless of what earlier runs left in Redis. That
-is what keeps these deterministic without flushing a shared database.
-
-Skipped, not failed, when Redis is unreachable: the limiter is designed to
-fail open, so a machine without Redis is a valid configuration for the rest of
-the suite — but it cannot prove anything about limiting.
+Each test re-enables the limiter (off suite-wide) and uses a fresh uuid identity
+so its window starts empty without flushing Redis.
 """
 
 from __future__ import annotations
@@ -29,7 +23,6 @@ from lucnt_api.rate_limit import Bucket, RateLimiter, get_limiter
 
 @pytest.fixture
 def live_redis() -> Iterator[redis.Redis]:
-    """A real Redis client, or skip."""
     client: redis.Redis = redis.from_url(settings.redis_url, socket_timeout=1)
     try:
         client.ping()
@@ -51,7 +44,6 @@ def limiter(live_redis: redis.Redis) -> Iterator[RateLimiter]:
 
 
 def _identity() -> str:
-    """A never-before-seen subject, so this test's window starts at zero."""
     return f"test-{uuid.uuid4()}"
 
 
@@ -65,7 +57,6 @@ def _http_status(exc_info: pytest.ExceptionInfo[Exception]) -> int:
 
 
 def test_allows_up_to_the_limit_then_rejects(limiter: RateLimiter) -> None:
-    """Exactly `limit` calls pass; the next one is a 429."""
     identity = _identity()
     limit = settings.rate_limit_default_per_minute
     for _ in range(limit):
@@ -133,11 +124,7 @@ def test_auth_guard_passes_until_failures_accumulate(limiter: RateLimiter) -> No
 
 
 def test_guard_alone_never_locks_anyone_out(limiter: RateLimiter) -> None:
-    """The pre-check must be read-only.
-
-    If `guard_auth_attempt` incremented, a client making many *successful*
-    requests would lock itself out of authentication entirely.
-    """
+    """The pre-check is read-only, or successful clients would lock themselves out."""
     ip = _identity()
     for _ in range(settings.rate_limit_auth_failure_per_minute * 3):
         limiter.guard_auth_attempt(ip)
@@ -155,12 +142,7 @@ def test_auth_failures_are_per_ip(limiter: RateLimiter) -> None:
 
 
 def test_unreachable_redis_admits_the_request() -> None:
-    """A Redis outage must not take down the money path.
-
-    Points at a closed port so the client raises `ConnectionError` (a
-    `RedisError`) on first use. Failing *closed* here would turn a cache blip
-    into a total outage of `authorize()`.
-    """
+    """A Redis outage fails open (counted in a metric), not closed on the money path."""
     original = settings.rate_limit_enabled
     settings.rate_limit_enabled = True
     try:
@@ -169,15 +151,10 @@ def test_unreachable_redis_admits_the_request() -> None:
         )
         broken = RateLimiter(dead)
         identity = _identity()
-        # The fail-open itself is a defensible choice; the silence is not.
-        # Every admitted-without-counting request must increment the metric an
-        # alert can fire on.
         counter = metrics.rate_limiter_fail_open_total.labels(
             bucket=Bucket.EXPENSIVE.value
         )
         before = counter._value.get()
-        # Far beyond every configured limit — all admitted, because the limiter
-        # cannot count and refuses to guess.
         for _ in range(settings.rate_limit_expensive_per_minute + 10):
             broken.check(Bucket.EXPENSIVE, identity)
         broken.guard_auth_attempt(identity)
@@ -220,15 +197,9 @@ def test_get_limiter_is_disabled_by_the_kill_switch() -> None:
 def test_brute_force_over_http_eventually_429s(
     live_redis: redis.Redis, db_session: Session
 ) -> None:
-    """End-to-end proof that `get_auth_context` consults the limiter.
+    """`get_auth_context` is wired to the limiter: repeated bad keys end in 429.
 
-    Every other test here drives `RateLimiter` directly, which would still pass
-    if the wiring in `dependencies.py` were removed entirely. This one goes
-    through the app: a run of bad keys must stop costing a DB lookup and start
-    returning 429.
-
-    The `testclient` IP bucket is cleared first — it is a fixed identity, so a
-    second run inside the same 60s window would otherwise start pre-spent.
+    The fixed `testclient` IP bucket is cleared first so reruns start unspent.
     """
     stale = live_redis.keys("lucnt:rl:auth_failure:testclient:*")
     if stale:
@@ -245,9 +216,7 @@ def test_brute_force_over_http_eventually_429s(
             for _ in range(budget):
                 assert client.get("/agents", headers=headers).status_code == 401
             assert client.get("/agents", headers=headers).status_code == 429
-            # A valid-looking request from the same IP is refused too — the
-            # bucket is per-IP by design, which is why the deployment must give
-            # the app real client addresses (see rate_limit.py).
+            # Per-IP bucket: the deployment must pass real client addresses.
             assert client.get("/agents", headers=headers).status_code == 429
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -261,12 +230,7 @@ def test_brute_force_over_http_eventually_429s(
 def test_redis_keys_are_namespaced_and_carry_no_secret(
     limiter: RateLimiter, live_redis: redis.Redis
 ) -> None:
-    """The identity is an API-key *id*, never the bearer token.
-
-    Asserted on the key shape because the caller, not the limiter, chooses the
-    identity — `dependencies.py` passes `api_key.id`, and this pins the prefix
-    that makes such a mistake visible in Redis.
-    """
+    """Keys are namespaced; the identity is an API-key id, never the bearer token."""
     identity = _identity()
     limiter.check(Bucket.DEFAULT, identity)
     keys = [k.decode() for k in live_redis.keys(f"lucnt:rl:default:{identity}:*")]

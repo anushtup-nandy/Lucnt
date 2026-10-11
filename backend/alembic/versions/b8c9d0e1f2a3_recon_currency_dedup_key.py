@@ -4,19 +4,8 @@ Revision ID: b8c9d0e1f2a3
 Revises: a7b8c9d0e1f2
 Create Date: 2026-07-23 22:30:00.000000
 
-Two columns on `reconciliation_exceptions` for recovery correctness:
-
-- `currency` — the currency of `amount_at_stake` (the transaction's paid currency),
-  so the inbox "$ at stake" header aggregates *per currency* instead of summing
-  ₹ + $ + ¥ into a meaningless total.
-- `dedup_key` — a stable recurring-identity key (type:agent:vendor:amount:currency)
-  for the ledger-detector types, so a *dismissed* recurring exception (e.g. a
-  subscription) is not re-flagged next month on a new transaction row. NULL
-  for the per-transaction types (failed_delivery, tax_unclassified).
-
-Both are nullable; existing rows are back-filled from the joined transaction. The
-back-fill string mirrors the app's canonicalisation (lower/trim vendor,
-Numeric(18,4) text) so pre-existing recurring exceptions dedupe correctly too.
+`currency` lets "$ at stake" aggregate per currency; `dedup_key` stops a dismissed
+recurring exception being re-flagged on a new transaction.
 """
 
 from __future__ import annotations
@@ -43,7 +32,6 @@ def upgrade() -> None:
         "reconciliation_exceptions",
         sa.Column("dedup_key", sa.Text(), nullable=True),
     )
-    # Back-fill currency for every existing exception from its transaction.
     op.execute(
         """
         UPDATE reconciliation_exceptions re
@@ -52,9 +40,7 @@ def upgrade() -> None:
         WHERE re.transaction_id = t.id
         """
     )
-    # Back-fill dedup_key for the recurring-identity (ledger-detector) types only.
-    # Mirrors the app's canonicalisation: exception_type value, agent uuid text,
-    # lower(trim(vendor)), Numeric(18,4) amount text, paid currency.
+    # Must mirror the app's key canonicalisation exactly, or old rows won't dedupe.
     op.execute(
         """
         UPDATE reconciliation_exceptions re

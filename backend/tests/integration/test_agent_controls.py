@@ -1,8 +1,4 @@
-"""Agent / entity state controls at authorize.
-
-"Pause this agent" must actually stop spend — a paused/disabled/non-live agent,
-or an inactive entity, is blocked before the policy engine runs.
-"""
+"""Non-live agents and inactive entities are blocked at authorize, before policy."""
 
 from __future__ import annotations
 

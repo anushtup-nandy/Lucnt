@@ -1,9 +1,4 @@
-"""`resolve_perms` per role — the whole persona model rests on this one function.
-
-Every nav item, every landing page and every write gate is derived from it. A wrong
-row in `_ROLE_TABLE` is a page a role should not see, or a write it should not
-be able to make.
-"""
+"""`resolve_perms` per role: every nav item, landing page and write gate."""
 
 from __future__ import annotations
 

@@ -1,10 +1,4 @@
-"""Tax-rate resolver tests against the migration-seeded tax_rates.
-
-Integration, not pure-unit: the resolver reads `tax_rates`, whose statutory rows
-(IN/SG/US) are seeded by migration `b1c2d3e4f5a6`, so they exist in the migrated
-test DB. Effective-dating (SG GST 7%→8%→9%) is the finding under test — a rate
-change must not back-apply to a historical supply.
-"""
+"""Tax-rate resolver against the migration-seeded (`b1c2d3e4f5a6`) tax_rates."""
 
 from __future__ import annotations
 
@@ -30,11 +24,7 @@ def test_us_rate_is_zero_not_missing(db_session: Session) -> None:
 
 
 def test_effective_to_closes_a_rate(db_session: Session) -> None:
-    """A closed rate (effective_to set) is not applied on/after its close date.
-
-    Append-only discipline: a rate change closes the old row and inserts a new one;
-    the resolver picks the one whose effective window contains the supply date.
-    """
+    """A closed rate (effective_to set) is not applied on/after its close date."""
     db_session.add_all(
         [
             TaxRate(
@@ -55,11 +45,9 @@ def test_effective_to_closes_a_rate(db_session: Session) -> None:
         ]
     )
     db_session.flush()
-    # Inside the closed row's window → the old rate.
     assert resolve_rate(
         db_session, regime="XX-TEST", on_date=date(2023, 6, 1)
     ) == Decimal("0.10")
-    # On/after the close date → the closed row is skipped, the new one applies.
     assert resolve_rate(
         db_session, regime="XX-TEST", on_date=date(2024, 6, 1)
     ) == Decimal("0.20")

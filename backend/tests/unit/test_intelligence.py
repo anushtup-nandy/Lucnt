@@ -1,8 +1,6 @@
-"""Unit tests for the pure intelligence service (Phase 5, M8).
+"""Pure intelligence service tests.
 
-Amounts are chosen so the statistics are exact: ``[10, 10, 10, 10, 50]`` has
-mean 18 and population σ 16 (variance = (4·8² + 32²)/5 = 256), so no float
-tolerance is needed anywhere.
+``[10, 10, 10, 10, 50]`` has mean 18 and population σ 16, so stats are exact.
 """
 
 from __future__ import annotations
@@ -122,9 +120,7 @@ def test_fingerprint_flat_history_has_zero_anomaly() -> None:
 def test_fingerprint_lone_outlier_fires_below_eight_samples() -> None:
     """A lone outlier in a 5-point history fires.
 
-    Population σ over all points capped a lone outlier at √(n-1) = 2.0 for n=5 —
-    below the 2.5 threshold, so it was silently missed. Leave-one-out removes the
-    cap: scored against the other four (9–12), the 500 is wildly anomalous.
+    Population σ caps a lone outlier's z at √(n-1) = 2.0 < 2.5; leave-one-out doesn't.
     """
     amounts = ["10", "11", "9", "12", "500"]
     fp = compute_fingerprint([_record(amount=a, day=i) for i, a in enumerate(amounts)])
@@ -177,11 +173,7 @@ def test_score_anomaly_cross_currency_has_no_zscore() -> None:
 
 
 def test_score_anomaly_known_non_top_vendor_not_flagged() -> None:
-    """A vendor seen before but outside the top-3 is *not* 'unknown'.
-
-    Judged against the full vendor history, not just the top few — the old
-    top-3-only check flagged every fourth+ vendor as anomalous.
-    """
+    """A vendor seen before but outside the top-3 is *not* 'unknown'."""
     records = [_record(amount="10", vendor=v) for v in ("aws", "aws", "aws")]
     records += [_record(amount="10", vendor=v) for v in ("openai", "stripe", "gcp")]
     fp = compute_fingerprint(records)
@@ -250,11 +242,7 @@ def test_project_spend_on_track() -> None:
 
 
 def test_project_spend_dampens_early_month() -> None:
-    """A day-1 spend is not extrapolated to ~30x itself.
-
-    Naive run-rate (mtd / day_of_month) would project 300 * 30 = 9000 on day 1;
-    the elapsed-days floor (7) dampens it to 9000 / 7 ≈ 1285.71.
-    """
+    """A day-1 spend is dampened by the 7-day elapsed floor, not extrapolated 30x."""
     proj = project_spend(
         month_to_date=Decimal("300"),
         now=datetime(2026, 6, 1, tzinfo=UTC),

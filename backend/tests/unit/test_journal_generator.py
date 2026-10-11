@@ -1,10 +1,4 @@
-"""Unit tests for the pure journal generator (no DB).
-
-Models are instantiated in memory (never added to a session), so these assert
-the accounting logic in isolation. The key invariant under test: every
-generated journal balances (Σ debit == Σ credit). The tax ``rate`` is injected
-into `compute_tax`; these tests state it explicitly.
-"""
+"""Pure journal generator tests: every journal balances (Σ debit == Σ credit)."""
 
 from __future__ import annotations
 
@@ -108,9 +102,7 @@ def _assert_balances(lines: list) -> None:
 def test_reverse_charge_journal() -> None:
     """RCM (unsplit GST head): expense=paid, wallet=paid, ITC debit == payable credit.
 
-    Driven by a domestic-unregistered supply (CGST s.9(4), no state info → unsplit
-    ``GST`` head) so it books to the legacy ITC/payable accounts. The per-head IGST/
-    CGST/SGST split journal is covered by tests/integration/test_place_of_supply.py.
+    No state info -> unsplit ``GST`` head, booked to the legacy ITC/payable accounts.
     """
     entity = Entity(code="in", currency="INR")
     txn = _txn(paid_amount=Decimal("100"), paid_currency="USD", model_used="gpt-5")

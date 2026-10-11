@@ -1,13 +1,6 @@
 """persist the capture contract's invoice_url
 
-`CaptureRequest.invoice_url` has been accepted and length-validated since P1
-and then silently dropped — `transactions` had no column for it, so a caller
-who attached evidence could never read it back. The wire contract implied
-persistence; now the ledger honours it.
-
-Nullable with no backfill: historical rows genuinely carried no evidence link
-(the value was discarded at capture time and is unrecoverable), so NULL is the
-truthful representation, not a placeholder.
+Nullable, no backfill: historical values were discarded and are unrecoverable.
 
 Revision ID: b4c5d6e7f8a9
 Revises: a3b4c5d6e7f8

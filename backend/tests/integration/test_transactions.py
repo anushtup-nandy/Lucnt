@@ -1,4 +1,4 @@
-"""Integration tests for the Phase 1 (A) authorize -> capture spine."""
+"""The authorize -> capture spine."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from lucnt_api.security import generate_api_key, hash_api_key
 
 @pytest.fixture
 def client(db_session: Session) -> Iterator[TestClient]:
-    """A TestClient wired to the test's own rolled-back `db_session`."""
     app.dependency_overrides[get_db] = lambda: db_session
     with TestClient(app) as test_client:
         yield test_client
@@ -266,7 +265,6 @@ def test_capture_settles_actual_amount_over_authorized_estimate(
     company, key = _make_company_with_key(db_session)
     agent = _make_agent(db_session, company, _make_entity(db_session, company))
 
-    # Authorize an estimate (as meter() would, before the LLM call).
     verdict = client.post(
         "/transactions/authorize",
         json={
@@ -281,7 +279,6 @@ def test_capture_settles_actual_amount_over_authorized_estimate(
         headers=_auth_headers(key),
     ).json()
 
-    # Capture the actual, cheaper cost with real model/tokens.
     body = client.post(
         "/transactions/capture",
         json={
@@ -293,11 +290,9 @@ def test_capture_settles_actual_amount_over_authorized_estimate(
         },
         headers=_auth_headers(key),
     ).json()
-    # settled at the actual, not the 5.00 estimate
     assert Decimal(body["amount"]) == Decimal("1.2340")
 
     db_session.refresh(agent)
-    # agent spend reflects the actual, not the estimate
     assert agent.spent_ytd == Decimal("1.2340")
 
     detail = client.get(
@@ -314,10 +309,8 @@ def test_capture_books_reverse_charge_journal_and_tax(
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="sg", currency="SGD")
     _make_agent(db_session, company, entity)
-    # A foreign vendor not registered in SG -> imported reverse charge.
     _make_vendor(db_session, company, "openai", country="US")
-    # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
-    # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
+    # USD->SGD = 2.0, effective after the 2026-01-01 baseline rate.
     db_session.add(
         FxRate(
             currency="SGD",
@@ -362,7 +355,6 @@ def test_capture_books_reverse_charge_journal_and_tax(
     total_credit = sum(Decimal(line["credit"]) for line in journal)
     assert total_debit == total_credit == Decimal("218.00")
 
-    # Persisted, not just returned.
     tx_id = uuid.UUID(body["id"])
     persisted_lines = (
         db_session.execute(
@@ -372,7 +364,6 @@ def test_capture_books_reverse_charge_journal_and_tax(
         .all()
     )
     assert len(persisted_lines) == 4
-    # Every line is stamped with the functional (entity) currency.
     assert all(line.currency == "SGD" for line in persisted_lines)
     tax_rows = (
         db_session.execute(select(TaxRecord).where(TaxRecord.transaction_id == tx_id))
@@ -389,7 +380,6 @@ def test_capture_books_domestic_gst(client: TestClient, db_session: Session) -> 
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="in", currency="INR")
     _make_agent(db_session, company, entity)
-    # A domestic vendor registered in IN -> forward-charge GST.
     _make_vendor(
         db_session, company, "local_saas", country="IN", gst_registered_in=["IN"]
     )
@@ -428,17 +418,11 @@ def test_capture_books_domestic_gst(client: TestClient, db_session: Session) -> 
 def test_cross_currency_spend_valued_in_functional_currency_for_budget(
     client: TestClient, db_session: Session
 ) -> None:
-    """A USD spend by an INR entity is valued in INR against the budget.
-
-    Under the pre-Tier-1 bug the raw USD figure was compared to an INR budget, so
-    a USD 50 spend looked trivially small against a 4000 budget and was approved.
-    Converted to INR (5000 at the seeded 100x rate) it correctly exceeds the
-    budget and is blocked — enforcement before money moves, in the right currency.
-    """
+    """A USD spend by an INR entity is valued in INR against the budget."""
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="in", currency="INR")
     _make_agent(db_session, company, entity, monthly_budget=Decimal("4000"))
-    # Seed USD->INR = 100 (one INR worth 0.01 USD); effective before any spend.
+    # USD->INR = 100.
     db_session.add(
         FxRate(
             currency="INR",
@@ -467,8 +451,7 @@ def test_cross_currency_spend_valued_in_functional_currency_for_budget(
 
 
 def test_authorize_requires_currency(client: TestClient, db_session: Session) -> None:
-    """Currency is mandatory — an omitted currency is a 422, never a silent
-    default that could mislabel a foreign spend as domestic."""
+    """An omitted currency is a 422, never a silent domestic default."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
     response = client.post(
@@ -530,8 +513,7 @@ def test_authorize_normalises_currency_case(
 def test_capture_double_capture_is_idempotent(
     client: TestClient, db_session: Session
 ) -> None:
-    """A retried capture returns the original transaction, not a 409 or a second
-    booking — the "already captured, fetch & return" guarantee."""
+    """A retried capture returns the original transaction, not a 409 or a rebook."""
     company, key = _make_company_with_key(db_session)
     agent = _make_agent(db_session, company, _make_entity(db_session, company))
 
@@ -558,7 +540,6 @@ def test_capture_double_capture_is_idempotent(
         "/transactions/capture", json=capture_body, headers=_auth_headers(key)
     )
     assert second.status_code == 200
-    # Same transaction returned; spend booked exactly once.
     assert second.json()["id"] == first.json()["id"]
     db_session.refresh(agent)
     assert agent.spent_ytd == Decimal("10.0000")
@@ -727,7 +708,6 @@ def test_reverse_books_contra_and_frees_budget(
     rev = client.post(f"/transactions/{tx['id']}/reverse", headers=_auth_headers(key))
     assert rev.status_code == 200
     body = rev.json()
-    # Contra journal: the wallet is debited (money back), and it balances.
     wallet = next(ln for ln in body["journal"] if ln["account_code"] == "1010")
     assert Decimal(wallet["debit"]) == Decimal("100")
     total_debit = sum(Decimal(ln["debit"]) for ln in body["journal"])
@@ -740,7 +720,6 @@ def test_reverse_books_contra_and_frees_budget(
     listing = client.get("/transactions", headers=_auth_headers(key)).json()
     assert listing["total"] == 2  # original + reversal
 
-    # Reversing again is a 409 (idempotent guard).
     again = client.post(f"/transactions/{tx['id']}/reverse", headers=_auth_headers(key))
     assert again.status_code == 409
 
@@ -817,12 +796,7 @@ def _authorize_ok(client: TestClient, key: str, amount: str = "100") -> str:
 def test_capture_estimated_flag_round_trips(
     client: TestClient, db_session: Session
 ) -> None:
-    """A capture booked from an estimate is queryable, not just logged.
-
-    The degradation path captures the hold as authorized when actual usage
-    cannot be read; before this flag the ledger presented that estimate as
-    settled truth with only an ERROR log to say otherwise.
-    """
+    """A capture booked from an estimate is persisted as `estimated`."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
     authorization_id = _authorize_ok(client, key)
@@ -880,8 +854,7 @@ def test_capture_defaults_to_settled_not_estimated(
 def test_capture_persists_and_returns_invoice_url(
     client: TestClient, db_session: Session
 ) -> None:
-    """`invoice_url` was accepted, validated, and silently dropped —
-    a caller who passed evidence could never read it back."""
+    """`invoice_url` is persisted and returned on capture, detail, and replay."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
     authorization_id = _authorize_ok(client, key)
@@ -902,7 +875,6 @@ def test_capture_persists_and_returns_invoice_url(
     detail = client.get(f"/transactions/{tx_id}", headers=_auth_headers(key)).json()
     assert detail["invoice_url"] == url
 
-    # The replay path returns the original row — evidence included.
     replay = client.post(
         "/transactions/capture",
         json={"authorization_id": authorization_id, "source": "sdk"},

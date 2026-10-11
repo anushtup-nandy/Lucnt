@@ -22,12 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Stamp the functional (entity) currency on journal + tax rows.
-
-    Added nullable, backfilled from each row's transaction's entity currency,
-    then set NOT NULL — the safe pattern for a NOT NULL column on a populated
-    table. New rows are stamped by the capture path in the same change.
-    """
+    """Stamp the entity currency on journal + tax rows (add, backfill, NOT NULL)."""
     op.add_column(
         "journal_entries", sa.Column("currency", sa.String(length=3), nullable=True)
     )
