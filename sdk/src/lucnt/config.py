@@ -11,7 +11,9 @@ from pydantic import SecretStr, ValidationError
 from lucnt.exceptions import ConfigurationError
 from lucnt.models import LucntConfig
 
-_DEFAULT_BASE_URL = "https://api.lucnt.dev"
+# A self-hosted backend started per the repo README. Production deployments set
+# `LUCNT_BASE_URL` (or pass `base_url=`) to their own https:// endpoint.
+_DEFAULT_BASE_URL = "http://localhost:8000"
 _DEFAULT_TIMEOUT = 30.0
 # Safety control, not a knob: http:// is permitted only against these
 # hosts. Exposing this to configuration would be a switch that disables TLS.
@@ -124,8 +126,9 @@ def configure(
 
     Args:
         api_key: Live or sandbox API key. Env: `LUCNT_API_KEY`.
-        base_url: Backend base URL. Env: `LUCNT_BASE_URL`. Must be `https://`
-            unless it points at localhost.
+        base_url: Backend base URL. Env: `LUCNT_BASE_URL`. Default:
+            `http://localhost:8000`. Must be `https://` unless it points at
+            localhost.
         timeout: Overall per-request budget in seconds, and the default for
             any phase without its own value. Env: `LUCNT_TIMEOUT`.
         connect_timeout: Connect-phase timeout. A dead host should fail fast

@@ -73,3 +73,9 @@ def test_configure_rejects_plaintext_base_url() -> None:
 def test_configure_allows_http_localhost() -> None:
     cfg = config.configure(api_key="sk_test", base_url="http://localhost:8000")
     assert cfg.base_url == "http://localhost:8000"
+
+
+def test_base_url_defaults_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LUCNT_BASE_URL", raising=False)
+    cfg = config.configure(api_key="sk_test")
+    assert cfg.base_url == "http://localhost:8000"

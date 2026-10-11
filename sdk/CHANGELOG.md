@@ -35,6 +35,8 @@ First public release.
   `TransportError`, `ContractError` and others.
 - **`Money` as `Decimal` throughout.** No float ever touches an amount.
 - **`py.typed`** — the package ships its own type information.
+- `base_url` defaults to `http://localhost:8000` (a self-hosted backend);
+  override with `LUCNT_BASE_URL` or `configure(base_url=...)`.
 - Python 3.10 through 3.13; tested against 3.10 and 3.12 in CI.
 
 [Unreleased]: https://github.com/anushtup-nandy/lucnt/compare/main...HEAD

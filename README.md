@@ -24,7 +24,7 @@ pip install lucnt
 ```python
 import lucnt
 
-lucnt.configure()   # reads LUCNT_API_KEY / LUCNT_BASE_URL
+lucnt.configure()   # reads LUCNT_API_KEY; LUCNT_BASE_URL defaults to http://localhost:8000
 
 with lucnt.task(agent="travel-bot", entity="acme-in", intent="founder summit"):
     verdict = lucnt.authorize(

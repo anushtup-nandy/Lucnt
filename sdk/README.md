@@ -19,6 +19,27 @@ detection — is derived server-side from what `capture()` commits.
 pip install lucnt
 ```
 
+## Pointing the SDK at your backend
+
+LUCNT is self-hosted: the SDK talks to a `lucnt` backend you run (see
+[Running locally](https://github.com/anushtup-nandy/lucnt#running-locally)).
+The base URL defaults to `http://localhost:8000`, which is where that backend
+listens in development. For any other deployment, set it explicitly:
+
+```bash
+export LUCNT_API_KEY=lucnt_sk_...
+export LUCNT_BASE_URL=https://lucnt.your-company.internal
+```
+
+or in code:
+
+```python
+lucnt.configure(api_key="lucnt_sk_...", base_url="https://lucnt.your-company.internal")
+```
+
+Plain `http://` is accepted only for `localhost`, `127.0.0.1` and `::1`; any
+other host must be `https://`.
+
 ## Quickstart
 
 ```python
