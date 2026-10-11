@@ -46,7 +46,6 @@ pnpm-debug.log*
 dist/
 dist-ssr/
 *.local
-CLAUDE.local.md
 
 # Frontend specific
 frontend/.env
@@ -73,47 +72,24 @@ secrets/
 .tmp/
 temp/
 
-# T4-3: `AGENTS.md`, `CLAUDE.md`, `.github/` and a mis-anchored `alembic/versions/*`
-# used to sit here, and all four were removed.
-#
-# NOTE, because PRODUCTION_PLAN's T4-3 got this wrong: it claimed `CLAUDE.md` and
-# `AGENTS.md` were "already tracked, so the rules were dead". They were **not**
-# tracked — `git log` shows neither was ever committed — so removing those two
-# lines newly commits both files. That is intended (the files that govern how
-# agents work in this repo belong to the repo, not to one laptop), but it is a
-# real change in what gets published, not the no-op the plan described.
-#
-# The other two were unambiguous foot-guns: `.github/` meant a new CI workflow
-# silently vanished unless force-added, and `alembic/versions/*` was root-anchored
-# so it never matched `backend/alembic/versions/` — a landmine one directory move
-# away from making migrations uncommittable.
-
-# Local agent state. `settings.json` hardcodes absolute paths under one user's
-# home directory, so committing it would break for anyone else; `settings.local.json`
-# is local-only by convention.
+# Local agent / tooling state
 .claude/
+.opencode/
+CLAUDE.local.md
+.graphifyignore
 
-# Generated knowledge graph (`graphify update .`). Was tracked — 223 files, 18 MB,
-# rewritten wholesale on every run — and untracked deliberately:
-#
-#   * it is derived output. Every fact in it comes from a file already in the repo,
-#     so it is regenerable and adds no information a clone doesn't already have;
-#   * `cache/last_query_stamp` is rewritten by every `graphify query`, so the
-#     working tree was permanently dirty just from reading the graph;
-#   * it kept re-breaking the gitleaks job. Node labels are graphify's condensed
-#     summaries of source files, and compressing scattered markdown into one
-#     quoted JSON value can manufacture a credential-shaped string that exists in
-#     no tracked file — see `.gitleaks.toml` and `docs/SECURITY.md` Lesson 2 for
-#     the worked example. That treadmill has no end: you cannot audit your docs
-#     to predict what the summariser will emit.
-#
-# Bootstrap a fresh clone with `graphify update .` — see the graphify section of
-# `CLAUDE.md`. NOTE: history still contains the old blobs, so `.gitleaks.toml`
-# must keep allowlisting this path (`gitleaks detect` scans commits, not the tree).
+# Generated knowledge graph (`graphify update .`) — derived, regenerable output.
 graphify-out/
 .venv-realclient/
 
-# `uv run` regenerates this; the COMMITTED lockfile for this repo is
-# `backend/requirements.lock` (hashed, what the image and CI install from).
-# Tracking both would give two sources of truth that drift.
+# `uv run` regenerates this; the committed lockfile is `backend/requirements.lock`
+# (hashed, what the image and CI install from).
 backend/uv.lock
+
+# Internal planning material — not part of the public repo.
+/docs/
+PLAN.md
+/FLOW.md
+/CHANGELOG.md
+/AGENTS.md
+/CLAUDE.md
