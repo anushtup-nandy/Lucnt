@@ -15,9 +15,13 @@ capture()    →  it happened, book it
 Everything else — double-entry journals, GST/VAT/sales-tax treatment, budgets, anomaly
 detection — is derived server-side from what `capture()` commits.
 
+Not yet on PyPI. Install from GitHub:
+
 ```bash
-pip install lucnt
+pip install "git+https://github.com/anushtup-nandy/lucnt.git#subdirectory=sdk"
 ```
+
+Or from a clone: `pip install -e ./sdk`.
 
 ## Pointing the SDK at your backend
 
