@@ -1,10 +1,4 @@
-"""Fixtures for the real-vendor-client acceptance tests.
-
-Requires the real `openai`, `anthropic`, and `langchain-openai` packages —
-run via `sdk/scripts/run_realclient_tests.sh`, which builds the wheel and
-installs everything into a throwaway venv. Not part of the default suite
-(`testpaths = ["tests"]`).
-"""
+"""Real-vendor-client fixtures; run via `scripts/run_realclient_tests.sh`."""
 
 from __future__ import annotations
 

@@ -1,8 +1,4 @@
-"""Unit tests for lucnt.ledger: authorize() / capture() / spend().
-
-All backend interaction is mocked via httpx.MockTransport — none of this
-needs a live server.
-"""
+"""Unit tests for lucnt.ledger: authorize() / capture() / spend()."""
 
 from __future__ import annotations
 
@@ -232,7 +228,7 @@ def test_capture_marks_an_estimate_booked_amount(
 
 
 def test_capture_parses_journal_and_tax(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Phase 2 capture response deserializes journal lines + tax treatment."""
+    """The capture response deserializes journal lines + tax treatment."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -449,12 +445,7 @@ def test_non_strict_blocked_verdict_still_returns(
 def test_check_budget_filters_server_side(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The slug must be pushed to the server, not scanned for client-side.
-
-    `GET /budgets` is paginated, so a client-side scan of the
-    returned array would report "no budget found" for any agent past the first
-    page — an agent that exists reading as absent.
-    """
+    """The slug is filtered server-side; a client scan misses paginated agents."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/budgets"
@@ -499,9 +490,7 @@ def test_check_budget_filters_server_side(
 def test_check_budget_requires_the_reserved_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A money read must not silently degrade. A backend too old to
-    report holds raises `ContractError` naming the mismatch, rather than
-    handing the agent a headroom figure the gate would refuse."""
+    """A backend that cannot report holds raises ContractError, not wrong headroom."""
 
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -559,11 +548,7 @@ def test_get_transport_rebuilds_after_reconfigure() -> None:
 
 
 def test_identical_reconfigure_does_not_rebuild_the_pool() -> None:
-    """Configs compare by value: re-configure() with the same settings is a no-op.
-
-    Under the old identity check this rebuilt the pool, because configure()
-    returns a fresh object every call.
-    """
+    """Configs compare by value: re-configure() with the same settings is a no-op."""
     first = ledger._get_transport()
     config.configure(api_key="sk_test", base_url="https://api.test")
     assert ledger._get_transport() is first
@@ -811,8 +796,7 @@ def test_operation_scope_supplies_the_idempotency_key(
 def test_retrying_the_operation_block_reuses_the_same_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole point of `operation()`: the caller's own retry replays the original
-    hold instead of minting a second one."""
+    """The caller's own retry replays the original hold instead of minting another."""
     seen: dict[str, list[str | None]] = {}
     _keys_seen(monkeypatch, seen)
     for _ in range(3):

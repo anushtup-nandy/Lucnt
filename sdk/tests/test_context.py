@@ -74,8 +74,7 @@ def test_operation_strips_surrounding_whitespace() -> None:
 
 @pytest.mark.parametrize("op_id", ["", "   ", "\t\n"])
 def test_operation_rejects_a_blank_op_id(op_id: str) -> None:
-    """Blank is the dangerous case: falsy server-side, so it either skips
-    dedupe silently or collides every blank-keyed request in the company."""
+    """Blank keys are refused: server-side they skip dedupe or collide company-wide."""
     with pytest.raises(ConfigurationError, match="must not be blank"), operation(op_id):
         pass
 
@@ -101,8 +100,7 @@ def test_nested_operations_restore_the_outer_scope_on_exit() -> None:
 
 
 def test_reentering_the_same_op_id_starts_a_fresh_guardrail() -> None:
-    """The retry-the-whole-block pattern must work: each scope entry is a new
-    guardrail, and the server's replay is what makes the repeat safe."""
+    """Each scope entry is a new guardrail; the server replay makes repeats safe."""
     scopes = []
     for _ in range(2):
         with operation("order-3"):
@@ -156,8 +154,7 @@ def test_bind_context_carries_the_operation_scope_to_a_worker() -> None:
 
 
 def test_operation_scope_is_lost_in_a_worker_without_binding() -> None:
-    """Documents the bug bind_context() exists to fix, so it cannot regress
-    into silently working by accident."""
+    """Documents the bug bind_context() fixes, so it cannot silently start passing."""
     with operation("order-8"), ThreadPoolExecutor(max_workers=1) as pool:
         assert pool.submit(get_current_operation).result() is None
 

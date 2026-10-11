@@ -1,11 +1,4 @@
-"""Unit tests for the transport-layer governor.
-
-The governor is exercised directly through `httpx.Client` objects whose inner
-transport is an `httpx.MockTransport` playing the vendor — no vendor SDK is
-needed to test the wire semantics. The lucnt backend is stubbed exactly as in
-test_meter.py. What only a *real* vendor client can prove (that its every call
-path reaches the one transport) lives in tests-realclient/, not here.
-"""
+"""Governor wire tests; real-vendor-client coverage lives in tests-realclient/."""
 
 from __future__ import annotations
 
@@ -235,9 +228,7 @@ def test_embeddings_estimate_covers_every_input_shape() -> None:
 
 
 def test_a_subcent_spend_books_the_minimum_ledger_unit() -> None:
-    """8 embedding tokens cost ~$0.0000002 — quantized to 0.0000 the backend
-    would refuse it (`amount > 0`). A positive spend floors at 0.0001 instead
-    of vanishing."""
+    """A positive spend floors at 0.0001; 0.0000 fails the backend's `amount > 0`."""
     tiny = _estimate(
         adapter := OpenAIAdapter(),
         "embeddings",
@@ -707,7 +698,7 @@ def test_a_gzipped_json_response_is_booked_and_stays_readable(
 def test_embeddings_are_governed_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Embeddings are real spend and were entirely invisible."""
+    """Embeddings are metered."""
     recorder = _Ledger()
     _stub_ledger(monkeypatch, recorder)
 
@@ -738,7 +729,7 @@ def test_embeddings_are_governed_end_to_end(
 def test_the_responses_api_is_governed_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Responses API is where OpenAI is steering new work."""
+    """The Responses API is metered."""
     recorder = _Ledger()
     _stub_ledger(monkeypatch, recorder)
 

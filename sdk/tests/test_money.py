@@ -1,10 +1,4 @@
-"""Money must be exact at the SDK's input boundary.
-
-`float` was accepted through 0.x and is rejected from 1.0.0. These tests pin
-both halves of that: the rejection, and the fact that every *exact* form still
-works — a narrowing that also broke `Decimal` or `str` would be a regression
-dressed as a fix.
-"""
+"""Money is exact at the SDK boundary: floats rejected, exact forms still work."""
 
 from __future__ import annotations
 
@@ -77,11 +71,7 @@ def test_float_is_rejected_with_the_fix_in_the_message() -> None:
 
 
 def test_a_float_that_looks_exact_is_still_rejected() -> None:
-    """`10.0` is refused too — the type is the problem, not the value.
-
-    Accepting "harmless" floats is how a codebase ends up with a float money
-    path that works until someone computes `0.1 + 0.2` into it.
-    """
+    """`10.0` is refused too — the type is the problem, not the value."""
     with pytest.raises(ConfigurationError):
         ledger._as_decimal(10.0)  # type: ignore[arg-type]
 
@@ -101,7 +91,7 @@ def test_other_types_are_rejected(raw: object) -> None:
 def test_an_unparseable_string_raises_configuration_error_not_invalid_operation() -> (
     None
 ):
-    """A bad string used to escape as `decimal.InvalidOperation` — off-hierarchy."""
+    """A bad string raises inside the hierarchy, not `decimal.InvalidOperation`."""
     with pytest.raises(ConfigurationError, match="not a number"):
         ledger._as_decimal("twelve dollars")
 

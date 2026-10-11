@@ -1,15 +1,6 @@
-"""One local HTTP server playing BOTH the lucnt backend and the vendor APIs.
+"""One local HTTP server playing both the lucnt backend and the vendor APIs.
 
-The point of this harness: the 380-test unit suite exercises fakes that
-only expose the paths the adapters name, so it is structurally incapable of
-noticing a vendor call path that bypasses metering. Here the *real* `openai`,
-`anthropic`, and `langchain-openai` libraries make real HTTP calls against this
-server, and the tests assert on the ledger traffic (`/transactions/*`) those
-calls produced. No real API key and no real money — the wire shapes are real,
-the endpoints are not.
-
-Run via pytest (see run_realclient_tests.sh); import `vendor_server()` for a
-started instance.
+Real vendor clients hit it; tests assert on the `/transactions/*` traffic.
 """
 
 from __future__ import annotations

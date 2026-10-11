@@ -1,11 +1,4 @@
-"""The pre-call estimate must charge media as media, not as text.
-
-The estimate exists only to gate `authorize()`. That makes its failure mode
-asymmetric and easy to under-rate: an inflated estimate does not over-bill
-anyone, because `capture()` settles the truth — it **blocks a legitimate spend
-before it happens**, and the caller sees a policy block with nothing pointing at
-the estimate as the cause. So the interesting assertions here are upper bounds.
-"""
+"""Estimates must charge media as media; inflation blocks legitimate spends."""
 
 from __future__ import annotations
 
@@ -39,13 +32,7 @@ def _tokens(adapter: MeterAdapter, **kwargs: Any) -> int:
 def test_an_inlined_image_is_not_counted_as_text(
     anthropic_adapter: AnthropicAdapter,
 ) -> None:
-    """The headline fix.
-
-    Before this, `len(str(messages)) // 4` turned a 750 KB base64 payload into
-    ~187,000 estimated input tokens. At Opus rates that is a ~$0.94 hold for a
-    call whose real prompt is a few thousand tokens — enough to trip an
-    amount-threshold rule or exhaust a budget the policy engine believed had room.
-    """
+    """A 750 KB base64 image must not estimate as ~187k input tokens."""
     tokens = _tokens(
         anthropic_adapter,
         model="claude-opus-5",
@@ -136,12 +123,7 @@ def test_a_document_is_charged_per_assumed_page(
 def test_an_unrecognised_block_is_charged_as_media_not_as_its_payload(
     anthropic_adapter: AnthropicAdapter,
 ) -> None:
-    """A vendor's new media type must degrade to bounded, not back to base64.
-
-    Charging an unknown block as media is the deliberate choice: it is bounded,
-    roughly right for what such a block usually is, and — crucially — it cannot
-    reintroduce the six-figure estimate that counting the payload would.
-    """
+    """An unknown media block is charged as bounded media, never by payload size."""
     pack = load_pricing_pack()
     tokens = _tokens(
         anthropic_adapter,
@@ -176,7 +158,7 @@ def test_an_unknown_block_carrying_plain_text_counts_that_text(
 def test_plain_text_estimates_are_unchanged(
     anthropic_adapter: AnthropicAdapter,
 ) -> None:
-    """Regression guard: the text path must still be chars // chars_per_token."""
+    """The text path stays chars // chars_per_token."""
     pack = load_pricing_pack()
     body = "z" * 8_000
     tokens = _tokens(
@@ -217,7 +199,7 @@ def test_an_anthropic_block_list_system_prompt_is_counted(
 
 
 def test_tool_schemas_are_counted(anthropic_adapter: AnthropicAdapter) -> None:
-    """Tool definitions are real input tokens and were previously ignored."""
+    """Tool definitions count as input tokens."""
     tools = [
         {
             "name": f"tool_{n}",

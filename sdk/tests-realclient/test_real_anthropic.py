@@ -1,10 +1,4 @@
-"""Acceptance against the REAL `anthropic` client.
-
-Closes a gap too: the streaming wrappers were only ever asserted against
-hand-written fake context managers, because `anthropic` is deliberately not a
-dependency of this package. Here the real `MessageStream` machinery parses the
-harness's SSE bytes and `get_final_message()` is the real helper.
-"""
+"""Acceptance against the real `anthropic` client, incl. its `MessageStream`."""
 
 from __future__ import annotations
 

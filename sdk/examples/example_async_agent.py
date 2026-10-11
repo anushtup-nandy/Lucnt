@@ -1,24 +1,9 @@
-"""E2E driver for the lucnt SDK's async surface and hold release.
+"""E2E driver for the async surface and `void()` against real sockets.
 
-`example_agent.py` covers the synchronous primitive. This covers what it cannot:
-the `_async` twins against **real sockets** rather than `httpx.MockTransport`, and
-`void()` — the hold-release path, which the unit suite exercises only against a
-mock and which is the one operation whose whole purpose is to undo a reservation
-the ledger has already made.
-
-Why a live run matters here specifically: a mock transport answers whatever the
-test says it answers. It cannot catch a header the server rejects, a body field
-the server ignores, a concurrency limit the pool trips, or an `AsyncClient`
-misconfigured such that it never actually multiplexes. Those are exactly the
-failures an async client is prone to.
-
-Requires a live backend at LUCNT_BASE_URL seeded via `scripts/seed_dev.py`.
-Not collected by pytest (testpaths = ["tests"]); run manually:
+Requires a live backend at LUCNT_BASE_URL seeded via `scripts/seed_dev.py`:
 
     LUCNT_API_KEY=... LUCNT_BASE_URL=http://127.0.0.1:8000 \
         python -m examples.example_async_agent
-
-Every beat asserts. A silent pass is not a pass.
 """
 
 from __future__ import annotations
@@ -59,28 +44,11 @@ async def beat_authorize_capture() -> None:
 
 
 async def beat_void_releases_the_hold() -> None:
-    """Void against the real backend: an unspent hold must stop reserving budget.
+    """Void releases a hold so it stops reserving budget.
 
-    The bug being closed is silent and permanent: `reserved_spend` counts
-    approved-but-uncaptured holds, so a vendor error after `authorize()` shrinks
-    what the agent may spend for good.
-
-    **Observed through the policy gate, not through `check_budget()`.** Those are
-    deliberately different numbers: `check_budget().remaining` is
-    `monthly_budget − captured spend`, a live SQL sum over the ledger, while the
-    authorize gate *additionally* subtracts reserved holds. So the only way to
-    see a hold reserve budget is to ask the gate — take a hold, watch a second
-    spend that would fit without it get refused, release the hold, and watch the
-    same spend succeed.
-
-    (That the two numbers differ is worth knowing as a caller: an agent
-    self-regulating on `check_budget()` sees headroom the gate may not grant.
-    Pre-existing behaviour, not introduced here.)
+    Observed via the authorize gate: `check_budget().remaining` excludes holds.
     """
-    # The SG ops agent has the smallest seeded budget, so two spends can bracket
-    # its headroom while each stays under the review threshold. Sizes are derived
-    # from the live figure rather than hardcoded, so a reseed cannot silently
-    # turn this beat into a tautology.
+    # ops/sg has the smallest seeded budget; sizes derive from live headroom.
     ops_agent, ops_entity = "ops", "sg"
     before = await lucnt.check_budget_async(agent=ops_agent)
     each = (before.remaining * Decimal("0.6")).quantize(Decimal("1"))
@@ -135,8 +103,7 @@ async def beat_void_releases_the_hold() -> None:
     print("[async] void released it: the same spend is approved again")
     await lucnt.void_async(reapproved, reason="async smoke cleanup")
 
-    # Idempotent: a second void is a no-op, because it is called from failure
-    # paths where a second failure is the last thing the caller needs.
+    # Idempotent: a second void is a no-op.
     repeat = await lucnt.void_async(hold, reason="async smoke: repeat")
     assert repeat.already_released, (
         "a repeated void was not reported as already released"
@@ -164,11 +131,7 @@ async def beat_capturing_a_voided_hold_is_refused() -> None:
 
 
 async def beat_concurrent_spends() -> None:
-    """Real concurrency over one pool — the reason the async path exists.
-
-    Also the beat a mock cannot fake: these share an `httpx.AsyncClient`, so if
-    the pool serialized requests the elapsed time would scale with the count.
-    """
+    """Concurrent spends over one shared `httpx.AsyncClient` pool."""
     started = time.monotonic()
     results = await asyncio.gather(
         *(
@@ -193,9 +156,7 @@ async def beat_concurrent_spends() -> None:
 async def beat_operation_replays_instead_of_double_booking() -> None:
     """`operation()` against the real dedupe: one op id, two attempts, one hold.
 
-    This is the beat that most needs a live server. The guardrail is client-side,
-    but the *replay* is the backend looking up a repeated `Idempotency-Key` — a
-    mock cannot tell us whether the header we send is the one it dedupes on.
+    Only a live server proves the `Idempotency-Key` we send is the one it dedupes on.
     """
     op_id = f"async-smoke-{int(time.time())}"
     first_id: str | None = None

@@ -1,54 +1,10 @@
-"""E2E driver for LUCNT SDK: a real agent doing governed spends.
+"""E2E driver: a real agent doing governed spends through the lucnt SDK.
 
-Exercises the universal authorize -> capture primitive against both spend
-shapes it must support identically — a real-world purchase (a flight) and
-a generic vendor spend (LLM tokens) — and asserts the block path is
-observable, not silent.
+Walks authorize -> capture, policy blocks, budgets, meter(), recovery,
+query(), the review verdict, and input bounds. Every step asserts.
 
-Phase 2 (Books) additions: every captured transaction now carries a balanced
-double-entry `journal` and a jurisdiction `tax` treatment. A domestic spend
-(SGD by the SG entity) is standard GST; an imported spend (USD by the IN
-entity) is reverse charge with a self-invoice.
-
-Phase 3 (Policy engine + budgets) additions: a policy block is enforced at
-authorize (the seeded "No crypto exchanges" merchant rule), surfaced as a typed
-`PolicyBlocked` under `strict=True`; `check_budget()` reads an agent's live
-utilisation (self-regulation).
-
-Phase 3.5 (meter) addition: `meter()` wraps a customer's LLM client so each
-completion call is authorized before and captured after — with the real
-cost/model/tokens read from usage. A stub client stands in here so the demo
-needs no API key.
-
-Phase 4 (recovery / reconciliation) addition: the agent double-charges a vendor
-(an accidental retry) — a later `POST /recon/scan` on the control side flags the
-second as a duplicate — and reports a paid-but-undelivered task via the SDK
-`mark_failed_delivery()` hook, which opens a `failed_delivery` recovery exception.
-
-Phase 5 (intelligence) addition: the agent reads its own living financial memory
-via `query()` — budget headroom, a month-end run-rate projection, cost-per-output,
-and its spend fingerprint — computed live from the ledger so it can self-regulate
-*before* it spends (M8). The `POST /intelligence/recompute` + Insights/Memory
-dashboard tables are the control-plane side, curled live like the recon scan.
-
-Correctness additions: the **third verdict** — a spend that is neither approved nor
-blocked but `review`, held for a human; budget measured in the entity's functional
-currency rather than the paid one; spend derived from the current month of the ledger
-with entity-local boundaries, not a stored counter; and an anomaly score computed
-against the agent's *own* baseline.
-
-Hardening additions: oversized free text is rejected at the edge as a 422 naming the
-field instead of dying as a 500 `DataError`, including on the recovery hook;
-`check_budget()` resolves one agent server-side so its cost no longer scales with tenant
-size; and the freshness contract — a capture moves `budget` immediately, because it is a
-live SQL sum, while fingerprint statistics are only as fresh as the last recompute.
-
-Requires a live backend at LUCNT_BASE_URL seeded via `scripts/seed_dev.py`. Not
-collected by pytest (testpaths = ["tests"]); run manually:
+Requires a live backend at LUCNT_BASE_URL seeded via `scripts/seed_dev.py`:
     python -m examples.example_agent
-
-Every step asserts. A silent pass is not a pass — if a beat stops holding, this
-script fails loudly rather than printing a story that is no longer true.
 """
 
 from __future__ import annotations
@@ -62,12 +18,7 @@ import lucnt
 
 
 class _StubUsage:
-    """Token usage, shaped like an Anthropic `response.usage`.
-
-    Sized so the *actual* cost lands under the pre-call estimate (max_tokens=4096
-    of opus output) — a realistic metered call whose settlement is within the
-    buffer.
-    """
+    """Token usage shaped like Anthropic `response.usage`; settles under the hold."""
 
     input_tokens = 2_000
     output_tokens = 3_000
@@ -83,12 +34,9 @@ class _StubMessages:
 
 
 class _StubAnthropicClient:
-    """A tiny stand-in for `anthropic.Anthropic()` so the demo needs no API key.
+    """Stand-in for `anthropic.Anthropic()` so the demo needs no API key.
 
-    Carries a real `httpx.Client` at `._client` because every real vendor
-    client has one and `meter()` now installs its transport governor there
-    — a client it cannot govern is refused loudly. The stub's `create`
-    never does real I/O, so the transport is never actually hit.
+    `meter()` requires an httpx client at `._client`; the stub never uses it.
     """
 
     def __init__(self) -> None:
@@ -96,8 +44,7 @@ class _StubAnthropicClient:
         self._client = httpx.Client()
 
 
-# `meter()` detects the vendor by the client's module; spoof it so the stub is
-# treated as an Anthropic client. Real callers pass `OpenAI()` / `Anthropic()`.
+# `meter()` detects the vendor by module; spoof it. Real callers pass `Anthropic()`.
 _StubAnthropicClient.__module__ = "anthropic"
 
 
@@ -122,7 +69,7 @@ def book_flight(vendor: str, amount: int, currency: str) -> None:
 
 
 def main() -> None:
-    """Run the P1 acceptance flow: approve+capture a flight, block an oversized one."""
+    """Run the acceptance flow end to end."""
     lucnt.configure()
 
     with lucnt.task(
@@ -185,10 +132,8 @@ def main() -> None:
         f"{result.tax.tax_amount} (reverse charge), {len(result.journal)} journal lines"
     )
 
-    # ── Phase 3: policy engine + budgets ─────────────────────────────────
-    # The seeded "No crypto exchanges" policy blocks coinbase for every agent.
-    # strict=True turns the block into a typed PolicyBlocked instead of a
-    # falsy verdict — a blocked spend can never be silently ignored.
+    # ── Policy engine + budgets ──────────────────────────────────────────
+    # strict=True raises PolicyBlocked instead of returning a falsy verdict.
     try:
         lucnt.spend(
             agent="ops",
@@ -206,7 +151,7 @@ def main() -> None:
     else:
         raise AssertionError("expected the crypto spend to be policy-blocked")
 
-    # check_budget: an agent reading its own live budget to self-regulate (M8).
+    # check_budget: an agent reading its own live budget to self-regulate.
     status = lucnt.check_budget(agent="research")
     if status.remaining < 0:
         raise AssertionError("remaining budget should not be negative here")
@@ -215,9 +160,8 @@ def main() -> None:
         f"({status.pct_used}% used, status={status.status})"
     )
 
-    # ── Phase 3.5: meter() auto-instrumentation ──────────────────────────
-    # Wrap the (stub) LLM client once; the completion call is now authorized
-    # before and captured after, with real cost/model/tokens from usage.
+    # ── meter() auto-instrumentation ─────────────────────────────────────
+    # Wrap the client once; each call is authorized before and captured after.
     metered = lucnt.meter(_StubAnthropicClient(), agent="research", entity="in")
     metered.messages.create(
         model="claude-opus-4-8",
@@ -232,11 +176,8 @@ def main() -> None:
         f"-> {after.spent}"
     )
 
-    # ── Phase 4: recovery / reconciliation ───────────────────────────────
-    # (a) An accidental double-charge: the research agent pays the same vendor
-    #     the same amount twice within the window. A recon scan on the control
-    #     side (POST /recon/scan) flags the second as a duplicate — proven live
-    #     against the endpoints, not via the SDK (scan is a dashboard action).
+    # ── Recovery / reconciliation ────────────────────────────────────────
+    # (a) A double-charge; POST /recon/scan (dashboard side) flags the duplicate.
     for attempt in ("first", "accidental retry"):
         dup = lucnt.spend(
             agent="research",
@@ -250,10 +191,7 @@ def main() -> None:
             raise AssertionError(f"expected the dataprovider spend to book, got {dup}")
     print("[example] booked two identical dataprovider spends (a double-charge)")
 
-    # (b) A failed delivery the ledger cannot detect on its own: the agent paid
-    #     but the downstream task errored. mark_failed_delivery() is the SDK
-    #     recovery hook — it opens a failed_delivery exception with a drafted
-    #     refund request.
+    # (b) Paid but not delivered: mark_failed_delivery() opens a recovery case.
     paid = lucnt.spend(
         agent="research",
         entity="in",
@@ -277,9 +215,8 @@ def main() -> None:
         f"${recon_exc.amount_at_stake} at stake, recovery={plan.get('method')}"
     )
 
-    # ── Phase 5: intelligence — living financial memory (query) ──────────
-    # The agent asks LUCNT about its own financial state — computed live from the
-    # ledger, so it self-regulates *before* it spends (M8). No recompute needed.
+    # ── Intelligence: living financial memory (query) ────────────────────
+    # Computed live from the ledger, so the agent can self-regulate before spending.
     memory = lucnt.query(agent="research", question="am I on track this month?")
     if memory.fingerprint is None:
         raise AssertionError("research has spent; expected a fingerprint")
@@ -307,11 +244,8 @@ def main() -> None:
     print(f"[example]   (via task ctx) {cost_view.headline}")
 
     # ── Correctness: what the numbers depend on ──────────────────────────
-    # (a) There is a THIRD verdict. approve/block is the easy story; the one
-    #     that matters operationally is `review` — the spend is inside budget
-    #     and breaks no merchant rule, but crosses a threshold a human owns.
-    #     The caller must stop: nothing is captured, and the hold
-    #     lands in the approval queue for an admin to approve or reject.
+    # (a) `review`: within budget but over a human-owned threshold. Stop; nothing
+    #     is captured until an approver acts.
     held = lucnt.authorize(
         agent="research",
         entity="in",
@@ -329,11 +263,7 @@ def main() -> None:
         f"(nothing captured; awaiting an approver)"
     )
 
-    # (b) Budget is measured in the entity's FUNCTIONAL currency, never the
-    #     paid one. research paid in USD above; its budget, spend
-    #     and projection all read in INR because that is what the IN entity
-    #     books in. Mixed-currency addition is the classic way a budget
-    #     invariant goes quietly wrong.
+    # (b) Budgets are in the entity's functional currency, never the paid one.
     if memory.currency != "INR":
         raise AssertionError(f"IN entity must budget in INR, got {memory.currency}")
     print(
@@ -341,28 +271,21 @@ def main() -> None:
         f"FX-converted at capture, never summed as-paid"
     )
 
-    # (c) Spend is derived from the CURRENT MONTH of the ledger, not a stored
-    #     running counter, with month boundaries in the entity's local
-    #     timezone. That is why it resets on its own and can never drift
-    #     from the journals.
+    # (c) Spend is derived from the current ledger month (entity-local), no counter.
     print(
         f"[example] month-to-date {memory.projection.month_to_date} "
         f"{memory.currency} — derived from the ledger, resets at the entity-local "
         f"month boundary"
     )
 
-    # (d) The fingerprint scores each agent against its OWN baseline, so
-    #     "large" is relative to that agent rather than a global constant.
+    # (d) Anomaly scores are relative to the agent's own baseline.
     print(
         f"[example] anomaly score {memory.fingerprint.anomaly_score} "
         f"(max recent z-score against this agent's own history)"
     )
 
-    # ── Hardening, as the caller actually experiences it ─────────────────
-    # (a) Every free-text field is bounded server-side. Oversized input
-    #     is a 422 naming the offending field — previously it sailed through
-    #     validation and died in Postgres as a 500 DataError, which reads to the
-    #     caller as "the service is broken" rather than "your input is wrong".
+    # ── Hardening, as the caller experiences it ──────────────────────────
+    # (a) Oversized free text is a 422 naming the field.
     try:
         lucnt.authorize(
             agent="research",
@@ -382,8 +305,7 @@ def main() -> None:
     else:
         raise AssertionError("an oversized reason must be rejected, not truncated")
 
-    # (b) The recovery hook is bounded too — an agent-supplied failure
-    #     reason is attacker-adjacent free text on a write path.
+    # (b) The recovery hook is bounded too.
     try:
         lucnt.mark_failed_delivery(transaction=paid, reason="x" * 501)
     except lucnt.LucntError:
@@ -391,22 +313,15 @@ def main() -> None:
     else:
         raise AssertionError("an oversized recovery reason must be rejected")
 
-    # (c) check_budget() resolves ONE agent server-side. It used to fetch
-    #     every agent's budget and scan the list for a matching slug — which
-    #     silently broke the moment /budgets became paginated, reporting "no
-    #     budget found" for an agent that exists. Cost is now independent of how
-    #     many agents the tenant has.
+    # (c) check_budget() resolves one agent server-side.
     solo = lucnt.check_budget(agent="ops")
     print(
         f"[example] check_budget(ops) resolved server-side: "
         f"{solo.spent}/{solo.monthly_budget} ({solo.status})"
     )
 
-    # (d) The freshness contract. `budget` is always a live SQL sum over
-    #     the ledger — prove it by spending and re-reading. Once the control
-    #     plane has run /intelligence/recompute, the fingerprint STATISTICS are
-    #     served from that stored fingerprint and are only as fresh as it;
-    #     `budget` never is. Gate spending decisions on budget.
+    # (d) `budget` is a live sum; fingerprint stats are only as fresh as the last
+    #     recompute. Gate spending on budget.
     before_spend = lucnt.query(agent="research").budget.spent
     topup = lucnt.spend(
         agent="research",

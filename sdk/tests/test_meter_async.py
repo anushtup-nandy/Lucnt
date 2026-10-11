@@ -1,15 +1,4 @@
-"""`meter()` must govern async vendor clients too.
-
-Before this, `meter(AsyncOpenAI())` raised — which locked out the majority of
-agent code, since anything serving concurrent work uses the async client. These
-tests cover the four shapes an async vendor client presents: a plain awaited
-completion, an awaited completion that returns an async iterator (`stream=True`),
-a separate async streaming context manager (`AsyncAnthropic.messages.stream`),
-and the failure paths on each.
-
-Fake vendor clients spoof their `__module__` so `resolve_adapter` detects them
-without importing either SDK; the backend is mocked via `httpx.MockTransport`.
-"""
+"""`meter()` on async vendor clients: awaited, `stream=True`, async CM, failures."""
 
 from __future__ import annotations
 
@@ -280,11 +269,7 @@ def test_a_sync_openai_client_is_not_detected_as_async() -> None:
 
 
 def test_detection_prefers_the_method_over_the_class_name() -> None:
-    """A coroutine method wins even when the class is not named `Async...`.
-
-    Asking the method what it does survives a vendor renaming its class; the
-    name convention is only the fallback.
-    """
+    """A coroutine method marks a client async even without an `Async...` name."""
 
     class _Completions:
         async def create(self, **kwargs: object) -> object:
@@ -299,7 +284,7 @@ def test_detection_prefers_the_method_over_the_class_name() -> None:
 
 
 def test_meter_no_longer_rejects_an_async_client() -> None:
-    """The headline: this used to raise `LucntError`."""
+    """`meter()` accepts an async client."""
     metered = meter_fn(AsyncOpenAI(_openai_response()), agent="a", entity="e")
     assert asyncio.iscoroutinefunction(metered.chat.completions.create)
 
@@ -441,11 +426,7 @@ def test_an_async_stream_is_passed_through_and_booked_at_the_end(
 def test_an_abandoned_async_stream_is_still_booked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tokens really were consumed, so the spend belongs in the ledger.
-
-    Unlike a call that never started, breaking out of a stream early is not a
-    reason to void — it is a reason to book what was streamed.
-    """
+    """Breaking out of a stream early books what was streamed instead of voiding."""
     paths, _ = _ledger_recorder(monkeypatch)
     chunks = [
         SimpleNamespace(model="gpt-4o", usage=_usage(10, 10)),
@@ -523,11 +504,7 @@ def test_an_async_stream_that_errors_midway_is_booked_then_reraises(
 def test_the_async_stream_helper_is_metered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`AsyncAnthropic.messages.stream()` is a separate method.
-
-    Left unwrapped, every streamed async call is spend with no ledger row and no
-    error — the worst failure mode available.
-    """
+    """`AsyncAnthropic.messages.stream()` is metered, not silent spend."""
     paths, bodies = _ledger_recorder(monkeypatch)
     client = AsyncAnthropic(_anthropic_response(), _anthropic_response())
     metered = meter_fn(client, agent="a", entity="e")
@@ -548,13 +525,7 @@ def test_the_async_stream_helper_is_metered(
 def test_the_async_stream_hold_is_estimated_from_the_whole_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The hold must scale with the prompt, not be priced as an empty request.
-
-    Regression guard on a defect this wrapper shipped with in draft: it carried
-    only `model` through to `estimate_cost`, so every streamed async hold was
-    priced as though the prompt were empty and under-reserved the budget the
-    policy engine was about to check.
-    """
+    """The streamed hold scales with the prompt, not priced as an empty request."""
     _, bodies = _ledger_recorder(monkeypatch)
     client = AsyncAnthropic(_anthropic_response(), _anthropic_response())
     metered = meter_fn(client, agent="a", entity="e")
@@ -578,12 +549,7 @@ def test_the_async_stream_hold_is_estimated_from_the_whole_request(
 
 
 def test_the_async_stream_helper_returns_a_context_manager_not_a_coroutine() -> None:
-    """`async with client.messages.stream(...)` must keep working verbatim.
-
-    Making the wrapper `async def` would hand `async with` a coroutine object,
-    which has no `__aenter__` — every caller's code would break with a
-    confusing TypeError.
-    """
+    """`async with client.messages.stream(...)` works: the wrapper must stay sync."""
     client = AsyncAnthropic(_anthropic_response(), _anthropic_response())
     metered = meter_fn(client, agent="a", entity="e")
     manager = metered.messages.stream(model="claude-opus-5", messages=[])

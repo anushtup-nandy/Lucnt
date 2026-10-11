@@ -1,7 +1,4 @@
-"""Unit tests for lucnt.query (Phase 5 living financial memory).
-
-Backend interaction is mocked via httpx.MockTransport — no live server needed.
-"""
+"""Unit tests for lucnt.query."""
 
 from __future__ import annotations
 

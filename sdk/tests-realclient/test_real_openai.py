@@ -1,8 +1,4 @@
-"""Acceptance against the REAL `openai` client.
-
-Every row of the coverage table that was ❌-silent must now show ledger
-traffic; the blocked case must surface typed, loud, and unretried.
-"""
+"""Acceptance against the real `openai` client."""
 
 from __future__ import annotations
 
@@ -35,8 +31,7 @@ def test_wrapped_chat_path_settles_actual_usage(
 
 
 def test_with_raw_response_is_governed(harness: tuple[ServerState, str]) -> None:
-    """THE headline path: LangChain calls `with_raw_response.create`,
-    which used to pass the method wrappers entirely — spend, no ledger row."""
+    """`with_raw_response.create` (LangChain's path) is governed."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
     raw = client.chat.completions.with_raw_response.create(
@@ -61,7 +56,7 @@ def test_with_streaming_response_is_governed(
 
 
 def test_responses_api_is_governed(harness: tuple[ServerState, str]) -> None:
-    """The Responses API is where OpenAI is steering new work."""
+    """The Responses API is metered."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
     response = client.responses.create(model="gpt-4o", input="hello there")
@@ -72,7 +67,7 @@ def test_responses_api_is_governed(harness: tuple[ServerState, str]) -> None:
 
 
 def test_embeddings_are_governed(harness: tuple[ServerState, str]) -> None:
-    """Embeddings are real spend and were entirely invisible."""
+    """Embeddings are metered."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
     client.embeddings.create(model="text-embedding-3-small", input="hello")
@@ -115,9 +110,10 @@ def test_stream_true_on_create_is_governed(
 def test_blocked_spend_is_typed_loud_and_unretried(
     harness: tuple[ServerState, str],
 ) -> None:
-    """A blocked verdict on a governed path surfaces as the vendor's own 403
-    error carrying the lucnt reason — with retries LEFT ON to prove the vendor
-    SDK does not retry it (probe-verified design constraint)."""
+    """A block surfaces as the vendor's own 403 with the lucnt reason, unretried.
+
+    Vendor retries stay on to prove the SDK does not repeat it.
+    """
     state, base_url = harness
     state.block = True
     client = lucnt.meter(_client(base_url, max_retries=2), agent="a", entity="e")
@@ -132,9 +128,7 @@ def test_blocked_spend_is_typed_loud_and_unretried(
 
 
 def test_unknown_spend_path_fails_closed(harness: tuple[ServerState, str]) -> None:
-    """A vendor endpoint lucnt cannot price is refused, not silently forwarded.
-    The fake server would answer 200 for it, so only the governor stands
-    between this call and ungoverned spend."""
+    """An unpriceable vendor endpoint is refused, not silently forwarded."""
     state, base_url = harness
     client = lucnt.meter(_client(base_url), agent="a", entity="e")
     with pytest.raises(openai.PermissionDeniedError) as excinfo:

@@ -104,7 +104,7 @@ def test_4xx_maps_to_typed_exception(
 
 
 def test_conflict_is_distinguishable_from_validation_error() -> None:
-    """The point: a caller can branch on 409 vs 422."""
+    """A caller can branch on 409 vs 422."""
     transport = _make_transport(
         lambda request: httpx.Response(409, json={"detail": "already captured"})
     )
@@ -266,7 +266,7 @@ def test_retry_safe_flag_makes_an_unkeyed_post_retryable() -> None:
 
 
 def test_retry_reuses_the_same_idempotency_key() -> None:
-    """The whole point: the server must see one key so it replays, not re-acts."""
+    """The server must see one key so it replays, not re-acts."""
     keys: list[str | None] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

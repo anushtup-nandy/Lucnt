@@ -32,8 +32,7 @@ def test_every_packaged_price_is_a_decimal() -> None:
 
 
 def test_pack_prices_the_current_default_opus_model() -> None:
-    """Regression guard for the live bug this pack fixed: claude-opus-5 was
-    absent from the hardcoded table, so metering it raised."""
+    """claude-opus-5 is priced in the pack."""
     models = pricing.load_pricing_pack().vendors["anthropic"].models
     assert models["claude-opus-5"] == (Decimal("5.00"), Decimal("25.00"))
 
@@ -135,7 +134,7 @@ def test_overrides_do_not_leak_into_the_cached_pack() -> None:
 
 
 def test_adapters_expose_the_vendor_billing_currency() -> None:
-    """meter() forwards this to authorize() instead of hardcoding USD (C-6)."""
+    """meter() forwards the pack currency to authorize() instead of hardcoding USD."""
     assert AnthropicAdapter().currency == "USD"
     assert OpenAIAdapter().currency == "USD"
 
@@ -189,11 +188,9 @@ from lucnt.client import Transport  # noqa: E402
 
 @pytest.fixture()
 def feed_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., list[str]]]:
-    """Configured SDK + a controllable /pricing/feed endpoint.
+    """Configured SDK with a stubbable /pricing/feed; resets the feed cache.
 
-    Yields an installer: call it with a handler (or feed payload) to stub the
-    ledger transport; it returns the list of feed-request paths seen, for
-    hit-count assertions. Resets the module-level feed cache around each test.
+    Yields an installer (handler or payload) returning the feed paths seen.
     """
     config.configure(api_key="sk_test", base_url="https://api.test")
     pricing._reset_feed_cache()
@@ -289,11 +286,7 @@ def test_the_feed_is_fetched_once_per_ttl(
 def test_a_failed_fetch_is_also_cached_for_the_ttl(
     feed_env: Callable[..., list[str]],
 ) -> None:
-    """Feed-down must not add connect attempts to every meter() call.
-
-    The first construction pays one fetch (with the transport's normal
-    retries); constructions inside the TTL must add zero wire traffic.
-    """
+    """Feed-down costs one fetch; constructions inside the TTL add no traffic."""
     hits = feed_env(raise_error=True)
     AnthropicAdapter()
     after_first = hits.count("/pricing/feed")

@@ -1,19 +1,6 @@
-"""The SDK half of the `VerdictCode` parity gate.
+"""SDK half of the VerdictCode parity gate: `_BUDGET_EXHAUSTED_CODE` must exist.
 
-`Verdict.code` is an open string on the wire by design, so the backend's
-`VerdictCode` enum never appears in the OpenAPI document and no schema gate can
-see it move. `ledger._BUDGET_EXHAUSTED_CODE` is a hardcoded copy of one of its
-members, and `_raise_for_verdict` branches on it to choose `BudgetExhausted` over
-`PolicyBlocked`. Rename the backend value and both suites stay green while every
-budget block downgrades to a generic policy block.
-
-The backend half (`backend/tests/unit/test_api_contract.py`) asserts the committed
-value set matches the enum; this asserts the SDK's literal is in that set.
-
-**On the repo split:** this test reads a monorepo path. That is deliberate — when
-`sdk/` is extracted, this test fails loudly rather than skipping, which is the
-forcing function for the decision (pin the published contract artifact, or share
-a `lucnt-contracts` package).
+Reads a monorepo path on purpose: extracting `sdk/` should fail this, not skip.
 """
 
 from __future__ import annotations

@@ -1,11 +1,4 @@
-"""Acceptance for the LangChain integration — the finding's original repro.
-
-The 28 Jul probe showed `ChatOpenAI(...).invoke()` spending real money with no
-ledger row and no error, because LangChain calls
-`client.chat.completions.with_raw_response.create(...)`. The supported
-integration is now `http_client=lucnt.metered_http_client(...)`: every request
-LangChain's own vendor client makes flows through the governed transport.
-"""
+"""LangChain via `http_client=lucnt.metered_http_client(...)` books every call."""
 
 from __future__ import annotations
 
@@ -30,7 +23,7 @@ def _llm(base_url: str, max_retries: int = 0) -> ChatOpenAI:
 
 
 def test_langchain_invoke_is_governed(harness: tuple[ServerState, str]) -> None:
-    """The exact scenario of the original finding, now with ledger rows."""
+    """`ChatOpenAI(...).invoke()` produces ledger rows."""
     state, base_url = harness
     output = _llm(base_url).invoke("hello there")
     assert output.content == "governed hello"
@@ -56,8 +49,7 @@ def test_langchain_blocked_spend_never_reaches_the_vendor(
 def test_meter_of_a_langchain_wrapper_still_fails_loud(
     harness: tuple[ServerState, str],
 ) -> None:
-    """meter(ChatOpenAI()) is not a supported shape; it must raise, not
-    silently half-work (the loud half of the governor, unchanged)."""
+    """meter(ChatOpenAI()) is unsupported; it must raise, not half-work."""
     _state, base_url = harness
     llm = ChatOpenAI(model="gpt-4o", api_key="sk-fake", base_url=f"{base_url}/v1")
     with pytest.raises(lucnt.LucntError):

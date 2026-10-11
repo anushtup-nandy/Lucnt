@@ -1,9 +1,4 @@
-"""Unit tests for lucnt.meter and the vendor adapters.
-
-Fake vendor clients spoof their `__module__` so `resolve_adapter` detects them
-(anthropic/openai) without importing either SDK; the backend is mocked via
-httpx.MockTransport, so no live server or real API key is needed.
-"""
+"""meter() and adapter tests; fakes spoof `__module__`, backend is MockTransport."""
 
 from __future__ import annotations
 
@@ -54,10 +49,10 @@ def _stub(
 
 
 def _vendor_net() -> httpx.Client:
-    """Real vendor clients expose an httpx client at `._client`; the fakes
-    model that so `meter()` can install the transport governor. The
-    fakes' methods never do real I/O, so any request that actually reaches
-    this transport is a test bug."""
+    """Models a real client's httpx `._client` so meter() can install the governor.
+
+    Fakes do no real I/O, so any request reaching this transport is a test bug.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"unexpected wire request: {request.method} {request.url}")
@@ -263,8 +258,7 @@ def test_meter_is_exported_at_package_root() -> None:
     ],
 )
 def test_openai_dated_snapshot_prices_as_its_base(reported: str, base: str) -> None:
-    """The dated-snapshot bug: response.model is a dated id, the pack keys the alias, so
-    the first metered call used to be paid, unbooked, and its response lost."""
+    """A dated `response.model` resolves to the pack's base alias and books."""
     adapter = OpenAIAdapter()
     usage = Usage(model=reported, input_tokens=1_000_000, output_tokens=0)
     assert adapter.cost(usage) == adapter.cost(
@@ -342,21 +336,14 @@ def test_meter_books_a_dated_snapshot_end_to_end(
 
 
 def _unreadable_response() -> SimpleNamespace:
-    """A response whose usage cannot be read — vendor contract drift.
-
-    This, not an unpriced model, is what still reaches the fallback: the
-    requested model must already be priced for `authorize()` to have run at all,
-    and the snapshot resolver falls back to that price, so pricing effectively
-    cannot fail here.
-    """
+    """A response whose usage cannot be read (vendor contract drift)."""
     return SimpleNamespace(model="claude-opus-5")  # no .usage attribute
 
 
 def test_unreadable_usage_still_returns_the_paid_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The headline: the customer paid the vendor, so they get their
-    completion even though lucnt could not settle it."""
+    """The paid completion is returned even when lucnt cannot settle it."""
     captured: list[dict[str, object]] = []
     _stub(monkeypatch, _capture_handler(captured))
     response = _unreadable_response()
@@ -371,9 +358,7 @@ def test_unreadable_usage_still_returns_the_paid_response(
 def test_unreadable_usage_books_the_authorized_estimate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Degradation step 2: losing the spend entirely would be worse than booking
-    the hold's estimate, because attribution at the moment of spend is the
-    product (M1)."""
+    """Booking the hold's estimate beats losing the spend entirely."""
     captured: list[dict[str, object]] = []
     _stub(monkeypatch, _capture_handler(captured))
     metered = meter_fn(FakeAnthropic(_unreadable_response()), agent="a", entity="e")
@@ -392,9 +377,7 @@ def test_unreadable_usage_books_the_authorized_estimate(
 def test_an_unpriced_reported_model_never_reaches_the_estimate_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Snapshot resolution closes the fallback's most likely trigger: the vendor
-    reporting an id the pack doesn't know now prices off the requested model and
-    settles normally, rather than degrading to the hold's estimate."""
+    """An unknown reported id prices off the requested model and settles normally."""
     captured: list[dict[str, object]] = []
     _stub(monkeypatch, _capture_handler(captured))
     response = SimpleNamespace(
@@ -494,8 +477,7 @@ def test_orphaned_hold_is_logged_with_its_authorization_id(
 def test_a_policy_block_still_raises_after_t5_1(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The fallback must not have widened into swallowing pre-call failures — blocking
-    before money moves is the whole point of the gate."""
+    """The fallback must not swallow pre-call failures; blocking is the gate's job."""
     _stub(
         monkeypatch,
         lambda request: httpx.Response(
@@ -536,8 +518,7 @@ def test_keyboard_interrupt_is_not_swallowed(
 def test_meter_pricing_override_unblocks_an_unknown_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The `pricing=` escape hatch closing the unpriced-model hard-block, end to
-    end."""
+    """`pricing=` lets an otherwise unpriced model through, end to end."""
     captured: list[dict[str, object]] = []
     _stub(monkeypatch, _capture_handler(captured))
     response = SimpleNamespace(
@@ -742,9 +723,7 @@ def test_remetering_replaces_rather_than_stacks_governors() -> None:
 
 
 def test_meter_refuses_a_client_it_cannot_govern() -> None:
-    """A client with no httpx `._client` would leave unwrapped paths silently
-    unmetered — the exact failure the governor closes — so meter() fails loud
-    instead."""
+    """A client without an httpx `._client` fails loud, not partly unmetered."""
 
     class Ungovernable:
         def __init__(self) -> None:
@@ -806,9 +785,7 @@ StreamingAnthropic.__module__ = "anthropic"
 def test_anthropic_messages_stream_is_metered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The headline: `messages.stream()` is a separate method, so wrapping
-    only `create` left every streamed call unmetered — spend with no ledger row
-    and no error."""
+    """`messages.stream()` is a separate method and must be metered too."""
     captured: list[dict[str, object]] = []
     _stub(monkeypatch, _capture_handler(captured))
     final = SimpleNamespace(
@@ -913,12 +890,7 @@ def test_a_failed_stream_open_releases_its_hold(
 def test_no_hold_is_taken_until_the_sync_stream_is_entered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A manager built and never entered must not reserve budget.
-
-    The async twin already authorizes in `__aenter__`; the sync path used to
-    authorize eagerly at call time, so `mgr = client.messages.stream(...)`
-    without a `with` minted a hold that only the 24h server-side TTL released.
-    """
+    """A manager built and never entered must not reserve budget."""
     paths: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

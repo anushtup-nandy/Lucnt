@@ -1,6 +1,6 @@
 [project]
 name = "lucnt"
-# Single-sourced from src/lucnt/_version.py — never hardcode it here again.
+# Single-sourced from src/lucnt/_version.py.
 dynamic = ["version"]
 description = "Financial infrastructure that attaches to your existing agents."
 readme = "README.md"
@@ -22,8 +22,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-# Cap the majors. `httpx>=0.27` alone would happily install a 1.x that
-# breaks the transport; same for a hypothetical pydantic 3.
+# Cap majors: an unbounded httpx/pydantic major could break the transport.
 dependencies = [
     "httpx>=0.27,<1.0",
     "pydantic>=2.0,<3.0",
@@ -53,8 +52,7 @@ path = "src/lucnt/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/lucnt"]
 
-# Open source ships an sdist as well as a wheel. Tests and the acceptance
-# example go in it deliberately — a consumer auditing money-path code wants them.
+# The sdist ships tests and examples so money-path code is auditable.
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
@@ -79,9 +77,7 @@ addopts = "-q"
 [tool.ruff]
 target-version = "py310"
 line-length = 88
-# Newer ruff (≥0.16) formats Python code blocks inside markdown and broke the
-# `ruff format --check .` CI gate on markdown — snippets there are hand-laid
-# for reading, not gated code. Keep the formatter out of prose.
+# Markdown snippets are hand-laid prose; keep the formatter out.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
@@ -108,8 +104,7 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "N"]
 "tests-realclient/**" = ["D", "N"]
-# PolicyBlocked / BudgetExhausted are the documented public exception names —
-# no Error suffix by design.
+# Public exception names deliberately lack an Error suffix.
 "src/lucnt/exceptions.py" = ["N818"]
 
 # -----------------------------------------------------------------------------

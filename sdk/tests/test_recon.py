@@ -1,7 +1,4 @@
-"""Unit tests for lucnt.mark_failed_delivery (Phase 4 recovery hook).
-
-Backend interaction is mocked via httpx.MockTransport — no live server needed.
-"""
+"""Unit tests for lucnt.mark_failed_delivery."""
 
 from __future__ import annotations
 

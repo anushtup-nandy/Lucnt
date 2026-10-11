@@ -11,12 +11,9 @@ from lucnt import client
 
 @pytest.fixture(autouse=True)
 def no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
-    """Make retry backoff instant, and record the schedule it would have used.
+    """Make retry backoff instant; yields requested delays for assertions.
 
-    Autouse because retries are on by default: without this, any test
-    that provokes a 5xx or a timeout on a retry-eligible request pays real
-    wall-clock. Yields the list of requested delays so a test can assert the
-    backoff schedule without waiting for it.
+    Autouse because retries are on by default.
     """
     delays: list[float] = []
     monkeypatch.setattr(client, "_sleep", delays.append)
@@ -25,11 +22,7 @@ def no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
 
 @pytest.fixture(autouse=True)
 def no_real_async_sleep(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
-    """The async twin of `no_real_sleep` — same reason, awaitable recorder.
-
-    Separate fixture rather than a shared one: `_asleep` must stay a coroutine
-    function, so `delays.append` cannot stand in for it.
-    """
+    """Async twin of `no_real_sleep`; `_asleep` must stay a coroutine function."""
     delays: list[float] = []
 
     async def _record(seconds: float) -> None:

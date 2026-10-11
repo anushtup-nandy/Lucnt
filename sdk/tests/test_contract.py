@@ -1,15 +1,4 @@
-"""A 2xx the SDK cannot read must raise `ContractError`, not leak.
-
-Three failures used to escape the SDK's exception hierarchy entirely — a
-`json.JSONDecodeError` from an unparseable body, a `KeyError` from a renamed
-field, and a `pydantic.ValidationError` from a changed shape. A caller wrapping
-a money path in `except LucntError` did not cover any of them, and the
-`ValidationError` in particular reads as though the *caller* sent something
-invalid when in fact the server's answer is what did not match.
-
-`ContractError` must also never be retried: a drifted body drifts identically on
-the next attempt.
-"""
+"""A 2xx the SDK cannot read must raise `ContractError` (never retried), not leak."""
 
 from __future__ import annotations
 
@@ -83,7 +72,7 @@ def test_a_json_array_success_body_raises_contract_error(
 def test_a_drifted_verdict_shape_raises_contract_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`status` renamed server-side — a pydantic ValidationError used to escape."""
+    """`status` renamed server-side raises ContractError, not ValidationError."""
     _stub(
         monkeypatch,
         lambda request: httpx.Response(
@@ -99,12 +88,7 @@ def test_a_drifted_verdict_shape_raises_contract_error(
 def test_an_unknown_verdict_status_raises_contract_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`status` is a closed Literal, so a new backend value is a contract break.
-
-    Deliberate: `code` is an open string set precisely so new *reason* codes are
-    additive, but a new *status* changes whether money may move, and guessing is
-    not safe.
-    """
+    """`status` is a closed Literal: a new value changes whether money may move."""
     _stub(
         monkeypatch,
         lambda request: httpx.Response(
@@ -116,7 +100,7 @@ def test_an_unknown_verdict_status_raises_contract_error(
 
 
 def test_contract_error_is_a_lucnt_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The point of the change: `except LucntError` now covers response drift."""
+    """`except LucntError` covers response drift."""
     _stub(monkeypatch, lambda request: httpx.Response(200, text="not json"))
     with pytest.raises(LucntError):
         _authorize()
@@ -152,7 +136,7 @@ def test_a_drifted_body_is_not_retried(
 def test_a_missing_agents_key_raises_contract_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`payload["agents"]` used to raise a bare KeyError."""
+    """A missing `agents` key raises ContractError, not KeyError."""
     _stub(monkeypatch, lambda request: httpx.Response(200, json={"items": []}))
     with pytest.raises(ContractError, match="no 'agents' list"):
         ledger.check_budget(agent="research")
@@ -170,7 +154,7 @@ def test_a_renamed_budget_field_raises_contract_error(
                     {
                         "monthly_budget": "100.00",
                         "spent": "40.00",
-                        # `remaining` renamed → used to be a raw KeyError
+                        # `remaining` renamed
                         "headroom": "60.00",
                         "pct_used": "40.00",
                         "status": "ok",
@@ -197,11 +181,7 @@ def test_a_non_object_budget_row_raises_contract_error(
 def test_an_empty_agents_list_is_still_a_plain_lucnt_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No budget configured is a normal outcome, not a contract break.
-
-    Keeping these distinct matters: a `ContractError` tells the operator to
-    upgrade the SDK, which would be the wrong instruction here.
-    """
+    """No budget configured is a normal outcome, not a contract break."""
     _stub(monkeypatch, lambda request: httpx.Response(200, json={"agents": []}))
     with pytest.raises(LucntError, match="no budget found") as excinfo:
         ledger.check_budget(agent="research")
