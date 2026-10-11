@@ -41,9 +41,15 @@ def downgrade() -> None:
     """Rebuild the enum without tax_unclassified.
 
     Postgres cannot DROP a single enum value, so the type is recreated and the
-    column re-cast. A downgrade with a row still holding the value would fail the
-    cast by design — the feature is being removed, so it must be unused first.
+    column re-cast. Rows holding the value are deleted first: they are
+    capture-emitted flags with no meaning in the pre-feature schema, and a full
+    ``downgrade base && upgrade head`` must stay runnable (same convention as the
+    enum-type drop fixes).
     """
+    op.execute(
+        "DELETE FROM reconciliation_exceptions "
+        "WHERE exception_type = 'tax_unclassified'"
+    )
     op.execute(
         "ALTER TYPE recon_exception_type RENAME TO recon_exception_type_old"
     )

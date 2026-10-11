@@ -175,7 +175,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the hot-path indexes (also concurrently, to avoid a write lock)."""
+    """Drop the hot-path indexes (also concurrently, to avoid a write lock).
+
+    ``IF EXISTS`` because autocommit DDL is not atomic with the version table:
+    a failure later in a multi-step downgrade rolls back the version row but
+    not these drops, and the re-run must not trip over already-dropped indexes.
+    """
     with op.get_context().autocommit_block():
         for name, table, _columns, _where in reversed(_INDEXES):
-            op.drop_index(name, table_name=table, postgresql_concurrently=True)
+            op.drop_index(
+                name, table_name=table, postgresql_concurrently=True, if_exists=True
+            )
