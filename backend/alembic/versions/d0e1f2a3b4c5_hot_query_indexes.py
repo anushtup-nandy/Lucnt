@@ -134,8 +134,8 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
     # -- agents -------------------------------------------------------------
     # `routers/agents.py`, `routers/budgets.py` entity join -- unindexed FK.
     ("ix_agents_entity_id", "agents", ["entity_id"], None),
-    # The agent_owner persona scopes GET /agents by owner_user_id
-    # (CLAUDE.local.md step 4). Partial: the column is null for most rows today.
+    # The agent_owner persona scopes GET /agents by owner_user_id.
+    # Partial: the column is null for most rows today.
     (
         "ix_agents_owner_user_id",
         "agents",
