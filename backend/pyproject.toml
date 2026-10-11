@@ -13,7 +13,7 @@ dependencies = [
     # fewer packages in the runtime image, one of which makes network calls.
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.0,<2.1",
     # Dev/CI convenience: the binary wheel needs no compiler. The IMAGE replaces
     # it with a source build of `psycopg2` (see `Dockerfile`), because the binary
     # wheel bundles its own OpenSSL, which `apt-get upgrade` can never patch.
