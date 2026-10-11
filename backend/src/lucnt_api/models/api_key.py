@@ -1,8 +1,6 @@
-"""ApiKey ORM model — SDK auth, resolves a request to a company.
+"""ApiKey ORM model: SDK credential that resolves a request to a company.
 
-`key_hash` is SHA-256 of the full secret, not bcrypt: an API key is a
-high-entropy generated secret (not a low-entropy human password), so it needs
-direct-lookup by hash rather than a slow, per-record salted comparison.
+`key_hash` is unsalted SHA-256: keys are high-entropy, so direct hash lookup is safe.
 """
 
 from __future__ import annotations
@@ -25,14 +23,10 @@ class ApiKeyMode(enum.StrEnum):
 
 
 class ApiKeyScope(enum.StrEnum):
-    """What a key may do — separation of duties.
+    """What a key may do (separation of duties).
 
-    `runtime` keys drive the money path (authorize/capture) and reads only; they
-    are the credential an agent holds and must NOT be able to raise their own
-    budget or disable the policy governing them. `admin` keys additionally
-    perform governance mutations (budgets, policies, reconciliation, approvals).
-    Defaults to `admin` so a key created without a scope keeps full power
-    (backward compatible); agent keys are provisioned `runtime` explicitly.
+    `runtime`: money path + reads only, so an agent can't raise its own budget or
+    disable its policy. `admin`: also governance mutations. Defaults to `admin`.
     """
 
     RUNTIME = "runtime"
@@ -45,7 +39,7 @@ class ApiKey(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "api_keys"
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
-    # First 12 chars of the secret, e.g. "lucnt_live_8" -- for display only.
+    # First 12 chars of the secret, display only.
     key_prefix: Mapped[str] = mapped_column(String(12))
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str] = mapped_column(String(255))

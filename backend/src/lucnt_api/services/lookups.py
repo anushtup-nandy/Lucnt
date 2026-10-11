@@ -1,10 +1,6 @@
-"""Company-scoped lookups shared by routers (DRY).
+"""Company-scoped lookups shared by routers.
 
-`entity_or_404` was written inline in `routers/transactions.py`, again in
-`routers/agents.py`, and would have been written four more times by the P7.0
-`entity=` filters. Three or more call sites means it belongs in one place —
-especially this one, whose whole job is the `company_id` predicate that makes it
-safe. A copy that forgets that predicate is a cross-tenant read.
+Centralised because the `company_id` predicate is what prevents a cross-tenant read.
 """
 
 from __future__ import annotations

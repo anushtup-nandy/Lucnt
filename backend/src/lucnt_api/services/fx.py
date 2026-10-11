@@ -1,16 +1,7 @@
-"""FX rate resolution — convert a paid amount into an entity's functional currency.
+"""FX conversion into an entity's functional currency (USD-anchored, effective-dated).
 
-Rates live in the `fx_rates` table (USD-anchored, effective-dated): each row is
-the USD value of one unit of a currency on/after a date. The rate for any pair
-is cross-computed via USD and taken at the latest ``effective_from <=`` the
-transaction date.
-
-**Fail-closed by design**: an unknown currency raises `FxRateUnavailable` rather
-than silently booking at ``1.0``. A wrong rate corrupts the ledger, the tax
-computation, and the budget invariant invisibly, so a missing rate must stop the
-spend, not guess.
-
-All money math is `Decimal`.
+Fail-closed: a missing rate raises rather than booking at 1.0, which would silently
+corrupt the ledger, tax and budgets.
 """
 
 from __future__ import annotations
@@ -63,11 +54,7 @@ def resolve_rate(
     functional_currency: str,
     on_date: date,
 ) -> Decimal:
-    """Units of ``functional_currency`` per one unit of ``paid_currency`` on a date.
-
-    Same currency is the identity (``1``); otherwise cross via USD::
-
-        rate = usd_per_unit(paid) / usd_per_unit(functional)
+    """Units of ``functional_currency`` per one ``paid_currency``, crossed via USD.
 
     Raises:
         FxRateUnavailableError: if either currency has no rate on/before ``on_date``.
@@ -87,14 +74,13 @@ def convert(
     functional_currency: str,
     on_date: date,
 ) -> tuple[Decimal, Decimal]:
-    """Convert ``amount`` (in ``paid_currency``) to the functional currency.
+    """Convert ``amount`` to the functional currency.
 
     Returns:
-        ``(exchange_rate, local_amount)`` where ``local_amount`` is quantized to
-        the ledger's 4-decimal money scale (half-up).
+        ``(exchange_rate, local_amount)``; amount quantized half-up to 4 dp.
 
     Raises:
-        FxRateUnavailableError: propagated from `resolve_rate` (fail-closed).
+        FxRateUnavailableError: if a rate is missing.
     """
     rate = resolve_rate(
         db,

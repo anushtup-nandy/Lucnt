@@ -1,9 +1,6 @@
-"""Workflow ORM model — a cross-agent budget rollup (Phase 3, M6).
+"""Workflow ORM model: agents grouped under one shared budget (M6).
 
-A workflow groups several agents under one shared budget (e.g. "Q3 offsite":
-the ops, travel, and research agents). Its *spent* figure is never stored — it
-is derived by summing member agents' spend at read time (`routers/budgets.py`),
-so it can never drift from the ledger. `workflow_agents` is the pure join table.
+Spend is never stored; it's derived from members at read time so it can't drift.
 """
 
 from __future__ import annotations
@@ -37,7 +34,6 @@ class WorkflowStatus(enum.StrEnum):
     ARCHIVED = "archived"
 
 
-# Pure many-to-many join; no extra columns, so a Table (not a mapped class).
 workflow_agents = Table(
     "workflow_agents",
     Base.metadata,
@@ -51,13 +47,12 @@ class Workflow(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "workflows"
     __table_args__ = (
-        # Workflow budget rollups scope by company — `routers/budgets.py`.
+        # Budget rollups scope by company.
         Index("ix_workflows_company_id", "company_id"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(255))
-    # NUMERIC, never FLOAT (Decimal, not float).
     budget: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
     start_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

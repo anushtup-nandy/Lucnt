@@ -1,11 +1,4 @@
-"""Chart of Accounts — the default account set and idempotent provisioning.
-
-A company's books need a small set of accounts before any journal can post.
-`ensure_default_accounts` is idempotent (get-or-create by code), so capture
-works for any company — seeded or created via the API — without a separate
-setup step. It is the single source of truth for the default CoA, reused by
-`scripts/seed_dev.py`.
-"""
+"""Default Chart of Accounts and idempotent provisioning (single source of truth)."""
 
 from __future__ import annotations
 
@@ -18,30 +11,22 @@ from sqlalchemy.orm import Session
 
 from lucnt_api.models import Account, AccountCategory
 
-# Account codes referenced by the journal generator. Named so callers never
-# hard-code a magic string.
 WALLET_CODE = "1010"
 INPUT_TAX_CREDIT_CODE = "1400"
 GST_PAYABLE_CODE = "2200"
-# GST heads split by place of supply. India intra-state books CGST+SGST,
-# inter-state/import books IGST; each head has its own ITC (asset) and payable
-# (liability) account so GSTR-3B can be produced. The unsplit "GST" head keeps the
-# legacy 1400/2200 accounts (SG, US, and the currency-fallback path).
+# Per-head ITC/payable accounts so GSTR-3B can be produced. India intra-state is
+# CGST+SGST, inter-state/import IGST; the unsplit "GST" head uses 1400/2200.
 CGST_ITC_CODE = "1410"
 SGST_ITC_CODE = "1420"
 IGST_ITC_CODE = "1430"
 CGST_PAYABLE_CODE = "2210"
 SGST_PAYABLE_CODE = "2220"
 IGST_PAYABLE_CODE = "2230"
-# The net GST owed to the government after a return-cycle settlement: the
-# period's output GST less utilised input tax credit, cleared by a cash payment.
+# Net GST owed after a return-cycle settlement (output GST less utilised ITC).
 GST_SETTLEMENT_PAYABLE_CODE = "2300"
-# US self-assessed use tax owed to a state: a no-nexus B2B buyer accrues use
-# tax on a taxable-state purchase the vendor didn't charge. Never reclaimable (US
-# sales/use tax is a cost, not a VAT input credit), so it has a payable but no ITC.
+# US self-assessed use tax: a cost, never reclaimable, so payable but no ITC.
 US_USE_TAX_PAYABLE_CODE = "2400"
 
-# Map a tax head → its ITC (input credit, asset) and payable (liability) account.
 ITC_BY_HEAD: dict[str, str] = {
     "GST": INPUT_TAX_CREDIT_CODE,
     "CGST": CGST_ITC_CODE,
@@ -53,12 +38,8 @@ GST_PAYABLE_BY_HEAD: dict[str, str] = {
     "CGST": CGST_PAYABLE_CODE,
     "SGST": SGST_PAYABLE_CODE,
     "IGST": IGST_PAYABLE_CODE,
-    # US self-assessed use tax: a payable head with no ITC counterpart.
     "US_USE_TAX": US_USE_TAX_PAYABLE_CODE,
 }
-# Equity accounts. Contributed Capital receives wallet-funding entries;
-# Retained Earnings is a real account that the balance sheet's
-# undistributed-P&L line references instead of a fabricated code.
 CONTRIBUTED_CAPITAL_CODE = "3000"
 RETAINED_EARNINGS_CODE = "3900"
 EXPENSE_SOFTWARE_CODE = "6010"
@@ -67,9 +48,7 @@ EXPENSE_TRAVEL_CODE = "6030"
 EXPENSE_MARKETING_CODE = "6040"
 EXPENSE_GENERAL_CODE = "6090"
 
-# Caller-facing expense categories → account code. A caller may state the
-# category explicitly (a fact about the purchase); otherwise the journal generator
-# infers it from vendor/model signals. An unknown category falls back to inference.
+# An unknown caller category falls back to vendor/model inference.
 CATEGORY_TO_ACCOUNT: dict[str, str] = {
     "software": EXPENSE_SOFTWARE_CODE,
     "ai_compute": EXPENSE_AI_COMPUTE_CODE,
@@ -131,20 +110,10 @@ _DEFAULT_ACCOUNTS: tuple[_AccountSpec, ...] = (
 
 
 def ensure_default_accounts(db: Session, company_id: uuid.UUID) -> dict[str, Account]:
-    """Ensure the default Chart of Accounts exists for a company; return it by code.
+    """Get-or-create the default accounts for a company; return them by code.
 
-    Creates any missing default accounts (idempotent — safe to call on every
-    capture). Flushes so newly created accounts have ids, but does not commit;
-    the caller owns the transaction.
-
-    **Concurrency.** Two first-ever captures can race to insert the same
-    account code. Each insert runs in its own SAVEPOINT: if a concurrent capture
-    won the `uq_accounts_company_code` unique constraint, the `IntegrityError`
-    rolls back only that savepoint (not the whole capture transaction) and the
-    committed row is adopted — so a capture never 500s *after* the vendor was paid.
-
-    Returns:
-        A mapping of ``account_code`` -> `Account` covering the full default set.
+    Flushes but does not commit. Each insert is savepoint-isolated so a concurrent
+    first capture never 500s after the vendor was paid.
     """
     existing = {
         account.account_code: account
@@ -169,7 +138,7 @@ def ensure_default_accounts(db: Session, company_id: uuid.UUID) -> dict[str, Acc
                 db.flush()
             existing[spec.code] = account
         except IntegrityError:
-            # A concurrent capture created it first — adopt the committed row.
+            # Lost the race to a concurrent capture: adopt the committed row.
             existing[spec.code] = db.execute(
                 select(Account).where(
                     Account.company_id == company_id,

@@ -1,15 +1,6 @@
-"""Insight ORM model — the Intelligence layer's recommendations (Phase 5, M8).
+"""Insight ORM model: derived recommendations from the intelligence layer (M8).
 
-An `insights` row is a derived, actionable recommendation the intelligence layer
-produces from the ledger: an agent projected to overrun its budget, an anomalous
-spend, or an expensive unit of output ("your CFO, always on"). Insights are
-recomputed from the ledger (`POST /intelligence/recompute`), never written on the
-capture path, so the frozen `authorize→capture` spine stays lane-agnostic —
-like the Phase 4 recovery scan.
-
-Recompute clears the company's **un-applied** insights and regenerates them (they
-are ephemeral, derived state); an *applied* insight persists as a record of the
-action a human took (`is_applied` / `applied_at`).
+Recompute regenerates un-applied insights; applied ones persist as an action record.
 """
 
 from __future__ import annotations
@@ -27,14 +18,10 @@ from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
 class InsightType(enum.StrEnum):
-    """The kind of recommendation an insight carries.
+    """Recommendation kind, computable from ledger data alone.
 
-    All three are honestly computable from ledger data alone:
-    `BUDGET_RISK` — an agent's run-rate projects past its monthly budget.
-    `ANOMALY` — an agent's recent spend is a statistical outlier vs its own
-    fingerprint (`fingerprints.anomaly_score` at/above threshold).
-    `COST_SPIKE` — a unit of output (task type / project) costs far more than
-    the company's typical unit.
+    `BUDGET_RISK`: run-rate projects past monthly budget. `ANOMALY`: outlier vs the
+    agent's fingerprint. `COST_SPIKE`: a unit of output costs far above typical.
     """
 
     BUDGET_RISK = "budget_risk"
@@ -47,12 +34,12 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "insights"
     __table_args__ = (
-        # The un-dismissed insight feed — `routers/insights.py:64-70`.
+        # The un-dismissed insight feed.
         Index("ix_insights_company_id_is_dismissed", "company_id", "is_dismissed"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
-    # The agent an insight is about; null for company-level insights.
+    # Null for company-level insights.
     agent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agents.id"), default=None
     )
@@ -63,25 +50,20 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             values_callable=lambda e: [m.value for m in e],
         )
     )
-    # Stable natural key (type:agent:subject) so recompute upserts an insight in
-    # place instead of delete+insert (stable ids). Nullable for rows that
-    # predate the column.
+    # Natural key (type:agent:subject) so recompute upserts with stable ids.
     dedup_key: Mapped[str | None] = mapped_column(Text, default=None)
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
-    # A headline figure for the card (e.g. "$1,240 projected overrun"); frontend
-    # renders it prominently. Null when the insight has no single number.
+    # Headline figure for the card; null when there is no single number.
     value_text: Mapped[str | None] = mapped_column(String(100), default=None)
-    # The one-click action offered (e.g. "Raise budget"), with a structured
-    # payload the dashboard/SDK can act on. `Any` is justified as elsewhere.
+    # One-click action + structured payload (heterogeneous JSON, hence `Any`).
     action_label: Mapped[str | None] = mapped_column(String(100), default=None)
     action_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     is_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     applied_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
-    # A reviewed-but-not-applied insight can be dismissed; a dismissed insight is
-    # suppressed from regeneration so it does not nag forever.
+    # Dismissed insights are suppressed from regeneration so they don't nag.
     is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     dismissed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

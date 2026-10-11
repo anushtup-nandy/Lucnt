@@ -13,17 +13,12 @@ class LoginRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     email: str = Field(min_length=3, max_length=255)
-    # Bounded so a multi-megabyte body cannot be fed to argon2, which is
-    # deliberately expensive per call.
+    # Bounded: argon2 is deliberately expensive per byte of input.
     password: str = Field(min_length=1, max_length=256)
 
 
 class TokenResponse(BaseModel):
-    """Response body for `POST /auth/login` and `POST /auth/refresh`.
-
-    Carries the access token only. The refresh token is set as an httpOnly
-    cookie and is deliberately never readable by JavaScript.
-    """
+    """Access token for login/refresh; the refresh token is an httpOnly cookie."""
 
     model_config = ConfigDict(frozen=True)
 

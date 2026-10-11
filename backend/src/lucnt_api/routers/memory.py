@@ -1,8 +1,4 @@
-"""Memory router (Phase 5, M8) — an agent's learned financial patterns.
-
-Reads the `memories` table that `POST /intelligence/recompute` populates (one
-memory per (agent, type)); read-only, computed nowhere on the request path.
-"""
+"""Memory router: agents' learned patterns, populated by intelligence recompute."""
 
 from __future__ import annotations
 
@@ -23,9 +19,6 @@ from lucnt_api.schemas.intelligence import MemoryListResponse, MemoryResponse
 from lucnt_api.services.lookups import agent_or_404, entity_or_404
 from lucnt_api.services.permissions import scope_agents
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/memory",
     tags=["memory"],
@@ -55,13 +48,7 @@ def list_memories(
     entity: str | None = Query(default=None, description="Filter by entity code"),
     page: Page = Depends(paginate(WIDE_PAGE_SIZE, WIDE_MAX_PAGE_SIZE)),
 ) -> MemoryListResponse:
-    """List learned patterns for the company's agents, newest-learned first.
-
-    `memories` carries no `entity_id` of its own — a memory belongs to an agent,
-    and the agent belongs to an entity — so `entity=` filters through that join
-    rather than through a denormalised column that would need a migration and
-    could then disagree with the agent's own entity.
-    """
+    """List learned patterns for the company's agents, newest-learned first."""
     company = ctx.company
     stmt = select(Memory).where(Memory.company_id == company.id)
     if ctx.perms is not None and ctx.perms.agent_scope == "owned":

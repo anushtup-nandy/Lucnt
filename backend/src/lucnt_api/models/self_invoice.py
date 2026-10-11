@@ -1,11 +1,6 @@
-"""SelfInvoice ORM model — the reverse-charge self-invoice record.
+"""SelfInvoice ORM model: the buyer's reverse-charge self-invoice (CGST r.46).
 
-Under GST reverse charge the buyer must issue a self-invoice for the imported
-service (CGST Rules r.46). Previously `tax_records.self_invoice_generated` was set
-`True` without any artifact ever existing — a fabricated compliance flag. This
-table is the artifact of record: one structured self-invoice per RCM transaction,
-so the flag is only ever set truthfully. A rendered PDF is a presentation concern
-deferred to the M3 invoice hook; the structured record is the compliance data.
+The artifact of record behind `tax_records.self_invoice_generated`.
 """
 
 from __future__ import annotations
@@ -29,8 +24,7 @@ class SelfInvoice(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     )
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transactions.id"))
-    # Buyer-generated invoice number (r.46). A per-entity statutory sequence is a
-    # follow-up; this deterministic number is unique per transaction.
+    # r.46 invoice number, deterministic per txn (no per-entity sequence yet).
     invoice_number: Mapped[str] = mapped_column(String(64))
     supplier_name: Mapped[str] = mapped_column(String(255))  # the foreign vendor
     recipient_entity_code: Mapped[str] = mapped_column(String(50))  # the buyer (self)

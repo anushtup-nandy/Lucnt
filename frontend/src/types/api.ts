@@ -35,8 +35,7 @@ export interface paths {
          * Get Agent
          * @description Full detail for a single agent.
          *
-         *     A scoped-out agent is a 404, not a 403: telling an `agent_owner` that a given
-         *     id exists but belongs to someone else is itself a disclosure.
+         *     A scoped-out agent is a 404, not a 403, so its existence is not disclosed.
          */
         get: operations["get_agent_agents__agent_id__get"];
         put?: never;
@@ -77,9 +76,6 @@ export interface paths {
         /**
          * List Approvals
          * @description List holds awaiting approval (review + human_hold) for the current company.
-         *
-         *     Paginated: the queue grows with how long holds go unattended, which is
-         *     exactly the situation in which an unbounded response is least welcome.
          */
         get: operations["list_approvals_approvals_get"];
         put?: never;
@@ -164,10 +160,8 @@ export interface paths {
          * @description Exchange email + password for an access token and a refresh cookie.
          *
          *     Raises:
-         *         HTTPException: 401 for any failure — unknown email, wrong password, or
-         *             a deactivated account. One message for all three, deliberately:
-         *             distinguishing them turns the endpoint into an account enumerator.
-         *             429 when the IP has exhausted its failed-attempt budget.
+         *         HTTPException: 401 with one message for every failure (no account
+         *             enumeration); 429 when the IP's failed-attempt budget is spent.
          */
         post: operations["login_auth_login_post"];
         delete?: never;
@@ -187,11 +181,7 @@ export interface paths {
         put?: never;
         /**
          * Logout
-         * @description Clear the refresh cookie.
-         *
-         *     This ends the session on this browser. It does **not** revoke a refresh
-         *     token already copied out of the cookie — the token is stateless and P7.0 has
-         *     no revocation table (see `security.py`). The 7-day ceiling is the mitigation.
+         * @description Clear the refresh cookie; a copied refresh token is not revoked (stateless).
          */
         post: operations["logout_auth_logout_post"];
         delete?: never;
@@ -211,13 +201,8 @@ export interface paths {
          * Me
          * @description The signed-in user, their company, and their resolved permissions.
          *
-         *     The SPA's first call after login: `perms.nav` builds the sidebar and
-         *     `perms.landing` decides where to land. Both are data, never hardcoded.
-         *
          *     Raises:
-         *         HTTPException: 400 when called with an API key, which has no user, no
-         *             role and therefore no nav. Not 403 — the credential is valid, it is
-         *             simply the wrong *kind* for this endpoint.
+         *         HTTPException: 400 when called with an API key (valid but wrong kind).
          */
         get: operations["me_auth_me_get"];
         put?: never;
@@ -241,12 +226,9 @@ export interface paths {
          * Refresh
          * @description Mint a new access token from the refresh cookie, rotating the cookie.
          *
-         *     The refresh token is re-issued on every use so a stolen cookie's window is
-         *     bounded by the next legitimate refresh rather than by the full 7 days.
-         *
          *     Raises:
          *         HTTPException: 401 if the cookie is absent, invalid, expired, or names a
-         *             user who has since been deactivated.
+         *             deactivated user.
          */
         post: operations["refresh_auth_refresh_post"];
         delete?: never;
@@ -265,10 +247,6 @@ export interface paths {
         /**
          * List Authorizations
          * @description List policy verdicts for the current company, newest first.
-         *
-         *     Joined to `agents` so the response can carry the agent's name and glyph
-         *     without the dashboard issuing a lookup per row, and so `agent_owner` scoping
-         *     happens in this one query rather than after the fact.
          */
         get: operations["list_authorizations_authorizations_get"];
         put?: never;
@@ -331,10 +309,6 @@ export interface paths {
         /**
          * Create Funding
          * @description Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.
-         *
-         *     The funding/opening-balance entry the ledger previously lacked — without it
-         *     every balance sheet showed negative cash & equity from day one (the wallet was
-         *     only ever credited by spend). Admin-scoped, audited, functional currency.
          */
         post: operations["create_funding_books_funding_post"];
         delete?: never;
@@ -354,16 +328,8 @@ export interface paths {
          * Get General Ledger
          * @description General ledger: every posted account/currency with its totals and balance.
          *
-         *     Two shapes, because the line-level view is the only unbounded one:
-         *
-         *     * **Listing** (no `account`) — totals per account/currency, computed by a
-         *       SQL `GROUP BY`. Costs one row per account, not one per journal line, so it
-         *       no longer loads a 500k-line ledger into memory to add up six numbers.
-         *       `entries` is empty here and `entry_count` reports how many lines exist.
-         *     * **Detail** (`?account=CODE`) — the same totals plus that account's lines,
-         *       bounded by `limit`/`offset`. Journal lines run 2-5x transaction count, so
-         *       this is the one place the row-level cost has to be paid, and it is paid a
-         *       page at a time.
+         *     Without `account`, totals only (`entries` empty). With `?account=CODE`, that
+         *     account's lines are included, paginated.
          */
         get: operations["get_general_ledger_books_gl_get"];
         put?: never;
@@ -385,10 +351,7 @@ export interface paths {
         put?: never;
         /**
          * Create Manual Journal
-         * @description Post a balanced manual journal — an accrual, prepaid, or correction.
-         *
-         *     Admin-scoped and audited. Booked in the entity's functional currency; the
-         *     lines must reference real CoA accounts and balance.
+         * @description Post a balanced manual journal (accrual, prepaid, correction).
          */
         post: operations["create_manual_journal_books_journal_post"];
         delete?: never;
@@ -450,10 +413,8 @@ export interface paths {
          * Settle Taxes
          * @description Book a return-cycle GST settlement, clearing Payable against ITC.
          *
-         *     Nets the period's accumulated output GST (the per-head Payable accounts) against
-         *     input tax credit (the per-head ITC accounts), books the residual as GST Payable
-         *     to Government, and carries forward any unutilised ITC — so the balance sheet no
-         *     longer shows an ever-growing liability + asset. Admin-scoped and audited.
+         *     The residual is booked to GST Payable to Government; unutilised ITC carries
+         *     forward.
          */
         post: operations["settle_taxes_books_tax_settlement_post"];
         delete?: never;
@@ -493,18 +454,8 @@ export interface paths {
          * Get Budgets
          * @description Per-agent budget utilisation plus per-workflow rollups for the company.
          *
-         *     The `agents` array is paginated and `total` counts all matching agents; the
-         *     `workflows` rollups are configuration-shaped (bounded by how many workflows
-         *     a customer authors, not by ledger volume) and are always returned whole, so
-         *     a rollup never silently omits a member that fell off the page.
-         *
-         *     `agent` narrows to a single slug — the SDK's `check_budget()` path, which
-         *     would otherwise download every agent's budget to read one row.
-         *
-         *     An `agent_owner` sees only their own agents, narrowed in the SQL, and gets
-         *     **no workflow rollups at all**: a rollup sums across every member of a
-         *     workflow, so returning one to a scoped principal would report other owners'
-         *     spend under a different name. An empty list is the honest answer.
+         *     `agents` is paginated; `workflows` is always whole. An `agent_owner` gets no
+         *     workflow rollups, since they would sum other owners' spend.
          */
         get: operations["get_budgets_budgets_get"];
         put?: never;
@@ -565,10 +516,6 @@ export interface paths {
         /**
          * Health Live
          * @description Liveness: is this process running? Never touches a dependency.
-         *
-         *     A liveness probe that checks the database is a way to turn one database
-         *     blip into every container being killed at once. `/health` is retained as
-         *     an alias so existing probes keep working.
          */
         get: operations["health_live_health_live_get"];
         put?: never;
@@ -588,12 +535,7 @@ export interface paths {
         };
         /**
          * Health Ready
-         * @description Readiness: can this process actually serve?
-         *
-         *     The old single `/health` returned a static dict, so a load balancer
-         *     happily kept routing to a backend whose Postgres was gone. This one takes
-         *     a connection out of the real pool, pings it, and checks the schema is at
-         *     the migration head.
+         * @description Readiness: database reachable and schema at the migration head.
          */
         get: operations["health_ready_health_ready_get"];
         put?: never;
@@ -614,9 +556,6 @@ export interface paths {
         /**
          * List Insights
          * @description List the company's insights, newest first, with an unapplied headline count.
-         *
-         *     Dismissed insights are hidden by default (they are resolved); pass
-         *     `include_dismissed=true` to see them.
          */
         get: operations["list_insights_insights_get"];
         put?: never;
@@ -676,23 +615,9 @@ export interface paths {
         };
         /**
          * Query
-         * @description An agent's living financial memory (M8), served without a ledger scan.
+         * @description An agent's financial memory: budget, projection, cost-per-output, fingerprint.
          *
-         *     Two paths, because this is the per-spend SDK call and a full scan per call is
-         *     O(n) per call and O(n^2) over an agent's lifetime:
-         *
-         *     * **Fast path** — an agent that has been through `/recompute` has a stored
-         *       `Fingerprint`, so the statistics are read rather than recomputed, and the
-         *       projection and cost-per-output come from SQL aggregates. No record is
-         *       loaded into Python.
-         *     * **Fallback** — no stored fingerprint (an agent that has never been
-         *       recomputed) computes live exactly as before. This is what keeps the
-         *       documented "needs no prior recompute" contract true.
-         *
-         *     **Staleness is real and deliberate.** On the fast path the fingerprint
-         *     statistics — mean, stddev, median, top vendors, anomaly score — are as fresh
-         *     as the last `/recompute`. `budget` is always live (a SQL sum over the ledger),
-         *     so spend headroom, the figure an agent gates on, is never stale.
+         *     Fingerprint stats are as fresh as the last `/recompute`; `budget` is always live.
          */
         get: operations["query_intelligence_query_get"];
         put?: never;
@@ -714,12 +639,9 @@ export interface paths {
         put?: never;
         /**
          * Recompute
-         * @description Recompute fingerprints/memories/insights over the whole company ledger.
+         * @description Recompute fingerprints, memories and insights over the company ledger.
          *
-         *     Upserts one fingerprint per agent and one memory per (agent, type); clears
-         *     the company's **un-applied** insights and regenerates them (applied insights
-         *     persist as a record of the action a human took). Idempotent — a second call
-         *     with no new spend yields the same state.
+         *     Idempotent; applied or dismissed insights are preserved.
          */
         post: operations["recompute_intelligence_recompute_post"];
         delete?: never;
@@ -738,11 +660,6 @@ export interface paths {
         /**
          * List Memories
          * @description List learned patterns for the company's agents, newest-learned first.
-         *
-         *     `memories` carries no `entity_id` of its own — a memory belongs to an agent,
-         *     and the agent belongs to an entity — so `entity=` filters through that join
-         *     rather than through a denormalised column that would need a migration and
-         *     could then disagree with the agent's own entity.
          */
         get: operations["list_memories_memory_get"];
         put?: never;
@@ -806,13 +723,9 @@ export interface paths {
         };
         /**
          * Get Pricing Feed
-         * @description Today's effective vendor pricing, flattened for the SDK.
+         * @description Today's effective vendor pricing, date ranges resolved, in the SDK's shape.
          *
-         *     The response shape matches the SDK's packaged `pricing.json` exactly
-         *     (`version` / `estimation` / `vendors`), with all money as strings and any
-         *     date-ranged rates already resolved — the client stays date-dumb.
-         *     `Cache-Control` matches the SDK's default client-side TTL so intermediary
-         *     caches and the SDK agree on freshness.
+         *     `Cache-Control` matches the SDK's default client-side TTL.
          */
         get: operations["get_pricing_feed_pricing_feed_get"];
         put?: never;
@@ -833,10 +746,6 @@ export interface paths {
         /**
          * List Exceptions
          * @description List reconciliation exceptions, grouped by currency, highest stake first.
-         *
-         *     Ordering is (currency, `$ at stake` desc): without an FX conversion, ranking
-         *     amounts *across* currencies is meaningless (₹5,000 is not > $100), so
-         *     the list groups by currency and ranks within each.
          */
         get: operations["list_exceptions_recon_get"];
         put?: never;
@@ -858,10 +767,7 @@ export interface paths {
         put?: never;
         /**
          * Report Failed Delivery
-         * @description Record an agent-reported failed delivery (the SDK `mark_failed_delivery`).
-         *
-         *     Idempotent: replaying for a transaction that already has an active
-         *     failed-delivery exception returns the existing one instead of duplicating.
+         * @description Record an agent-reported failed delivery; idempotent per transaction.
          */
         post: operations["report_failed_delivery_recon_failed_delivery_post"];
         delete?: never;
@@ -883,14 +789,8 @@ export interface paths {
          * Scan
          * @description Run the detector suite over the company ledger; book new exceptions.
          *
-         *     Idempotent on two axes:
-         *     - **(txn, type)** — an already-flagged transaction (any status) is not
-         *       re-flagged; the detected ledger fact is immutable (the unique constraint is
-         *       the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from
-         *       500-ing the whole pass).
-         *     - **recurring identity (`dedup_key`)** — a dismissed/resolved recurring charge
-         *       (a subscription, a repeated overcharge) is not re-raised on next month's new
-         *       transaction row.
+         *     Idempotent per (txn, type) and per recurring identity (`dedup_key`), so a
+         *     dismissed recurring charge is not re-raised next month.
          */
         post: operations["scan_recon_scan_post"];
         delete?: never;
@@ -948,11 +848,7 @@ export interface paths {
         };
         /**
          * List Transactions
-         * @description List committed transactions for the current company, filterable/paginated.
-         *
-         *     `reversed=` exists as a server-side filter rather than a client-side one for
-         *     the reason D5 gives: filtering a paginated response in the browser reports
-         *     "3 of 3" while the next page holds four more.
+         * @description List committed transactions for the current company, filterable and paginated.
          */
         get: operations["list_transactions_transactions_get"];
         put?: never;
@@ -1016,18 +912,7 @@ export interface paths {
          * Void
          * @description Release an approved hold whose spend never happened.
          *
-         *     Without this, a hold orphaned by a vendor error after `authorize()` — or by a
-         *     crash between authorize and capture — reserves the agent's budget forever
-         *     (`services/spend_window.py::reserved_spend`), silently and permanently
-         *     shrinking what the agent can spend. `meter()` calls this on its error path.
-         *
-         *     Idempotent: voiding an already-voided hold returns 200 with
-         *     `already_released=True`, describing the original release. The SDK invokes
-         *     this while already handling a failure, so a retry must not become a second
-         *     error to handle.
-         *
-         *     A captured hold cannot be voided — the money moved and the ledger says so.
-         *     Reverse the transaction instead (`POST /transactions/{id}/reverse`).
+         *     Idempotent. A captured hold cannot be voided; reverse the transaction instead.
          */
         post: operations["void_transactions_void_post"];
         delete?: never;
@@ -1046,11 +931,6 @@ export interface paths {
         /**
          * Get Transaction
          * @description Full detail for one transaction: the row, its tax treatment, its journal.
-         *
-         *     The journal and the tax record are joins, so they are on the single-row
-         *     endpoint and deliberately not on the list — there they would be an N+1 per
-         *     page. Here they are two queries, and they are what makes the page worth
-         *     opening: the balanced double entry is the product's central claim.
          */
         get: operations["get_transaction_transactions__transaction_id__get"];
         put?: never;
@@ -1072,12 +952,9 @@ export interface paths {
         put?: never;
         /**
          * Reverse Transaction
-         * @description Reverse a committed transaction with a contra entry (refund/credit note).
+         * @description Reverse a committed transaction with a contra entry, freeing its budget.
          *
-         *     Books a new reversal transaction (positive amount, contra journal) that
-         *     negates the original and frees the agent's budget; the original is flagged
-         *     reversed. Admin-scoped and audited. Idempotent: reversing an already-reversed
-         *     transaction (or a reversal itself) is a 409.
+         *     Admin-only and audited. Reversing a reversal or a reversed row is a 409.
          */
         post: operations["reverse_transaction_transactions__transaction_id__reverse_post"];
         delete?: never;
@@ -1095,10 +972,7 @@ export interface paths {
         };
         /**
          * List Users
-         * @description List the company's team members.
-         *
-         *     Name, email, role and active flag only — no password hash, no last-login
-         *     timestamp, nothing the Settings table does not render.
+         * @description List the company's team members (no password hash or last-login).
          */
         get: operations["list_users_users_get"];
         put?: never;
@@ -1124,10 +998,7 @@ export interface paths {
         put?: never;
         /**
          * Create Vendor
-         * @description Register a vendor with its place of supply (admin, audited).
-         *
-         *     A 409 if a vendor with the same (normalized) name already exists — enrich that
-         *     one via `PATCH /vendors/{id}` instead.
+         * @description Register a vendor with its place of supply; 409 on a duplicate name.
          */
         post: operations["create_vendor_vendors_post"];
         delete?: never;
@@ -1155,10 +1026,7 @@ export interface paths {
         head?: never;
         /**
          * Update Vendor
-         * @description Enrich a vendor's place of supply (admin, audited).
-         *
-         *     Only fields present in the request are updated (PATCH semantics), so a spend's
-         *     auto-created row can be filled in without disturbing the rest.
+         * @description Enrich a vendor's place of supply; only fields present are updated.
          */
         patch: operations["update_vendor_vendors__vendor_id__patch"];
         trace?: never;
@@ -1267,11 +1135,7 @@ export interface components {
         };
         /**
          * ApiKeySummary
-         * @description An API key as the Developers page may see it: **never the secret**.
-         *
-         *     Only the hash is stored, so the plaintext is unrecoverable by construction —
-         *     this schema simply makes that explicit. `key_prefix` is the first 12
-         *     characters (`lucnt_live_8`), which identifies a key without revealing it.
+         * @description An API key without its secret; `key_prefix` (12 chars) identifies it.
          */
         ApiKeySummary: {
             /**
@@ -1414,11 +1278,7 @@ export interface components {
         };
         /**
          * AuthorizationSummary
-         * @description One policy verdict, as `GET /authorizations` returns it (D5).
-         *
-         *     Carries the agent's name and glyph inline: the dashboard renders a glyph per
-         *     row, and a lookup per row is the N+1 that `/transactions` already avoids by
-         *     the same means.
+         * @description One policy verdict from `GET /authorizations`; agent name/glyph inline.
          */
         AuthorizationSummary: {
             /** Agent Glyph */
@@ -1539,11 +1399,9 @@ export interface components {
         };
         /**
          * BudgetsResponse
-         * @description Response body for `GET /budgets` — per-agent + per-workflow rollups.
+         * @description `GET /budgets` — per-agent page plus unpaginated workflow rollups.
          *
-         *     `total` counts every agent matching the request's filters, not the length of
-         *     the returned `agents` page. `workflows` is unpaginated and rolls up
-         *     *all* member agents, so a rollup stays correct regardless of the page.
+         *     `total` counts all matching agents, not the page length.
          */
         BudgetsResponse: {
             /** Agents */
@@ -1560,11 +1418,7 @@ export interface components {
          * CaptureRequest
          * @description Request body for `POST /transactions/capture`. Mirrors `sdk.ledger.capture()`.
          *
-         *     Phase 3.5 adds optional settlement overrides (`amount`/`model`/`tokens`):
-         *     the actual values known only after the spend (e.g. the true LLM cost from
-         *     `meter()`). When omitted, the authorization's held values stand. This is the
-         *     hold-vs-settle split — `authorize` holds an estimate, `capture` books truth
-         *     — and the same fields serve the future card rail (auth $X, settle $Y).
+         *     `amount`/`model`/`tokens` override the held estimate with settled actuals.
          */
         CaptureRequest: {
             /** Amount */
@@ -1691,10 +1545,9 @@ export interface components {
         };
         /**
          * FailedDeliveryRequest
-         * @description Request body for `POST /recon/failed-delivery` (the SDK `mark_failed_delivery`).
+         * @description `POST /recon/failed-delivery`: a spend whose downstream task failed.
          *
-         *     Agent-reported: a spend whose downstream task failed. `amount_at_stake`
-         *     defaults to the transaction's full paid amount when not given.
+         *     `amount_at_stake` defaults to the transaction's paid amount.
          */
         FailedDeliveryRequest: {
             /** Amount At Stake */
@@ -1709,11 +1562,9 @@ export interface components {
         };
         /**
          * FinancialMemoryResponse
-         * @description Living financial memory for one agent — the SDK `query()` response.
+         * @description SDK `query()` response, computed live from the agent's ledger.
          *
-         *     Computed live from the agent's ledger so an agent can self-regulate *before*
-         *     it spends (M8). `headline` answers the free-text `q`, keyword-routed to the
-         *     most relevant dimension (budget / cost / on-track) — no LLM involved.
+         *     `headline` answers `q` by keyword routing (no LLM).
          */
         FinancialMemoryResponse: {
             /** Agent */
@@ -1754,11 +1605,9 @@ export interface components {
         };
         /**
          * FundingRequest
-         * @description `POST /books/funding` — a wallet funding / opening-balance top-up.
+         * @description `POST /books/funding` — Dr Wallet / Cr Contributed Capital top-up.
          *
-         *     Books Dr Wallet / Cr Contributed Capital in the entity's functional currency,
-         *     so a funded entity's balance sheet no longer shows negative cash & equity from
-         *     day one. Admin-scoped and audited.
+         *     Admin-only and audited.
          */
         FundingRequest: {
             /** Amount */
@@ -1775,10 +1624,7 @@ export interface components {
         };
         /**
          * GLAccount
-         * @description One account's postings and running totals in the general ledger.
-         *
-         *     An account is sectioned per currency — the same account code posted to by
-         *     entities in different currencies yields one section per currency.
+         * @description One account's general-ledger totals, sectioned per currency.
          */
         GLAccount: {
             /** Account Code */
@@ -1858,14 +1704,10 @@ export interface components {
         };
         /**
          * InsightType
-         * @description The kind of recommendation an insight carries.
+         * @description Recommendation kind, computable from ledger data alone.
          *
-         *     All three are honestly computable from ledger data alone:
-         *     `BUDGET_RISK` — an agent's run-rate projects past its monthly budget.
-         *     `ANOMALY` — an agent's recent spend is a statistical outlier vs its own
-         *     fingerprint (`fingerprints.anomaly_score` at/above threshold).
-         *     `COST_SPIKE` — a unit of output (task type / project) costs far more than
-         *     the company's typical unit.
+         *     `BUDGET_RISK`: run-rate projects past monthly budget. `ANOMALY`: outlier vs the
+         *     agent's fingerprint. `COST_SPIKE`: a unit of output costs far above typical.
          * @enum {string}
          */
         InsightType: "budget_risk" | "anomaly" | "cost_spike";
@@ -1883,9 +1725,7 @@ export interface components {
         };
         /**
          * JournalGroup
-         * @description All postings for a single transaction (the journal explorer's unit).
-         *
-         *     One transaction posts to one entity, so a group is single-currency.
+         * @description All postings for one transaction; always single-currency.
          */
         JournalGroup: {
             /** Currency */
@@ -1911,9 +1751,7 @@ export interface components {
         };
         /**
          * JournalLine
-         * @description One double-entry journal line returned with a captured transaction.
-         *
-         *     Mirrors `sdk.JournalLine`. Part of the frozen contract — keep in lockstep.
+         * @description A captured transaction's journal line. Mirrors `sdk.JournalLine`.
          */
         JournalLine: {
             /** Account Code */
@@ -1987,10 +1825,9 @@ export interface components {
         };
         /**
          * ManualJournalRequest
-         * @description `POST /books/journal` — a balanced manual journal (accrual, adjustment).
+         * @description `POST /books/journal` — a balanced manual journal in functional currency.
          *
-         *     Admin-scoped and audited. Booked in the entity's functional currency;
-         *     the lines must balance (Σ debit == Σ credit) and reference real CoA accounts.
+         *     Admin-only and audited; lines must balance and reference real CoA accounts.
          */
         ManualJournalRequest: {
             /** Entity */
@@ -2180,19 +2017,13 @@ export interface components {
         PolicyRuleType: "budget_cap" | "merchant_list" | "velocity" | "amount_threshold" | "time_of_day";
         /**
          * PolicyScopeType
-         * @description Whether a policy applies company-wide or to a single agent.
-         *
-         *     `company` policies (`scope_id is None`) form the base layer; `agent`
-         *     policies (`scope_id == agents.id`) layer on top for that agent only.
+         * @description `company` policies (no scope_id) are the base; `agent` ones layer on top.
          * @enum {string}
          */
         PolicyScopeType: "company" | "agent";
         /**
          * PolicyUpdate
-         * @description Request body for `PATCH /policies/{id}` — all fields optional.
-         *
-         *     `rule_type` and scope are immutable (they define the policy's identity);
-         *     change them by deleting and recreating.
+         * @description `PATCH /policies/{id}`. `rule_type` and scope are immutable.
          */
         PolicyUpdate: {
             /** Active */
@@ -2337,36 +2168,25 @@ export interface components {
         };
         /**
          * ReconExceptionStatus
-         * @description Lifecycle of an exception: detected → in-recovery → terminal.
-         *
-         *     `OPEN` is a freshly detected/reported exception; `RECOVERING` is one whose
-         *     recovery action is in flight; `RESOLVED` (money recovered) and `DISMISSED`
-         *     (a false positive or accepted loss) are the terminal states.
+         * @description Lifecycle: open → recovering → resolved | dismissed (both terminal).
          * @enum {string}
          */
         ReconExceptionStatus: "open" | "recovering" | "resolved" | "dismissed";
         /**
          * ReconExceptionType
-         * @description The kind of anomaly a reconciliation exception records.
+         * @description Anomaly kind.
          *
-         *     `DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the
-         *     ledger by `services/detectors.py`; `FAILED_DELIVERY` is agent-reported (the
-         *     SDK `mark_failed_delivery()` hook) because it cannot be inferred from spend
-         *     data alone. `TAX_UNCLASSIFIED` is *capture-emitted*: a spend hit a vendor with
-         *     no place-of-supply data, so tax was booked conservatively and the vendor needs
-         *     enriching before the treatment can be finalised.
+         *     `FAILED_DELIVERY` is agent-reported (not inferable from spend);
+         *     `TAX_UNCLASSIFIED` is emitted at capture for a vendor lacking place-of-supply
+         *     data, so tax was booked conservatively. The rest are ledger-detected.
          * @enum {string}
          */
         ReconExceptionType: "duplicate" | "overcharge" | "unused_subscription" | "failed_delivery" | "tax_unclassified";
         /**
          * ReconListResponse
-         * @description Response for `GET /recon` — the inbox page plus a stable summary header.
+         * @description `GET /recon` — inbox page plus a filter-independent summary.
          *
-         *     `total` is the filtered/paginated count; `total_at_stake` and `open_count`
-         *     summarize all *active* (open + recovering) exceptions for the company,
-         *     independent of the list filters — the "$ at stake" headline. `total_at_stake`
-         *     is a **per-currency** map (currency -> sum), never a meaningless cross-currency
-         *     total.
+         *     `total_at_stake` covers all active exceptions, keyed per currency.
          */
         ReconListResponse: {
             /** Items */
@@ -2450,9 +2270,7 @@ export interface components {
         };
         /**
          * TaxInfo
-         * @description The tax treatment returned with a captured transaction.
-         *
-         *     Mirrors `sdk.TaxInfo`. Part of the frozen contract — keep in lockstep.
+         * @description A captured transaction's tax treatment. Mirrors `sdk.TaxInfo`.
          */
         TaxInfo: {
             /** Currency */
@@ -2509,11 +2327,9 @@ export interface components {
         };
         /**
          * TaxSettlementResponse
-         * @description The computed GST position + the settlement journal booked (if any).
+         * @description GST position and settlement journal: per-head payable cleared against ITC.
          *
-         *     Clears the accumulated per-head GST Payable against Input Tax Credit so the
-         *     balance sheet no longer shows an ever-growing liability + asset; the net is
-         *     booked as GST Payable to Government, and any excess ITC carries forward.
+         *     The net is booked as GST Payable to Government; excess ITC carries forward.
          */
         TaxSettlementResponse: {
             /** Credit Carried Forward */
@@ -2539,10 +2355,7 @@ export interface components {
         };
         /**
          * TokenResponse
-         * @description Response body for `POST /auth/login` and `POST /auth/refresh`.
-         *
-         *     Carries the access token only. The refresh token is set as an httpOnly
-         *     cookie and is deliberately never readable by JavaScript.
+         * @description Access token for login/refresh; the refresh token is an httpOnly cookie.
          */
         TokenResponse: {
             /** Access Token */
@@ -2558,9 +2371,6 @@ export interface components {
         /**
          * Transaction
          * @description Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`.
-         *
-         *     Phase 2 adds `journal` (double-entry lines) and `tax` (jurisdiction
-         *     treatment), both produced synchronously on capture.
          */
         Transaction: {
             /** Amount */
@@ -2653,13 +2463,7 @@ export interface components {
         };
         /**
          * TransactionFull
-         * @description `GET /transactions/{id}` — the detail row plus what only it can afford.
-         *
-         *     The tax treatment and the journal are a join each. On the *list* they would
-         *     be an N+1 per page; on a single row they are two queries, and the dashboard's
-         *     transaction detail is meaningless without them: the balanced double entry is
-         *     the product's central claim, and a page that asserts it without showing it is
-         *     a façade.
+         * @description `GET /transactions/{id}` — detail plus tax and journal (N+1 on the list).
          */
         TransactionFull: {
             /**
@@ -2888,9 +2692,7 @@ export interface components {
         };
         /**
          * VendorUpdate
-         * @description `PATCH /vendors/{id}` — enrich an (often auto-created) vendor (admin).
-         *
-         *     Every field is optional; only the ones provided are updated.
+         * @description `PATCH /vendors/{id}` (admin); only provided fields change.
          */
         VendorUpdate: {
             /** Country */
@@ -2912,11 +2714,8 @@ export interface components {
          * Verdict
          * @description Response body for `POST /transactions/authorize`. Mirrors `sdk.Verdict`.
          *
-         *     Phase 3 adds `code`, a machine-readable reason (`ok`, `budget_exhausted`,
-         *     `merchant_blocked`, `velocity_exceeded`, `amount_over_threshold`,
-         *     `outside_hours`) the SDK maps to typed exceptions under `strict=True`. It is
-         *     an open string set (each future rule adds a code), not a `Literal`, so a new
-         *     code never breaks an older SDK.
+         *     `code` is an open string (not a `Literal`) so a new code never breaks an
+         *     older SDK.
          */
         Verdict: {
             /**
@@ -2947,9 +2746,7 @@ export interface components {
          * VoidRequest
          * @description Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.
          *
-         *     Releases an approved-but-uncaptured hold so it stops reserving the agent's
-         *     budget. Used when the spend the hold was taken for did not happen —
-         *     the vendor call failed after `authorize()` returned, say.
+         *     Releases an approved-but-uncaptured hold when the spend did not happen.
          */
         VoidRequest: {
             /**
@@ -2962,11 +2759,9 @@ export interface components {
         };
         /**
          * VoidResult
-         * @description Result of releasing a hold via `POST /transactions/void`.
+         * @description Result of `POST /transactions/void`.
          *
-         *     `already_released` makes the endpoint idempotent: a retried void (the SDK
-         *     calls it from an error path, so retries are expected) returns 200 describing
-         *     the original release rather than conflicting with it.
+         *     Idempotent: a retried void returns 200 with `already_released` set.
          */
         VoidResult: {
             /**

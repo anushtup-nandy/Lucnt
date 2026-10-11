@@ -1,12 +1,4 @@
-"""Developer reads: API keys and the audit event log.
-
-Both are gated on the `developers` nav domain, so only roles that can see the
-page can call the endpoints behind it.
-
-`GET /api-keys` returns **prefix and metadata only**. Nothing else is possible:
-`api_keys.key_hash` is a SHA-256 digest, so a plaintext key exists exactly once,
-in the response to whoever created it.
-"""
+"""Developer reads: API keys (prefix + metadata only) and the audit event log."""
 
 from __future__ import annotations
 

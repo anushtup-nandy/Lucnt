@@ -1,10 +1,7 @@
 """Request-scoped logging context, access logging and metrics.
 
-Written as raw ASGI rather than `BaseHTTPMiddleware` on purpose. The latter runs
-the downstream app in a separate anyio task and re-raises exceptions across that
-boundary, which both perturbs the failure mode of the money path and makes the
-`contextvars` binding below unreliable — precisely the two things this module
-exists to make trustworthy.
+Raw ASGI, not `BaseHTTPMiddleware`: its separate task breaks contextvars and
+exception propagation.
 """
 
 from __future__ import annotations
@@ -21,14 +18,11 @@ from lucnt_api.logging_config import get_logger
 
 logger = get_logger("lucnt_api.access")
 
-# Callers may supply their own correlation id; anything longer is a log-injection
-# vector and a cardinality risk, so it is replaced rather than truncated.
+# Oversized inbound ids are replaced, not truncated (log injection).
 REQUEST_ID_HEADER = "x-request-id"
 _MAX_INBOUND_REQUEST_ID = 64
 
-# Routes whose own traffic must not be logged or measured: an access line per
-# scrape or per health probe is pure noise, and `/metrics` counting itself is a
-# feedback loop.
+# Probe/scrape noise; `/metrics` must not count itself.
 _UNINSTRUMENTED = frozenset({"/metrics", "/health/live", "/health/ready"})
 
 _UNMATCHED_ROUTE = "__unmatched__"
@@ -67,8 +61,6 @@ class RequestContextMiddleware:
             nonlocal status_code
             if message["type"] == "http.response.start":
                 status_code = int(message["status"])
-                # Echo the id so a caller can quote it in a bug report and an
-                # engineer can find every line the request produced.
                 headers = list(message.get("headers", []))
                 headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
                 message = {**message, "headers": headers}
@@ -79,9 +71,6 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception:
-            # The exception handler in `main.py` turns this into a 500 response
-            # for the client; re-raising keeps the ASGI contract intact while
-            # still letting the `finally` block record the failure.
             self._record(scope, started, status_code, failed=True)
             raise
         else:
@@ -99,9 +88,7 @@ class RequestContextMiddleware:
 
         duration = time.perf_counter() - started
         route: Any = scope.get("route")
-        # `scope["route"]` is set by Starlette's router once a route matches, so
-        # a 404 (or a request rejected before routing) has none. Naming those by
-        # their raw path is how a metrics endpoint acquires a million series.
+        # Unmatched requests have no route; never label by raw path.
         route_template = getattr(route, "path", None) or _UNMATCHED_ROUTE
         method: str = scope.get("method", "")
 

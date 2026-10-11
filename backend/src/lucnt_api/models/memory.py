@@ -1,15 +1,6 @@
-"""Memory ORM model — an agent's learned financial patterns (Phase 5, M8).
+"""Memory ORM model: an agent's learned financial patterns (M8).
 
-A `memories` row is one durable, human-readable pattern the intelligence layer
-has learned about an agent: its dominant vendor, its typical spend range, its
-cost-per-output profile. Memories are recomputed from the ledger
-(`POST /intelligence/recompute`), never written on the capture path, so the
-frozen `authorize→capture` spine stays lane-agnostic.
-
-At most one memory of each `memory_type` exists per agent
-(`uq_memories_agent_type`); recompute upserts it, so `created_at` records when
-the pattern was first learned ("learned since") and `updated_at` when it was last
-refreshed — the accumulating, company-specific memory that is M8's moat.
+Recomputed from the ledger; `created_at` is "learned since".
 """
 
 from __future__ import annotations
@@ -35,12 +26,7 @@ from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
 class MemoryType(enum.StrEnum):
-    """The kind of learned pattern a memory records.
-
-    `SPEND_PATTERN` — the agent's typical amount range and cadence.
-    `VENDOR_AFFINITY` — the vendor(s) it concentrates spend on.
-    `COST_PROFILE` — its cost per unit of output (per task type / project).
-    """
+    """Learned-pattern kind: spend range/cadence, vendor affinity, cost/output."""
 
     SPEND_PATTERN = "spend_pattern"
     VENDOR_AFFINITY = "vendor_affinity"
@@ -52,11 +38,9 @@ class Memory(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "memories"
     __table_args__ = (
-        # One memory of each type per agent — recompute upserts in place so a
-        # learned pattern is a single evolving record, not a growing log.
+        # One per (agent, type); recompute upserts in place.
         UniqueConstraint("agent_id", "memory_type", name="uq_memories_agent_type"),
-        # GET /memory scopes by company; agent_id lookups already ride
-        # uq_memories_agent_type's leading column.
+        # GET /memory scopes by company.
         Index("ix_memories_company_id", "company_id"),
     )
 
@@ -71,8 +55,7 @@ class Memory(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     )
     summary: Mapped[str] = mapped_column(String(255))
     detail_text: Mapped[str] = mapped_column(Text)
-    # Structured metrics backing the summary (amounts, counts, shares). `Any` is
-    # justified as elsewhere: heterogeneous JSON per memory type.
+    # Heterogeneous per memory type, hence `Any`.
     metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

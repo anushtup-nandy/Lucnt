@@ -1,19 +1,6 @@
 """Database readiness: connectivity plus schema-at-head.
 
-One function serves two callers with deliberately different reactions to the
-same failure:
-
-* the **lifespan** refuses to finish starting — a process that cannot reach its
-  database, or that is running against a schema older than its models, should
-  never reach a load balancer's healthy pool in the first place;
-* **`GET /health/ready`** reports it as a 503 — by then the process is already
-  serving, and the useful behaviour is to be taken *out* of rotation rather than
-  to die and take its in-flight requests with it.
-
-The migration check is the half that matters in practice. A deploy that ships new
-model code against an un-migrated database does not fail at startup today; it
-fails later, on the first request that touches the new column, as a 500 from deep
-inside a router.
+The lifespan refuses to start on failure; `GET /health/ready` returns 503.
 """
 
 from __future__ import annotations
@@ -32,8 +19,7 @@ from lucnt_api.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Escape hatch for layouts this module's search cannot guess (a non-editable
-# install whose working directory is not the project root, say).
+# Override for layouts the search below cannot guess.
 _SCRIPT_LOCATION_ENV = "ALEMBIC_SCRIPT_LOCATION"
 
 
@@ -79,8 +65,6 @@ def _expected_head() -> str | None:
     config.set_main_option("script_location", str(location))
     heads = ScriptDirectory.from_config(config).get_heads()
     if len(heads) != 1:
-        # Multiple heads means an un-merged branch point; refusing to guess is
-        # better than silently comparing against an arbitrary one.
         raise RuntimeError(f"expected exactly one Alembic head, found {heads!r}")
     return heads[0]
 
@@ -88,12 +72,7 @@ def _expected_head() -> str | None:
 def check_readiness(db: Session) -> ReadinessReport:
     """Ping the database and compare its schema revision against the code's head.
 
-    Takes a `Session` rather than an `Engine` so `GET /health/ready` can be served
-    through the ordinary `get_db` dependency. That matters twice: the probe then
-    exercises the same connection path as every real route (a pool that cannot
-    hand out a connection is exactly what readiness should catch), and it honours
-    `dependency_overrides`, so the suite's probe reports on the database the suite
-    is actually bound to.
+    Takes a `Session` so the probe uses the real pool via `get_db`.
     """
     try:
         db.execute(text("SELECT 1"))
@@ -101,8 +80,7 @@ def check_readiness(db: Session) -> ReadinessReport:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one_or_none()
     except SQLAlchemyError as exc:
-        # The message can carry the DSN, so it is logged rather than returned to
-        # an unauthenticated prober; `detail` stays deliberately vague.
+        # The message can carry the DSN; keep `detail` vague for the prober.
         logger.error("readiness_database_unreachable", error=str(exc))
         return ReadinessReport(
             database_reachable=False,

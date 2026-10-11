@@ -1,10 +1,4 @@
-"""Pydantic schemas for the vendors router.
-
-The vendors registry carries place of supply — a vendor's country/state/registration
-decide RCM and the CGST/SGST/IGST head split at capture. A finance admin enriches
-auto-created vendors here; the SDK wire contract is untouched (``vendor`` stays a
-free string on `SpendRequest`).
-"""
+"""Vendors schemas. Place of supply decides RCM and the CGST/SGST/IGST split."""
 
 from __future__ import annotations
 
@@ -50,11 +44,8 @@ class VendorRead(BaseModel):
     country: str | None
     state: str | None
     gstin: str | None
-    # The countries the vendor is GST-registered in; `is_registered` is a
-    # derived convenience (true iff registered anywhere).
     gst_registered_in: list[str]
     is_registered: bool
-    # Withholding-tax documentation.
     trc_on_file: bool
     trc_expiry: date | None
     form_10f_on_file: bool
@@ -78,12 +69,9 @@ class VendorCreate(BaseModel):
     country: str | None = Field(default=None, max_length=2)
     state: str | None = Field(default=None, max_length=10)
     gstin: str | None = Field(default=None, max_length=20)
-    # The countries the vendor is GST-registered in. Empty ⇒ unregistered
-    # everywhere; an India entry makes an India supply forward charge, its absence
-    # reverse charge.
+    # An India entry makes an India supply forward charge; absent => RCM.
     gst_registered_in: list[str] = Field(default_factory=list)
-    # Withholding-tax documentation: whether a TRC / Form 10F is on file and
-    # the TRC's expiry, collected at onboarding to fix the s.195 withholding rate.
+    # TRC / Form 10F fix the s.195 withholding rate.
     trc_on_file: bool = False
     trc_expiry: date | None = None
     form_10f_on_file: bool = False
@@ -108,20 +96,15 @@ class VendorCreate(BaseModel):
 
 
 class VendorUpdate(BaseModel):
-    """`PATCH /vendors/{id}` — enrich an (often auto-created) vendor (admin).
-
-    Every field is optional; only the ones provided are updated.
-    """
+    """`PATCH /vendors/{id}` (admin); only provided fields change."""
 
     model_config = ConfigDict(frozen=True)
 
     country: str | None = Field(default=None, max_length=2)
     state: str | None = Field(default=None, max_length=10)
     gstin: str | None = Field(default=None, max_length=20)
-    # Replaces the whole registration list when present; pass ``[]`` to mark
-    # a vendor unregistered everywhere.
+    # Replaces the whole list; ``[]`` marks the vendor unregistered.
     gst_registered_in: list[str] | None = None
-    # Withholding-tax documentation; only fields present are updated.
     trc_on_file: bool | None = None
     trc_expiry: date | None = None
     form_10f_on_file: bool | None = None

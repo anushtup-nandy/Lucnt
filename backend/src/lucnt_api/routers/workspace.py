@@ -1,10 +1,4 @@
-"""Workspace reads: legal entities and team members.
-
-Two small collections behind the Settings page, plus `GET /entities`, which the
-workspace switcher in the top bar needs on every page. Both are
-configuration-shaped — bounded by how many entities and people a customer has,
-not by ledger volume — so they use the wide page bound.
-"""
+"""Workspace reads: legal entities and team members (wide page bound)."""
 
 from __future__ import annotations
 
@@ -35,8 +29,7 @@ router = APIRouter(tags=["workspace"])
 
 @router.get("/entities", response_model=EntityListResponse)
 def list_entities(
-    # Deliberately NOT gated on the `settings` nav item: the entity switcher is
-    # in the top bar of every page, so every role needs to read this list.
+    # Not nav-gated: every role's top-bar entity switcher reads this.
     ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
     page: Page = Depends(paginate(WIDE_PAGE_SIZE, WIDE_MAX_PAGE_SIZE)),
@@ -60,11 +53,7 @@ def list_users(
     db: Session = Depends(get_db),
     page: Page = Depends(paginate(WIDE_PAGE_SIZE, WIDE_MAX_PAGE_SIZE)),
 ) -> UserListResponse:
-    """List the company's team members.
-
-    Name, email, role and active flag only — no password hash, no last-login
-    timestamp, nothing the Settings table does not render.
-    """
+    """List the company's team members (no password hash or last-login)."""
     stmt = select(User).where(User.company_id == ctx.company.id)
     total = count_total(db, stmt)
     rows = (

@@ -1,20 +1,7 @@
-"""Backfill re-flagging when a vendor's place of supply changes.
+"""Re-flag booked spends when a vendor's place of supply changes.
 
-When a finance admin enriches or corrects a vendor's place of supply, spends
-already booked against that vendor may have been taxed under a treatment that no
-longer matches the vendor's now-known status (e.g. booked domestic GST, but the
-vendor is really a foreign unregistered supplier owing reverse charge). History is
-**immutable** — the original journal and tax records are never rewritten. Instead
-each divergent transaction is flagged into the recon queue (`TAX_UNCLASSIFIED`, the
-same "tax needs review" bucket a capture-time gap uses) so a human decides whether
-to post a correcting adjustment.
-
-Scope (MVP): compares the *regime* (`tax_type` — domestic GST vs reverse charge vs
-unclassified), the coarse legal fact at stake. Finer divergences (the
-CGST/SGST vs IGST head split, reclaimability) are out of scope here. The scan is
-bounded to the one enriched vendor's own transactions; it runs synchronously inside
-the admin's PATCH (acceptable for an admin action — a background job is a later
-optimisation, and there is no index on the vendor-name expression yet).
+History is immutable: divergent transactions go to the `TAX_UNCLASSIFIED` recon
+queue for a human. Compares only `tax_type`, not head split or reclaimability.
 """
 
 from __future__ import annotations
@@ -44,23 +31,13 @@ _ZERO = Decimal("0")
 
 
 def reflag_divergent_history(db: Session, company_id: uuid.UUID, vendor: Vendor) -> int:
-    """Flag committed spends whose booked regime disagrees with the enriched vendor.
+    """Flag spends whose booked regime disagrees with the enriched vendor.
 
-    Recomputes each of the vendor's forward transactions at *its own* supply date
-    (so a since-changed statutory rate never rewrites the answer) and compares the
-    recomputed ``tax_type`` against what was booked. On divergence it opens a
-    `TAX_UNCLASSIFIED` recon exception — idempotent per (transaction, type), so a
-    transaction already flagged (e.g. booked unclassified at capture) is not
-    double-flagged. Never mutates the transaction, its journal, or its tax records.
-
-    Args:
-        db: The session; exceptions are added but not committed (the caller's PATCH
-            commits them atomically with the enrichment).
-        company_id: The enriched vendor's company (tenant scope).
-        vendor: The vendor whose place of supply just changed.
+    Recomputes at each transaction's own supply date; idempotent per transaction.
+    Adds exceptions without committing.
 
     Returns:
-        The number of transactions newly flagged this call.
+        The number of transactions newly flagged.
     """
     txns = list(
         db.execute(
@@ -86,7 +63,7 @@ def reflag_divergent_history(db: Session, company_id: uuid.UUID, vendor: Vendor)
                 on_date=txn.transaction_date.date(),
             )
         except TaxRateUnavailableError:
-            # No effective rate at the supply date — cannot recompute; leave as-is.
+            # Cannot recompute without a rate; leave as-is.
             continue
 
         recomputed = compute_tax(
@@ -112,7 +89,6 @@ def reflag_divergent_history(db: Session, company_id: uuid.UUID, vendor: Vendor)
         if booked_type is None or booked_type == recomputed.tax_type:
             continue  # nothing booked, or the regime is unchanged
 
-        # Idempotent: skip if this transaction is already in the tax-review queue.
         already = db.execute(
             select(ReconciliationException.id).where(
                 ReconciliationException.transaction_id == txn.id,

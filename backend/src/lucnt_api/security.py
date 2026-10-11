@@ -1,23 +1,7 @@
-"""Credential primitives: API keys, human passwords, and dashboard JWTs.
+"""Credential primitives: API keys (SHA-256), passwords (argon2id), JWTs (HS256).
 
-Three different secrets, three deliberately different treatments:
-
-* **API keys** — 32 bytes of generated entropy, so SHA-256 and a direct hash
-  lookup. A slow per-record KDF would buy nothing against a secret that cannot
-  be guessed, and would cost a scan of every row on the money path.
-* **Passwords** — low-entropy and human-chosen, so argon2id, which is memory-hard
-  and cannot be looked up. `argon2-cffi` over `python-jose`'s ecosystem for the
-  reasons recorded in `pyproject.toml`.
-* **Dashboard tokens** — HS256 JWTs signed with `settings.secret_key` (P7.0).
-  Access tokens are short-lived and held in the SPA's memory; refresh tokens are
-  longer-lived and confined to an httpOnly SameSite=Strict cookie.
-
-**Refresh tokens are stateless, and therefore not revocable before expiry.**
-`POST /auth/logout` clears the cookie, which ends the session on that browser,
-but a token already copied out of it stays valid for its remaining window. A
-revocation list needs a table, and P7.0 is deliberately migration-free. The
-mitigation is the 7-day ceiling; revisit at GA alongside the WorkOS/Clerk swap
-(D1).
+Refresh tokens are stateless, so not revocable before expiry; logout only
+clears the cookie. Mitigated by the 7-day TTL.
 """
 
 from __future__ import annotations
@@ -49,32 +33,20 @@ class InvalidTokenError(Exception):
 
 
 def generate_api_key(mode: ApiKeyMode) -> str:
-    """Generate a new plaintext API key, e.g. `lucnt_live_<url-safe chars>`.
-
-    The plaintext is returned exactly once, to the issuing caller — only its
-    hash is ever persisted (see `hash_api_key`).
-    """
+    """Generate a plaintext API key (`lucnt_live_...`); only its hash is stored."""
     return f"lucnt_{mode.value}_{secrets.token_urlsafe(_KEY_NBYTES)}"
 
 
 def hash_api_key(key: str) -> str:
-    """Hash a plaintext API key for storage and lookup.
-
-    SHA-256, not bcrypt: an API key is a 32-byte random secret, not a
-    low-entropy password, so it needs direct-lookup by hash rather than a
-    slow, per-record salted comparison.
-    """
+    """Hash an API key for lookup; SHA-256 suffices for 32 random bytes."""
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
 def looks_like_api_key(token: str) -> bool:
     """True for the `lucnt_live_` / `lucnt_test_` prefixes minted by `generate_api_key`.
 
-    The discriminator for the one `Authorization: Bearer` header serving two
-    principal types (`dependencies.get_auth_context`). Prefix-based rather than
-    "try JWT, fall back to key lookup": a JWT is three base64 segments joined by
-    dots and can never carry this prefix, so the two spaces cannot overlap, and
-    a mis-parse here would be an auth bypass rather than a 401.
+    Discriminates API keys from JWTs on the shared Bearer header; the prefix
+    spaces cannot overlap, unlike a try-JWT-then-key fallback.
     """
     return any(token.startswith(f"lucnt_{mode.value}_") for mode in ApiKeyMode)
 
@@ -90,11 +62,7 @@ def hash_password(plaintext: str) -> str:
 
 
 def verify_password(plaintext: str, hashed: str) -> bool:
-    """Constant-time-ish verification. Never raises — a bad hash is a failed login.
-
-    A row whose `password_hash` is corrupt or was written by another scheme must
-    not 500 the login endpoint; it must simply fail to authenticate.
-    """
+    """Constant-time-ish verification. Never raises — a bad hash is a failed login."""
     try:
         return _password_hasher.verify(hashed, plaintext)
     except (VerifyMismatchError, Argon2Error):
@@ -128,9 +96,6 @@ def _mint(user_id: uuid.UUID, company_id: uuid.UUID, token_type: TokenType) -> s
         "typ": token_type,
         "iat": now,
         "exp": now + lifetime,
-        # A unique id per token so two tokens minted in the same second for the
-        # same user are distinguishable in a log, and so a future revocation list
-        # has something to key on.
         "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, settings.secret_key, algorithm=_JWT_ALGORITHM)
@@ -151,14 +116,11 @@ def decode_token(token: str, expected_type: TokenType) -> TokenClaims:
 
     Args:
         token: The raw compact JWT.
-        expected_type: `access` or `refresh`. Checked, not assumed — without it a
-            refresh token would be accepted as a bearer credential, silently
-            turning the 15-minute access window into a 7-day one.
+        expected_type: `access` or `refresh`; stops a refresh token posing as
+            an access token.
 
     Raises:
-        InvalidTokenError: signature, expiry, structure, or type mismatch. One
-            exception type for all of them: telling a caller *which* part failed
-            is free information for an attacker and useless to a real client.
+        InvalidTokenError: Any failure; deliberately undifferentiated.
     """
     try:
         payload = jwt.decode(

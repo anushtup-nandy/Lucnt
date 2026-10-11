@@ -1,14 +1,7 @@
-"""Books router — read-only financial statements.
+"""Books router: financial statements plus manual journal, funding, tax settlement.
 
-Every figure derives from `journal_entries` joined to `transactions` (for
-company/entity scope) and `accounts` (for category). Nothing here writes; the
-journal is produced at capture time by `services/journal_generator.py`.
-
-**Per-currency.** Journal lines carry a functional currency; a statement only
-balances *within* one currency. Every figure is grouped and totalled per currency,
-so a company spanning entities in INR/SGD/USD gets one set of per-currency totals
-rather than a single meaningless mixed sum. A consolidated (FX-translated) view
-is deferred.
+Every figure is grouped and totalled per currency; statements only balance within
+one currency.
 """
 
 from __future__ import annotations
@@ -75,9 +68,6 @@ from lucnt_api.services.chart_of_accounts import (
     ensure_default_accounts,
 )
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/books",
     tags=["books"],
@@ -86,8 +76,7 @@ router = APIRouter(
 
 _ZERO = Decimal("0")
 _RETAINED_EARNINGS_NAME = "Retained Earnings"
-# Category for a posted line whose account code resolves to no CoA account —
-# surfaced loudly rather than silently dropped by an inner join.
+# Lines with no CoA account are surfaced, not dropped by an inner join.
 _UNMAPPED = "unmapped"
 
 _FROM_DESC = "Include transactions on/after this date (YYYY-MM-DD)"
@@ -102,11 +91,9 @@ def _as_dt(day: date) -> datetime:
 def _posting_date_conditions(
     date_from: date | None, date_to: date | None
 ) -> list[ColumnElement[bool]]:
-    """Restrict a journal line's `posting_date` to a period.
+    """Inclusive period conditions on the line's own `posting_date`.
 
-    The statements periodise off the line's own ``posting_date``, so they are true
-    period statements independent of any transaction join and cover manual/funding/
-    settlement journals (which have no transaction). Both bounds are inclusive.
+    Not transaction-based, so manual/funding/settlement journals are included.
     """
     conditions: list[ColumnElement[bool]] = []
     if date_from is not None:
@@ -140,8 +127,7 @@ class _Aggregate:
     currency: str
     debit: Decimal
     credit: Decimal
-    # Number of journal lines behind these totals. Only the general ledger reads
-    # it; the trial balance and P&L ignore it.
+    # Journal lines behind these totals (general ledger only).
     line_count: int = 0
 
 
@@ -247,22 +233,7 @@ def _gl_entries(
 ) -> dict[tuple[str, str], list[JournalLineRead]]:
     """One page of a single account's journal lines, keyed by (code, currency).
 
-    Scoped to one account and bounded by `page` so the general ledger never
-    materialises the whole journal. Ordered by currency then posting time
-    so paging is stable; a page may therefore straddle two currency sections of
-    the same account.
-
-    Args:
-        db: Session to query.
-        company: Tenant scope.
-        entity_id: Optional entity filter, already resolved from its code.
-        account_code: The single account whose lines to read.
-        date_from: Inclusive period start, or None.
-        date_to: Inclusive period end, or None.
-        page: The `(limit, offset)` window.
-
-    Returns:
-        `{(account_code, currency): [line, ...]}` for the requested page.
+    Ordered by currency then time, so a page may straddle two currency sections.
     """
     stmt = (
         select(JournalEntry)
@@ -347,8 +318,7 @@ def get_journals(
             .scalars()
             .all()
         ):
-            # transaction_id is nullable (manual journals), but this query filters
-            # on the fetched txn ids, so every row here has one — narrow for mypy.
+            # Always set here (filtered on txn ids); narrow for mypy.
             if line.transaction_id is not None:
                 lines_by_txn[line.transaction_id].append(line)
 
@@ -393,21 +363,12 @@ def get_general_ledger(
 ) -> GeneralLedgerResponse:
     """General ledger: every posted account/currency with its totals and balance.
 
-    Two shapes, because the line-level view is the only unbounded one:
-
-    * **Listing** (no `account`) — totals per account/currency, computed by a
-      SQL `GROUP BY`. Costs one row per account, not one per journal line, so it
-      no longer loads a 500k-line ledger into memory to add up six numbers.
-      `entries` is empty here and `entry_count` reports how many lines exist.
-    * **Detail** (`?account=CODE`) — the same totals plus that account's lines,
-      bounded by `limit`/`offset`. Journal lines run 2-5x transaction count, so
-      this is the one place the row-level cost has to be paid, and it is paid a
-      page at a time.
+    Without `account`, totals only (`entries` empty). With `?account=CODE`, that
+    account's lines are included, paginated.
     """
     entity_id = _resolve_entity_id(db, company, entity)
 
-    # Totals come from the same grouped aggregate the trial balance and P&L use,
-    # so the three statements can never disagree about an account's balance.
+    # Shared aggregate keeps GL, TB and P&L consistent.
     aggregates = [
         a
         for a in _aggregates(db, company, entity_id, date_from, date_to)
@@ -575,8 +536,7 @@ def get_balance_sheet(
 
     currencies: list[BalanceSheetTotals] = []
     for ccy, aggs in sorted(_by_currency(aggregates).items()):
-        # Undistributed P&L rolls into equity as retained earnings — the line
-        # that makes assets == liabilities + equity hold, per currency.
+        # Retained earnings make assets == liabilities + equity per currency.
         retained = _net_profit(aggs)
         equity.append(
             BookLine(
@@ -663,11 +623,9 @@ def _post_journal(
     specs: list[tuple[str, Decimal, Decimal]],
     accounts: dict[str, Account],
 ) -> PostedJournalResponse:
-    """Build, balance-check and stage a set of self-sufficient journal lines.
+    """Validate, balance-check and stage `(account_code, debit, credit)` lines.
 
-    Each spec is ``(account_code, debit, credit)``. The lines carry no
-    ``transaction_id`` and must reference real CoA accounts and balance
-    (Σ debit == Σ credit). Does not commit — the caller owns audit + commit.
+    Does not commit; the caller owns audit + commit.
     """
     entries: list[JournalEntry] = []
     read_lines: list[JournalLineRead] = []
@@ -736,11 +694,7 @@ def create_manual_journal(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> PostedJournalResponse:
-    """Post a balanced manual journal — an accrual, prepaid, or correction.
-
-    Admin-scoped and audited. Booked in the entity's functional currency; the
-    lines must reference real CoA accounts and balance.
-    """
+    """Post a balanced manual journal (accrual, prepaid, correction)."""
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
     posting_date = request.posting_date or datetime.now(UTC).date()
@@ -784,12 +738,7 @@ def create_funding(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> PostedJournalResponse:
-    """Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.
-
-    The funding/opening-balance entry the ledger previously lacked — without it
-    every balance sheet showed negative cash & equity from day one (the wallet was
-    only ever credited by spend). Admin-scoped, audited, functional currency.
-    """
+    """Fund an entity's wallet: Dr Wallet / Cr Contributed Capital."""
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
     posting_date = request.posting_date or datetime.now(UTC).date()
@@ -824,8 +773,7 @@ def create_funding(
     return result
 
 
-# Utilise input tax credit against output GST in this head order (IGST first, then
-# CGST/SGST, then the legacy unsplit head) — the legal set-off order.
+# Legal ITC set-off order; "GST" is the legacy unsplit head.
 _GST_HEADS: tuple[str, ...] = ("IGST", "CGST", "SGST", "GST")
 
 
@@ -842,10 +790,8 @@ def settle_taxes(
 ) -> TaxSettlementResponse:
     """Book a return-cycle GST settlement, clearing Payable against ITC.
 
-    Nets the period's accumulated output GST (the per-head Payable accounts) against
-    input tax credit (the per-head ITC accounts), books the residual as GST Payable
-    to Government, and carries forward any unutilised ITC — so the balance sheet no
-    longer shows an ever-growing liability + asset. Admin-scoped and audited.
+    The residual is booked to GST Payable to Government; unutilised ITC carries
+    forward.
     """
     entity = _require_entity(db, company, request.entity)
     accounts = ensure_default_accounts(db, company.id)
@@ -876,9 +822,7 @@ def settle_taxes(
     net_payable = total_output - utilised
     carried_forward = total_itc - utilised
 
-    # Dr each accumulated Payable to clear it; Cr ITC up to the utilised amount in
-    # set-off order; Cr the net to GST Payable to Government. Balances by
-    # construction: Σ Payable(Dr) == utilised ITC(Cr) + net payable(Cr).
+    # Balances by construction: Σ Payable(Dr) == utilised ITC(Cr) + net(Cr).
     specs: list[tuple[str, Decimal, Decimal]] = []
     for head in _GST_HEADS:
         if output[head] > _ZERO:

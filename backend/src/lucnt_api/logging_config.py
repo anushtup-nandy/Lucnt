@@ -1,20 +1,6 @@
-"""Structured logging.
+"""Structured logging: one structlog formatter for app and library logs.
 
-`structlog` was declared in `pyproject.toml` from the first commit and never
-imported: until now the backend emitted **no logs at all** beyond the one
-`logging.getLogger` in `rate_limit.py`. A "my agent got blocked at 2am" report
-had no forensic artifact other than database rows.
-
-Two rules shape this module:
-
-* **One stream, one format.** Application logs, `uvicorn`'s, SQLAlchemy's and
-  Alembic's all pass through the same `structlog` formatter, so a log shipper
-  never has to parse two syntaxes out of one stdout. JSON off a deployment,
-  human-readable colour on a laptop (`Settings.resolved_log_format`).
-* **Request context is ambient.** `bind_contextvars` in the middleware means
-  every line emitted while serving a request carries its `request_id` without a
-  single call site having to thread it through — which is the only version of
-  this that survives contact with 70 source files.
+`request_id` is bound via contextvars in the middleware, not threaded through.
 """
 
 from __future__ import annotations
@@ -27,8 +13,7 @@ import structlog
 
 from lucnt_api.config import settings
 
-# Loggers that would otherwise double-report what our own access log already
-# says, one line per request, in a second format.
+# Duplicates our own access log.
 _SILENCED = ("uvicorn.access",)
 
 
@@ -36,8 +21,7 @@ def configure_logging() -> None:
     """Install the structlog + stdlib logging pipeline. Idempotent."""
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
-    # Processors applied to *every* event, whether it originated in structlog or
-    # in the stdlib. `merge_contextvars` is what injects `request_id`.
+    # Applied to structlog and stdlib events alike.
     shared: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
@@ -56,8 +40,7 @@ def configure_logging() -> None:
     structlog.configure(
         processors=[
             *shared,
-            # Hands off to the stdlib formatter below rather than rendering here,
-            # so structlog and stdlib records cannot drift apart in shape.
+            # Render in the stdlib formatter so both record kinds share a shape.
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -66,8 +49,6 @@ def configure_logging() -> None:
     )
 
     formatter = structlog.stdlib.ProcessorFormatter(
-        # `format_exc_info` must run only for stdlib records; structlog events
-        # arriving via `wrap_for_formatter` already carry a rendered exception.
         foreign_pre_chain=[*shared, structlog.stdlib.ExtraAdder()],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
@@ -80,9 +61,7 @@ def configure_logging() -> None:
     handler.setFormatter(formatter)
 
     root = logging.getLogger()
-    # Replace rather than append: `configure_logging()` runs once per process in
-    # normal operation, but gunicorn's own logging setup and repeated calls from
-    # tests would otherwise stack duplicate handlers on the root logger.
+    # Replace, not append: gunicorn and repeated test calls would stack handlers.
     root.handlers = [handler]
     root.setLevel(log_level)
 

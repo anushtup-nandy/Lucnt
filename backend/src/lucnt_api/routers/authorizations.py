@@ -1,13 +1,6 @@
-"""Authorizations router — the verdict list behind the Transactions chips (D5).
+"""Authorizations router: policy verdicts (blocked/flagged/held spends).
 
-`Transaction.status` has exactly one member, `completed`, so a captures-only
-list cannot show a blocked spend. Blocked, flagged and held spends are
-`authorizations` rows (`VerdictStatus`), which had no list endpoint until now.
-
-**One chip, one endpoint, one status value**. `status`
-takes a single value rather than a comma list precisely so pagination stays
-correct: a client-side union over paginated pages silently reports "3 of 3"
-while page 2 holds four more.
+`status` takes a single value, not a list, so server-side pagination stays correct.
 """
 
 from __future__ import annotations
@@ -40,12 +33,7 @@ def list_authorizations(
     entity: str | None = Query(default=None, description="Filter by entity code"),
     page: Page = Depends(paginate()),
 ) -> AuthorizationListResponse:
-    """List policy verdicts for the current company, newest first.
-
-    Joined to `agents` so the response can carry the agent's name and glyph
-    without the dashboard issuing a lookup per row, and so `agent_owner` scoping
-    happens in this one query rather than after the fact.
-    """
+    """List policy verdicts for the current company, newest first."""
     company = ctx.company
     stmt = (
         select(Authorization, Agent)

@@ -1,12 +1,6 @@
-"""Audit-log helper.
+"""Audit-log helper; rows are staged, not committed, so they land with the mutation.
 
-`record()` appends an audit row within the caller's transaction — it does not
-commit — so the trail lands atomically with the mutation it describes. Callers
-pass JSON-safe ``before``/``after`` snapshots (money as strings).
-
-P7.0: the actor is now the whole `AuthContext` rather than an `ApiKey`, because a
-governance mutation can come from either an SDK key or a signed-in human. The row
-records whichever one it was; exactly one actor column is ever set.
+Snapshots must be JSON-safe (money as strings). Exactly one actor column is set.
 """
 
 from __future__ import annotations

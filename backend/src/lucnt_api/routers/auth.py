@@ -1,20 +1,7 @@
 """Dashboard auth: login, refresh, logout, me.
 
-Hand-rolled JWT with the `resolve_perms()` seam kept (D1). WorkOS/Clerk is a GA
-decision, not a demo dependency — and it would still require this seam.
-
-**Token placement is the security design, not a preference.**
-
-* The **access token** is returned in the body and held in the SPA's memory
-  only. `localStorage` is readable by any injected script; a token that survives
-  a tab close buys convenience and sells the session.
-* The **refresh token** is set as an httpOnly, `SameSite=Strict` cookie, so
-  JavaScript cannot read it and a cross-site request cannot send it. `Secure` is
-  set outside development, where the dashboard is served over plain HTTP.
-
-Login is rate-limited on the caller's IP through the existing auth-failure
-bucket — the same one that guards API-key brute force — because a login
-endpoint is the cheapest password-guessing oracle in the product.
+Access token lives in SPA memory only (never localStorage); the refresh token is
+an httpOnly SameSite=Strict cookie. Login shares the per-IP auth-failure limiter.
 """
 
 from __future__ import annotations
@@ -98,10 +85,8 @@ def login(
     """Exchange email + password for an access token and a refresh cookie.
 
     Raises:
-        HTTPException: 401 for any failure — unknown email, wrong password, or
-            a deactivated account. One message for all three, deliberately:
-            distinguishing them turns the endpoint into an account enumerator.
-            429 when the IP has exhausted its failed-attempt budget.
+        HTTPException: 401 with one message for every failure (no account
+            enumeration); 429 when the IP's failed-attempt budget is spent.
     """
     limiter = get_limiter()
     limiter.guard_auth_attempt(request_ip)
@@ -109,8 +94,7 @@ def login(
     user = db.execute(
         select(User).where(User.email == payload.email.strip().lower())
     ).scalar_one_or_none()
-    # `verify_password` is still called against a real hash when the user exists
-    # but is inactive, so the three failure modes cost roughly the same time.
+    # Inactive users still hit verify_password, keeping failure timings similar.
     if (
         user is None
         or not user.is_active
@@ -133,12 +117,9 @@ def refresh(
 ) -> TokenResponse:
     """Mint a new access token from the refresh cookie, rotating the cookie.
 
-    The refresh token is re-issued on every use so a stolen cookie's window is
-    bounded by the next legitimate refresh rather than by the full 7 days.
-
     Raises:
         HTTPException: 401 if the cookie is absent, invalid, expired, or names a
-            user who has since been deactivated.
+            deactivated user.
     """
     if not lucnt_refresh:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No session")
@@ -159,12 +140,7 @@ def refresh(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response) -> None:
-    """Clear the refresh cookie.
-
-    This ends the session on this browser. It does **not** revoke a refresh
-    token already copied out of the cookie — the token is stateless and P7.0 has
-    no revocation table (see `security.py`). The 7-day ceiling is the mitigation.
-    """
+    """Clear the refresh cookie; a copied refresh token is not revoked (stateless)."""
     response.delete_cookie(REFRESH_COOKIE, path="/auth")
 
 
@@ -172,13 +148,8 @@ def logout(response: Response) -> None:
 def me(ctx: AuthContext = Depends(get_auth_context)) -> MeResponse:
     """The signed-in user, their company, and their resolved permissions.
 
-    The SPA's first call after login: `perms.nav` builds the sidebar and
-    `perms.landing` decides where to land. Both are data, never hardcoded.
-
     Raises:
-        HTTPException: 400 when called with an API key, which has no user, no
-            role and therefore no nav. Not 403 — the credential is valid, it is
-            simply the wrong *kind* for this endpoint.
+        HTTPException: 400 when called with an API key (valid but wrong kind).
     """
     if ctx.user is None or ctx.perms is None:
         raise HTTPException(

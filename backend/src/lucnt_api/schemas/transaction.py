@@ -1,8 +1,7 @@
-"""Pydantic schemas for the transactions router.
+"""Transactions schemas.
 
-`SpendRequest`/`Verdict`/`Transaction` mirror `sdk/src/lucnt/models.py`
-field-for-field: this is the frozen wire contract. Do not add,
-rename, or drop a field here without updating the SDK models in lockstep.
+`SpendRequest`/`Verdict`/`Transaction` are the frozen wire contract: change
+them only in lockstep with `sdk/src/lucnt/models.py`.
 """
 
 from __future__ import annotations
@@ -28,10 +27,7 @@ from lucnt_api.constants import (
     VENDOR_MAX,
 )
 
-# ISO-4217 alpha codes are three uppercase letters. Membership in the *supported*
-# set is enforced downstream by the fail-closed FX table (a valid-format but
-# unrated currency is rejected at authorize/capture); the schema only guarantees
-# the shape and normalises case.
+# Shape only; supported-currency membership is enforced by the fail-closed FX table.
 _ISO_4217_RE = re.compile(r"[A-Z]{3}")
 
 
@@ -40,37 +36,24 @@ class SpendRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # Every `max_length` below mirrors the column the value lands in.
-    # Without them an oversized string passes validation and fails in Postgres as
-    # a 500 `DataError`; with them the caller gets a 422 naming the field.
+    # `max_length`s mirror columns: a 422 instead of a Postgres 500.
     agent: str = Field(min_length=1, max_length=AGENT_SLUG_MAX)
     entity: str = Field(min_length=1, max_length=ENTITY_CODE_MAX)
     vendor: str = Field(min_length=1, max_length=VENDOR_MAX)
-    # Money must be strictly positive: a zero/negative authorize would *reduce*
-    # projected spend and always approve, and a negative capture would decrement
-    # spent_ytd (a budget-refund / theft primitive).
+    # Strictly positive: a negative amount would bypass budgets / refund spend.
     amount: Decimal = Field(gt=0)
-    # Mandatory: the caller always states the currency it paid in — the one
-    # fact only it knows. Never silently defaulted, so a foreign spend can never be
-    # mislabelled as domestic. Validated to an ISO-4217 shape and upper-cased.
+    # Never defaulted, so a foreign spend can't be mislabelled as domestic.
     currency: str
-    # `reason` is a TEXT column, so this cap is payload policy, not a column
-    # mirror — it is echoed into `agent.spend.created`.
+    # TEXT column; cap is payload policy (echoed into `agent.spend.created`).
     reason: str = Field(min_length=1, max_length=REASON_MAX)
     intent: str | None = Field(default=None, max_length=INTENT_MAX)
     project: str | None = Field(default=None, max_length=PROJECT_MAX)
-    # Optional expense category: a known category
-    # (software|ai_compute|travel|marketing|general) books to that account and
-    # drives blocked-ITC; an unknown value falls back to vendor inference.
+    # Known category drives account + blocked-ITC; unknown falls back to vendor.
     category: str | None = Field(default=None, max_length=CATEGORY_MAX)
-    # Tax slab + inclusive/exclusive. `tax_category` picks the GST rate slab
-    # (e.g. "gst_5"|"gst_12"|"gst_28"; omitted ⇒ "standard"); `tax_inclusive` says
-    # whether a domestic amount embeds GST (default) or has it added on top.
+    # GST slab (e.g. "gst_5"; omitted => "standard"); inclusive = amount embeds GST.
     tax_category: str | None = Field(default=None, max_length=TAX_CATEGORY_MAX)
     tax_inclusive: bool = True
-    # Whether the purchase is a service or goods. A cross-border *goods*
-    # spend routes to a customs path, never the services reverse charge; defaults to
-    # ``service`` (agent spend is ~all services), so existing callers are unaffected.
+    # Cross-border goods go via customs, never the services reverse charge.
     supply_type: Literal["service", "goods"] = "service"
     model: str | None = Field(default=None, max_length=MODEL_NAME_MAX)
     tokens: int | None = Field(default=None, ge=0)
@@ -94,11 +77,8 @@ class SpendRequest(BaseModel):
 class Verdict(BaseModel):
     """Response body for `POST /transactions/authorize`. Mirrors `sdk.Verdict`.
 
-    Phase 3 adds `code`, a machine-readable reason (`ok`, `budget_exhausted`,
-    `merchant_blocked`, `velocity_exceeded`, `amount_over_threshold`,
-    `outside_hours`) the SDK maps to typed exceptions under `strict=True`. It is
-    an open string set (each future rule adds a code), not a `Literal`, so a new
-    code never breaks an older SDK.
+    `code` is an open string (not a `Literal`) so a new code never breaks an
+    older SDK.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -112,36 +92,24 @@ class Verdict(BaseModel):
 class CaptureRequest(BaseModel):
     """Request body for `POST /transactions/capture`. Mirrors `sdk.ledger.capture()`.
 
-    Phase 3.5 adds optional settlement overrides (`amount`/`model`/`tokens`):
-    the actual values known only after the spend (e.g. the true LLM cost from
-    `meter()`). When omitted, the authorization's held values stand. This is the
-    hold-vs-settle split — `authorize` holds an estimate, `capture` books truth
-    — and the same fields serve the future card rail (auth $X, settle $Y).
+    `amount`/`model`/`tokens` override the held estimate with settled actuals.
     """
 
     model_config = ConfigDict(frozen=True)
 
     authorization_id: uuid.UUID
     source: Literal["sdk", "card", "invoice"] = "sdk"
-    # Evidence link persisted on the transaction and readable back via
-    # GET /transactions/{id}; the M3 invoice hook is its structured consumer.
     invoice_url: str | None = Field(default=None, max_length=URL_MAX)
-    # A settlement override, when present, must be strictly positive; its
-    # upper bound versus the authorized amount is enforced in the router.
+    # Upper bound vs the authorized amount is enforced in the router.
     amount: Decimal | None = Field(default=None, gt=0)
     model: str | None = Field(default=None, max_length=MODEL_NAME_MAX)
     tokens: int | None = Field(default=None, ge=0)
-    # True when the booked amount is the authorize-time estimate rather than
-    # settled actual usage — the SDK's fallback sets this so the ledger can
-    # distinguish an estimate from truth instead of an ERROR log.
+    # Booked amount is the authorize-time estimate, not settled usage.
     estimated: bool = False
 
 
 class JournalLine(BaseModel):
-    """One double-entry journal line returned with a captured transaction.
-
-    Mirrors `sdk.JournalLine`. Part of the frozen contract — keep in lockstep.
-    """
+    """A captured transaction's journal line. Mirrors `sdk.JournalLine`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -154,10 +122,7 @@ class JournalLine(BaseModel):
 
 
 class TaxInfo(BaseModel):
-    """The tax treatment returned with a captured transaction.
-
-    Mirrors `sdk.TaxInfo`. Part of the frozen contract — keep in lockstep.
-    """
+    """A captured transaction's tax treatment. Mirrors `sdk.TaxInfo`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -174,11 +139,7 @@ class TaxInfo(BaseModel):
 
 
 class Transaction(BaseModel):
-    """Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`.
-
-    Phase 2 adds `journal` (double-entry lines) and `tax` (jurisdiction
-    treatment), both produced synchronously on capture.
-    """
+    """Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -188,9 +149,7 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
-    # Echoes the request flag so the caller can see what the ledger booked.
     estimated: bool = False
-    # Echoes the persisted evidence link (readable back via GET too).
     invoice_url: str | None = None
     journal: list[JournalLine] = Field(default_factory=list)
     tax: TaxInfo | None = None
@@ -216,15 +175,10 @@ class TransactionDetail(BaseModel):
     intent: str | None
     model_used: str | None
     tokens_consumed: int | None
-    # The booked amount is an unsettled estimate (see `CaptureRequest`).
     estimated: bool
-    # The evidence link supplied at capture, if any.
     invoice_url: str | None
     status: str
-    # `transactions.status` has exactly one member (`completed`), so `is_reversed`
-    # is what actually distinguishes a live capture from a reversed one — and the
-    # `reversed=` filter would otherwise return rows the client cannot label.
-    # Mirrors why `estimated` is on this schema.
+    # `status` is always `completed`; this is what marks a reversal.
     is_reversed: bool
     reason_text: str | None
     failure_reason: str | None
@@ -232,14 +186,7 @@ class TransactionDetail(BaseModel):
 
 
 class TransactionFull(TransactionDetail):
-    """`GET /transactions/{id}` — the detail row plus what only it can afford.
-
-    The tax treatment and the journal are a join each. On the *list* they would
-    be an N+1 per page; on a single row they are two queries, and the dashboard's
-    transaction detail is meaningless without them: the balanced double entry is
-    the product's central claim, and a page that asserts it without showing it is
-    a façade.
-    """
+    """`GET /transactions/{id}` — detail plus tax and journal (N+1 on the list)."""
 
     tax: TaxInfo | None = None
     journal: list[JournalLine] = []
@@ -257,24 +204,19 @@ class TransactionListResponse(BaseModel):
 class VoidRequest(BaseModel):
     """Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.
 
-    Releases an approved-but-uncaptured hold so it stops reserving the agent's
-    budget. Used when the spend the hold was taken for did not happen —
-    the vendor call failed after `authorize()` returned, say.
+    Releases an approved-but-uncaptured hold when the spend did not happen.
     """
 
     model_config = ConfigDict(frozen=True)
 
     authorization_id: uuid.UUID
-    # Free-text explanation stored on the hold, for the recovery inbox (M7).
     reason: str | None = Field(default=None, max_length=REASON_MAX)
 
 
 class VoidResult(BaseModel):
-    """Result of releasing a hold via `POST /transactions/void`.
+    """Result of `POST /transactions/void`.
 
-    `already_released` makes the endpoint idempotent: a retried void (the SDK
-    calls it from an error path, so retries are expected) returns 200 describing
-    the original release rather than conflicting with it.
+    Idempotent: a retried void returns 200 with `already_released` set.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -286,12 +228,7 @@ class VoidResult(BaseModel):
 
 
 class AuthorizationSummary(BaseModel):
-    """One policy verdict, as `GET /authorizations` returns it (D5).
-
-    Carries the agent's name and glyph inline: the dashboard renders a glyph per
-    row, and a lookup per row is the N+1 that `/transactions` already avoids by
-    the same means.
-    """
+    """One policy verdict from `GET /authorizations`; agent name/glyph inline."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -307,8 +244,7 @@ class AuthorizationSummary(BaseModel):
     intent: str | None
     project: str | None
     status: Literal["approved", "blocked", "review", "human_hold"]
-    # Open string, not an enum, for the same reason `Verdict.code` is: a new
-    # rule adds a code, and a new code must never break an older client.
+    # Open string, like `Verdict.code`.
     verdict_code: str | None
     reason_text: str | None
     created_at: datetime

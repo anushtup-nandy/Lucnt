@@ -1,9 +1,4 @@
-"""Pydantic schemas for the reconciliation (recovery) router (Phase 4, M7).
-
-Enum columns are surfaced as plain `str` (the router maps `.value`), mirroring
-`schemas/policy.py`. `evidence` is the detector facts plus the drafted recovery
-plan; it is heterogeneous per exception type (`Any` is justified, as in Policy).
-"""
+"""Reconciliation schemas. `evidence` is heterogeneous per exception type."""
 
 from __future__ import annotations
 
@@ -36,13 +31,9 @@ class ReconExceptionResponse(BaseModel):
 
 
 class ReconListResponse(BaseModel):
-    """Response for `GET /recon` — the inbox page plus a stable summary header.
+    """`GET /recon` — inbox page plus a filter-independent summary.
 
-    `total` is the filtered/paginated count; `total_at_stake` and `open_count`
-    summarize all *active* (open + recovering) exceptions for the company,
-    independent of the list filters — the "$ at stake" headline. `total_at_stake`
-    is a **per-currency** map (currency -> sum), never a meaningless cross-currency
-    total.
+    `total_at_stake` covers all active exceptions, keyed per currency.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -59,25 +50,21 @@ class ReconResolveRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     action: Literal["resolve", "dismiss"]
-    # Bounded: `fix_notes` lands in a TEXT column, so nothing downstream
-    # rejects an oversized note — the cap is what stops one resolve inflating
-    # storage and the audit record.
+    # TEXT column: this cap is the only size bound.
     fix_notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
 
 class FailedDeliveryRequest(BaseModel):
-    """Request body for `POST /recon/failed-delivery` (the SDK `mark_failed_delivery`).
+    """`POST /recon/failed-delivery`: a spend whose downstream task failed.
 
-    Agent-reported: a spend whose downstream task failed. `amount_at_stake`
-    defaults to the transaction's full paid amount when not given.
+    `amount_at_stake` defaults to the transaction's paid amount.
     """
 
     model_config = ConfigDict(frozen=True)
 
     transaction_id: uuid.UUID
-    # Bounded free text: an unbounded reason is an abuse/DoS vector.
     reason: str = Field(min_length=1, max_length=500)
-    # Non-negative; the router additionally caps it at the transaction's amount.
+    # Router also caps it at the transaction's amount.
     amount_at_stake: Decimal | None = Field(default=None, ge=0)
 
 

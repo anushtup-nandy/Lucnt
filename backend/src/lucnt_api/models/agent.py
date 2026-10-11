@@ -24,11 +24,7 @@ from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
 class AgentStatus(enum.StrEnum):
-    """Lifecycle status of an agent.
-
-    Distinct from mockup display labels like "Budget exhausted", which are
-    derived at read time from spend/budget, not stored.
-    """
+    """Lifecycle status; labels like "Budget exhausted" are derived, not stored."""
 
     ACTIVE = "active"
     PAUSED = "paused"
@@ -41,10 +37,9 @@ class Agent(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "agents"
     __table_args__ = (
         UniqueConstraint("company_id", "slug", name="uq_agents_company_slug"),
-        # Unindexed FK, filtered by GET /agents?entity= and the budget rollups.
+        # GET /agents?entity= and budget rollups.
         Index("ix_agents_entity_id", "entity_id"),
-        # The agent_owner persona scopes GET /agents by owner_user_id. Partial:
-        # null for most rows today.
+        # agent_owner scoping; partial since most rows are null.
         Index(
             "ix_agents_owner_user_id",
             "owner_user_id",
@@ -64,7 +59,6 @@ class Agent(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     wallet_ref: Mapped[str | None] = mapped_column(String(100), default=None)
     models_list: Mapped[list[str]] = mapped_column(JSONB, default=list)
     vendors_list: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    # NUMERIC, never FLOAT -- money/ledger fields (Decimal, not float).
     monthly_budget: Mapped[Decimal] = mapped_column(
         Numeric(18, 4), default=Decimal("0")
     )

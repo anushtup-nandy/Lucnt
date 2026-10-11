@@ -1,11 +1,4 @@
-"""Pydantic schemas for the Intelligence layer (Phase 5, M8).
-
-Covers the Insights and Memory pages (`routers/insights.py`, `routers/memory.py`),
-the recompute pass and the living financial-memory read (`routers/intelligence.py`,
-the SDK `query()` backing). Enum columns surface as plain `str` (routers map
-`.value`), mirroring `schemas/recon.py`; heterogeneous JSON is typed `Any` as
-justified elsewhere.
-"""
+"""Intelligence schemas: insights, memory, recompute, and SDK `query()`."""
 
 from __future__ import annotations
 
@@ -162,11 +155,9 @@ class FingerprintBlock(BaseModel):
 
 
 class FinancialMemoryResponse(BaseModel):
-    """Living financial memory for one agent — the SDK `query()` response.
+    """SDK `query()` response, computed live from the agent's ledger.
 
-    Computed live from the agent's ledger so an agent can self-regulate *before*
-    it spends (M8). `headline` answers the free-text `q`, keyword-routed to the
-    most relevant dimension (budget / cost / on-track) — no LLM involved.
+    `headline` answers `q` by keyword routing (no LLM).
     """
 
     model_config = ConfigDict(frozen=True)

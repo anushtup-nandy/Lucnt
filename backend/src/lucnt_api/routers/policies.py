@@ -1,9 +1,4 @@
-"""Policies router — CRUD for the governance rules the engine evaluates (M5).
-
-Configs are validated against their `rule_type` at write time
-(`services.policy_engine.parse_config`) so a malformed rule can never reach the
-engine at authorize time. Everything is company-scoped.
-"""
+"""Policies router: CRUD; configs are validated against `rule_type` at write time."""
 
 from __future__ import annotations
 
@@ -39,9 +34,6 @@ from lucnt_api.schemas.policy import (
 from lucnt_api.services.audit import record as record_audit
 from lucnt_api.services.policy_engine import parse_config
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/policies",
     tags=["policies"],

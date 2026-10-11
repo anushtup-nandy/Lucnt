@@ -1,11 +1,4 @@
-"""Vendors router — the place-of-supply registry.
-
-A vendor's country/state/registration decide RCM and the CGST/SGST/IGST head split
-at capture. Spends auto-create unenriched vendor rows (`services/vendors.py`); a
-finance admin enriches them here so future spends are taxed by place of supply
-rather than the currency fallback. Mutations are admin-scoped and
-audited; reads are company-scoped.
-"""
+"""Vendors router: the place-of-supply registry that drives RCM and GST head split."""
 
 from __future__ import annotations
 
@@ -36,8 +29,7 @@ from lucnt_api.services.vendors import normalize_vendor_name
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 
-# Fields whose change can alter a spend's tax regime — a change to any of them
-# re-checks the vendor's booked history for divergence.
+# Changing any of these re-checks booked history for tax-regime divergence.
 _PLACE_OF_SUPPLY_FIELDS = frozenset({"country", "state", "gst_registered_in"})
 
 
@@ -91,11 +83,7 @@ def create_vendor(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> VendorRead:
-    """Register a vendor with its place of supply (admin, audited).
-
-    A 409 if a vendor with the same (normalized) name already exists — enrich that
-    one via `PATCH /vendors/{id}` instead.
-    """
+    """Register a vendor with its place of supply; 409 on a duplicate name."""
     normalized = normalize_vendor_name(request.name)
     if (
         db.execute(
@@ -150,11 +138,7 @@ def update_vendor(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> VendorRead:
-    """Enrich a vendor's place of supply (admin, audited).
-
-    Only fields present in the request are updated (PATCH semantics), so a spend's
-    auto-created row can be filled in without disturbing the rest.
-    """
+    """Enrich a vendor's place of supply; only fields present are updated."""
     vendor = _require_vendor(db, company, vendor_id)
     before = {
         "country": vendor.country,
@@ -165,8 +149,7 @@ def update_vendor(
     for field, value in updated.items():
         setattr(vendor, field, value)
     db.flush()
-    # If place of supply changed, re-check the vendor's already-booked spends
-    # and flag any whose regime now diverges — never rewriting history.
+    # Flag divergent booked spends; never rewrite history.
     if _PLACE_OF_SUPPLY_FIELDS & updated.keys():
         reflag_divergent_history(db, company.id, vendor)
     record_audit(

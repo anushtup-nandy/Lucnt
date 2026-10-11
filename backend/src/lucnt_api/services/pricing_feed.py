@@ -1,16 +1,7 @@
-"""Server-side pricing feed — resolves date-ranged rates to today's price.
+"""Server-side pricing feed: resolves date-ranged rates to today's flat price.
 
-The SDK ships a packaged pricing pack, which means a price change needs a
-client release — and a wrong price books a wrong amount. This service is the
-designed replacement: the server owns the pricing document, resolves any
-date-ranged rates against *today*, and serves a flat pack the SDK merges over
-its packaged fallback. Date logic lives here so
-the client never grows a date engine; the client receives only flat string
-prices.
-
-Money in the document is **strings, never JSON numbers** — the same boundary
-rule as the SDK pack: a number would arrive client-side as a float, the one
-type that cannot represent a price exactly.
+Date logic stays server-side so the SDK stays date-dumb. Money is always a string;
+a JSON number would arrive client-side as a float.
 """
 
 from __future__ import annotations
@@ -31,8 +22,7 @@ def load_feed_document() -> dict[str, Any]:
     """Read and parse the feed document shipped with the backend.
 
     Raises:
-        ValueError: The document is missing or not a JSON object — a broken
-            deployment, surfaced loudly rather than served as an empty feed.
+        ValueError: The document is not a JSON object (fail loudly, not empty).
     """
     raw = files(_FEED_PACKAGE).joinpath(_FEED_FILENAME).read_text(encoding="utf-8")
     parsed = json.loads(raw)
@@ -66,10 +56,8 @@ def _resolve_model(
 ) -> dict[str, Any]:
     """Flatten one model entry to the price effective on `today`.
 
-    A `rates` window matches when `from <= today <= until` (either bound may
-    be omitted for an open-ended window); the first matching window wins, and
-    the entry's own top-level input/output is the fallback list price. The
-    resolved entry carries no `rates` — the client stays date-dumb.
+    First window with `from <= today <= until` wins (bounds optional); otherwise
+    the top-level list price.
     """
     resolved: dict[str, Any] = {
         "input": _require_price(entry.get("input"), f"{where}.input"),
@@ -109,14 +97,7 @@ def _resolve_model(
 def resolve_feed(today: date, document: dict[str, Any] | None = None) -> dict[str, Any]:
     """Produce the flat, client-facing feed effective on `today`.
 
-    Args:
-        today: The date to resolve rate windows against (UTC date in the
-            router; injectable here so tests never depend on the wall clock).
-        document: Override for the shipped document (tests only).
-
-    Returns:
-        The SDK pack shape — `version`, `estimation`, `vendors` — with every
-        model at exactly one string price pair and no `rates` machinery.
+    ``document`` overrides the shipped document (tests only).
 
     Raises:
         ValueError: The document is malformed (non-string money, bad window).

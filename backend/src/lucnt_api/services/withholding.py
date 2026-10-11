@@ -1,25 +1,7 @@
-"""India s.195 withholding-tax engine.
+"""India s.195 withholding on payments to non-residents (in addition to GST RCM).
 
-A **second, independent regime check beside GST**: every India-entity → foreign
-(non-resident) vendor payment owes income-tax withholding under s.195, *in
-addition to* GST reverse charge. This is the one tax path that can **block a
-payment** — a bank will not process the remittance without a Form 15CA (often a
-CA-certified 15CB) — so the gate runs at authorize, before money moves.
-
-Pure and SQLAlchemy-free, like the tax/policy engines: it takes value inputs and
-returns a `WithholdingOutcome`. The money-path boundary supplies the vendor's
-documentation (TRC / Form 10F, from the registry) and the effective rates/threshold
-(from config).
-
-**Rates are provisional (config, not hard-coded here) — confirm with a CA.** The
-DTAA treaty rate applies only with a valid, unexpired Tax Residency Certificate +
-Form 10F; otherwise the higher domestic default applies. Above the 15CB threshold a
-CA certificate is required, so a remittance whose treaty position cannot be
-certified (docs missing) is **held for documentation** rather than remitted blind.
-
-**Not modelled here (deferred):** the double-entry GL leg (a TDS-payable liability
-+ any gross-up — needs CA guidance on who bears the tax) and the actual 15CA/15CB
-document generation (the record carries nullable form ids).
+Pure. Runs at authorize because a bank won't remit without Form 15CA/15CB. Rates
+come from config and are provisional; confirm with a CA. GL leg not modelled.
 """
 
 from __future__ import annotations
@@ -37,12 +19,12 @@ _IN = "IN"
 class WithholdingOutcome:
     """The s.195 withholding verdict for one India→non-resident payment."""
 
-    applies: bool  # True only for an India entity paying a non-resident vendor
-    rate: Decimal  # the applied rate as a fraction (0.15 = 15%)
-    amount: Decimal  # withholding on the functional amount (0 when not applicable)
-    treaty_rate_applied: bool  # DTAA treaty rate (valid TRC + 10F) vs domestic default
-    blocked: bool  # halt the remittance pending documentation (the money-path gate)
-    reason: str  # human-readable summary for the verdict / record
+    applies: bool
+    rate: Decimal  # fraction (0.15 = 15%)
+    amount: Decimal
+    treaty_rate_applied: bool  # DTAA rate needs a valid TRC + Form 10F
+    blocked: bool  # hold remittance pending documentation
+    reason: str
 
 
 def determine_withholding(
@@ -60,27 +42,8 @@ def determine_withholding(
 ) -> WithholdingOutcome:
     """Compute s.195 withholding for a payment.
 
-    Args:
-        buyer_country: The paying entity's ISO country. Withholding applies only
-            when this is ``"IN"``.
-        vendor_country: The vendor's ISO country. A non-resident (``!= "IN"``) is
-            the s.195 case; ``None`` (unenriched) ⇒ withholding cannot be
-            determined and does not apply (the capture-time UNCLASSIFIED flag
-            handles that vendor instead).
-        functional_amount: The payment in the entity's functional currency.
-        on_date: The transaction date, for TRC-expiry evaluation.
-        trc_on_file: Whether the vendor's Tax Residency Certificate is on file.
-        trc_expiry: The TRC's expiry date (``None`` ⇒ treated as unexpired).
-        form_10f_on_file: Whether the vendor's Form 10F is on file.
-        treaty_rate: The DTAA treaty rate (applied with a valid TRC + Form 10F).
-        domestic_rate: The domestic default rate (applied when docs are missing).
-        cb_threshold: The Form-15CB threshold above which missing docs block —
-            all three injected from config (provisional; confirm with a CA).
-
-    Returns:
-        A `WithholdingOutcome`. ``blocked`` is True when the treaty position cannot
-        be certified (docs missing/expired) and the amount is at/above the 15CB
-        threshold — a remittance a bank would not process without a 15CB.
+    An unenriched ``vendor_country`` (None) is not applicable; the capture-time
+    UNCLASSIFIED flag handles it. A ``trc_expiry`` of None counts as unexpired.
     """
     if buyer_country != _IN or vendor_country is None or vendor_country.upper() == _IN:
         return WithholdingOutcome(
@@ -100,10 +63,8 @@ def determine_withholding(
     rate = treaty_rate if docs_valid else domestic_rate
     amount = (functional_amount * rate).quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
 
-    # Above the 15CB threshold a CA certificate is required; without a valid TRC +
-    # Form 10F the treaty position cannot be certified, so the remittance is held for
-    # documentation rather than sent blind. Below the threshold the (higher domestic)
-    # rate simply applies and the payment proceeds.
+    # Above the 15CB threshold an uncertifiable treaty position is held, not sent;
+    # below it the domestic rate applies and the payment proceeds.
     blocked = (not docs_valid) and functional_amount >= cb_threshold
     if blocked:
         reason = (

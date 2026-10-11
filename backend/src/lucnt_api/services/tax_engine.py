@@ -1,45 +1,7 @@
-"""Jurisdiction-aware tax engine.
+"""Jurisdiction-aware tax engine (IN GST, SG GST, US sales/use tax).
 
-Given an entity's tax regime and the transaction amount **in the entity's
-functional currency**, compute the tax treatment. Pure and side-effect-free: it
-returns a `TaxTreatment` value; persistence and journalling happen elsewhere.
-
-MVP scope — India GST, Singapore GST, US sales tax:
-
-- **Imported services** (paid in a foreign currency, i.e. a foreign vendor that
-  bills no local tax) under IN/SG GST trigger the **reverse charge (RCM)**: the
-  buyer self-assesses tax *on top of* the tax-exclusive amount, claims it back as
-  input credit, and must issue a self-invoice.
-- **Domestic services** carry GST *embedded* in the (tax-inclusive) amount; the
-  engine extracts it and records the reclaimable input credit.
-- **US sales tax**: no federal VAT and state sales/use-tax nexus is not evaluated
-  in the MVP, so no tax is self-assessed (rate 0).
-
-**Currency.** Tax is computed on ``functional_amount`` —
-the paid amount already converted to the entity's functional currency by
-`services/fx.py` at capture — never on the raw foreign amount. Computing an INR
-entity's RCM on a USD figure understated GST by the whole FX factor. Currency
-plays **no** role in deciding import vs domestic: that is the vendor
-registry's place of supply. The *amount* the rate applies to is always functional.
-
-**Place of supply.** Import-vs-domestic and the reverse-charge decision key
-off the vendor's ``country`` and ``vendor_registered_in`` (the countries it is
-GST-registered in) — never its invoice currency, which was wrong in both
-directions. The legal reverse-charge test is registration *in the buyer's
-country*. When the vendor is unenriched (no ``country``), the engine does not
-guess: it returns a conservative ``"UNCLASSIFIED"`` treatment with
-``confidence="exception"`` (no ITC, no self-invoice, whole amount expensed) and
-the money path opens a recon exception.
-
-**Effective-dated rate.** The statutory ``rate`` is *injected* by the
-caller, resolved from the effective-dated `tax_rates` table by
-`services/tax_rates.py` at the money-path boundary (the capture/authorize
-router), keyed by the transaction date — so a rate change (SG GST 7%→8%→9%)
-never back-applies to a historical supply. This keeps the engine pure and
-SQLAlchemy-free; it applies whatever rate it is given.
-
-All money math is `Decimal`; tax is carried at the ledger's 4dp scale,
-ROUND_HALF_UP.
+Pure: returns a `TaxTreatment`. Tax is computed on the functional-currency amount;
+import vs domestic comes from the vendor registry, never currency.
 """
 
 from __future__ import annotations
@@ -47,28 +9,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
-# Tax is carried at the ledger's 4dp money scale; rounding to 2dp happens
-# only at return/invoice aggregation, so token-scale micro-amounts don't vanish
-# to zero (100k charges of ₹0.03 tax are ~₹457, not ₹0).
+# 4dp ledger scale; 2dp rounding only at return/invoice aggregation so
+# token-scale micro-amounts don't vanish to zero.
 _FOUR_PLACES = Decimal("0.0001")
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
 _TWO = Decimal("2")
 
-# The regimes the engine understands. Anything else is a misconfigured entity and
-# must fail loud, never silently book zero tax for months.
+# Unknown regimes must fail loud, never silently book zero tax.
 KNOWN_TAX_REGIMES: frozenset[str] = frozenset({"IN-GST", "SG-GST", "US-Sales-Tax"})
 
-# ITC is blocked for these expense categories under CGST s.17(5):
-# the GST becomes a cost, not a reclaimable credit. This is the full s.17(5) set:
-# motor vehicles, food & beverage, employee benefits, works contracts
-# for immovable property, plus travel/hotel. Keyed by regime (India only for MVP).
-#
-# Note: a `blocked_credit` column on `tax_rates` was considered, but that
-# table keys by *rate slab* (standard/gst_5…), a different dimension from the
-# *expense category* that decides blocked ITC — conflating them would be wrong. The
-# set is kept here as reviewed reference data; a rule-driven store, if wanted later,
-# belongs in its own (regime, expense_category) reference, not `tax_rates`.
+# ITC blocked under CGST s.17(5): the GST becomes a cost. Keyed by expense
+# category, not rate slab, so it does not belong in `tax_rates`.
 _BLOCKED_ITC_CATEGORIES: dict[str, frozenset[str]] = {
     "IN-GST": frozenset(
         {
@@ -88,7 +40,7 @@ class UnknownTaxRegimeError(Exception):
     """The entity's `tax_regime` is not one the engine understands."""
 
     def __init__(self, regime: str) -> None:
-        """Record the offending regime string for the caller / logs."""
+        """Record the offending regime."""
         self.regime = regime
         super().__init__(
             f"unknown tax regime {regime!r}; expected one of "
@@ -98,13 +50,9 @@ class UnknownTaxRegimeError(Exception):
 
 @dataclass(frozen=True)
 class TaxComponent:
-    """One GST head of a treatment — persisted as its own `TaxRecord`.
+    """One tax head of a treatment, persisted as its own `TaxRecord`.
 
-    India intra-state splits one supply into CGST + SGST (two components);
-    inter-state/import is a single IGST component; SG/US/the fallback path is a
-    single unsplit ``GST``/``NONE`` component. ``Σ component.tax_amount`` equals
-    the treatment's summary ``tax_amount`` (the split is exact), so the journal and
-    GSTR-3B agree.
+    Components sum exactly to the treatment totals so journal and GSTR-3B agree.
     """
 
     head: str  # CGST | SGST | IGST | GST | NONE
@@ -115,12 +63,7 @@ class TaxComponent:
 
 @dataclass(frozen=True)
 class TaxTreatment:
-    """The tax verdict for one transaction — persisted as one or more `TaxRecord`s.
-
-    The summary fields (``tax_type``/``rate``/``tax_amount``/``reclaim_amount`` …)
-    are the aggregate over ``components`` and are unchanged from the pre-split
-    contract; ``components`` carries the per-head breakdown.
-    """
+    """Tax verdict for one transaction; summary fields aggregate ``components``."""
 
     tax_type: str  # GST_RCM | GST | SALES_TAX | NONE
     jurisdiction: str
@@ -131,29 +74,17 @@ class TaxTreatment:
     legal_reference: str
     reverse_charge: bool
     self_invoice_required: bool
-    # The functional (entity) currency ``tax_amount``/``reclaim_amount`` are
-    # denominated in — tax is always assessed in functional currency.
-    currency: str
-    # The cash that leaves the wallet in functional currency. Equal to the
-    # paid amount for tax-inclusive and reverse-charge supplies; for a tax-exclusive
-    # domestic supply it is ``functional + tax`` (GST charged on top by the vendor).
+    currency: str  # always the entity's functional currency
+    # Wallet cash out; ``functional + tax`` only for tax-exclusive domestic supply.
     gross_amount: Decimal
-    # Per-head breakdown; at least one component, summing to the totals.
     components: tuple[TaxComponent, ...]
-    # ``"auto"`` when the treatment was determined with confidence; ``"exception"``
-    # when place of supply could not be established (an unenriched vendor) —
-    # the money path books it conservatively and opens a recon exception for
-    # review, never a silent currency guess.
+    # "exception" ⇒ conservative booking + recon exception (unknown supply place).
     confidence: str = "auto"
 
 
 @dataclass(frozen=True)
 class _RegimeRule:
-    """Static metadata for one GST regime (jurisdiction + legal references).
-
-    The *rate* is not here — it is effective-dated and injected per supply; this
-    holds only what is genuinely constant per regime.
-    """
+    """Constant per-regime metadata; the rate is effective-dated and injected."""
 
     jurisdiction: str
     legal_reference_imported: str
@@ -184,12 +115,10 @@ _REGIMES: dict[str, _RegimeRule] = {
 
 
 def _quantize(amount: Decimal) -> Decimal:
-    """Round tax to the ledger's 4dp scale, half-up."""
     return amount.quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _is_itc_blocked(tax_regime: str, expense_category: str | None) -> bool:
-    """Whether input tax credit is barred for this category/regime."""
     if expense_category is None:
         return False
     blocked = _BLOCKED_ITC_CATEGORIES.get(tax_regime, frozenset())
@@ -204,13 +133,9 @@ def _head_mode(
     vendor_state: str | None,
     entity_state: str | None,
 ) -> str:
-    """The GST head split for a supply: ``"GST"`` | ``"IGST"`` | ``"CGST_SGST"``.
+    """GST head split: ``"GST"`` | ``"IGST"`` | ``"CGST_SGST"`` (India only splits).
 
-    Only India with a known place of supply splits. Everything else — SG, US, and
-    the currency-fallback path — uses the unsplit ``"GST"`` head that books to the
-    legacy 1400/2200 accounts (so an unenriched vendor is unchanged). Imports are
-    always inter-state (IGST); a known-state intra-state domestic supply is
-    CGST+SGST; a domestic supply whose state we can't pin stays unsplit ``"GST"``.
+    Imports are IGST; same-state domestic is CGST+SGST; unknown state stays "GST".
     """
     if not place_of_supply_known or tax_regime != "IN-GST":
         return "GST"
@@ -225,11 +150,7 @@ def _head_mode(
 def _components(
     head_mode: str, rate: Decimal, tax_amount: Decimal, reclaim_amount: Decimal
 ) -> tuple[TaxComponent, ...]:
-    """Split a treatment's totals into per-head components.
-
-    CGST+SGST split the rate and amounts in half; the SGST leg takes the rounding
-    remainder so ``Σ component == total`` exactly. IGST/GST is a single component.
-    """
+    """Split totals into heads; SGST takes the rounding remainder so sums are exact."""
     if head_mode == "CGST_SGST":
         cgst_tax = _quantize(tax_amount / _TWO)
         cgst_reclaim = _quantize(reclaim_amount / _TWO)
@@ -247,13 +168,7 @@ def _components(
 def _customs_treatment(
     functional_amount: Decimal, entity_currency: str
 ) -> TaxTreatment:
-    """Cross-border goods import → customs, not services reverse charge.
-
-    Customs duty + border IGST / import GST is outside the MVP's automated scope, so
-    the spend is booked conservatively (no auto-tax, whole amount expensed) and
-    routed to the recon exception queue (``confidence="exception"``) for manual
-    customs handling — never the services RCM path.
-    """
+    """Cross-border goods: customs is not automated, so book no tax and flag it."""
     return TaxTreatment(
         tax_type="CUSTOMS",
         jurisdiction="Customs (imported goods)",
@@ -284,15 +199,8 @@ def _us_treatment(
 ) -> TaxTreatment:
     """US sales/use tax for the buyer's state.
 
-    - ``None`` (state unconfigured) or ``"disputed"`` → a conservative
-      ``confidence="exception"`` treatment (no tax asserted, whole amount
-      expensed); the money path routes it to the recon exception queue rather than
-      guessing.
-    - ``"exempt"`` / ``"no_tax"`` → zero tax, a plain expense.
-    - ``"standard"`` / ``"use_tax"`` → self-assessed **use tax** at ``rate``: a
-      payable to the state, never reclaimable (US tax is a cost, not a VAT input
-      credit). Books like reverse charge — the wallet pays the vendor the net
-      amount and a Use Tax Payable leg carries the tax.
+    Unconfigured/disputed → exception; exempt/no_tax → zero; standard/use_tax →
+    self-assessed, non-reclaimable use tax booked like reverse charge.
     """
     state = us_jurisdiction or "US"
 
@@ -335,8 +243,6 @@ def _us_treatment(
             components=(TaxComponent("NONE", _ZERO, _ZERO, _ZERO),),
         )
 
-    # standard / use_tax → self-assessed use tax for a no-nexus B2B buyer. Not
-    # reclaimable; booked like reverse charge with a Use Tax Payable leg.
     tax = _quantize(functional_amount * rate)
     return TaxTreatment(
         tax_type="SALES_TAX",
@@ -379,62 +285,32 @@ def compute_tax(
 
     Args:
         tax_regime: The entity's regime (e.g. ``"IN-GST"``, ``"US-Sales-Tax"``).
-        functional_amount: The transaction amount **in the entity's functional
-            currency** (already FX-converted from the paid amount).
-        paid_currency: ISO code of what was actually paid — used to decide import
-            vs domestic only when place of supply is unknown (the fallback).
-        entity_currency: ISO code of the entity's functional currency.
-        rate: The statutory rate as a fraction (0.18 = 18%), effective-dated and
-            resolved by the caller from `services/tax_rates.py`. For the US
-            regime it is the buyer state's sales/use-tax rate.
-        expense_category: Optional caller-stated category; drives blocked input
-            tax credit — e.g. IN travel spend cannot reclaim ITC.
-        tax_inclusive: Whether a *domestic* amount includes GST. ``True``
-            (default) extracts embedded GST; ``False`` treats the amount as
-            tax-exclusive and adds GST on top (``gross = amount + tax``). Ignored
-            for reverse charge (always assessed on the tax-exclusive amount).
-        vendor_country: The vendor's ISO country from the registry. When
-            given (with ``entity_country``), import-vs-domestic and the CGST/SGST/
-            IGST head split are decided by *place of supply*, not currency. When
-            ``None`` (an unenriched vendor) the engine falls back to the currency
-            heuristic and a single unsplit ``GST`` head — today's behaviour.
-        vendor_state: The vendor's state (India), for intra- vs inter-state.
-        vendor_registered_in: The ISO countries the vendor is GST-registered in.
-            The reverse-charge test is registration *in the buyer's country*: a foreign
-            vendor registered there (OIDAR) charges forward IGST (not RCM); a domestic
-            India vendor absent from this list is reverse charge under CGST s.9(4).
-            ``None``/empty ⇒ registered nowhere.
-        entity_country: The recipient entity's ISO country.
-        entity_state: The recipient entity's state (India).
-        us_rule_type: For the US regime, the buyer state's resolved rule —
-            ``standard``/``use_tax`` (self-accrue use tax at ``rate``),
-            ``exempt``/``no_tax`` (zero), ``disputed`` (route to the exception
-            queue), or ``None`` (state unconfigured → also an exception).
-        us_jurisdiction: The resolved US jurisdiction (``"US-TX"``) for the
-            legal reference; ``None`` when the state is unconfigured.
-        supply_type: ``"service"`` (default) or ``"goods"``. A cross-border
-            *goods* supply routes to the customs path, never services reverse
-            charge; domestic goods fall through to the normal treatment.
+        functional_amount: Amount in the entity's functional currency.
+        paid_currency: ISO code actually paid (unused for place of supply).
+        entity_currency: The entity's functional currency.
+        rate: Effective-dated statutory rate as a fraction (0.18 = 18%).
+        expense_category: Drives blocked ITC (e.g. IN travel).
+        tax_inclusive: Domestic amount includes GST; ignored for reverse charge.
+        vendor_country: Vendor ISO country; ``None`` ⇒ UNCLASSIFIED exception.
+        vendor_state: Vendor state (India), for intra- vs inter-state.
+        vendor_registered_in: Countries the vendor is GST-registered in; RCM
+            applies when the buyer's country is absent.
+        entity_country: The entity's ISO country.
+        entity_state: The entity's state (India).
+        us_rule_type: Buyer state's US rule; ``None``/disputed ⇒ exception.
+        us_jurisdiction: Resolved US jurisdiction (e.g. ``"US-TX"``).
+        supply_type: ``"service"`` or ``"goods"``; cross-border goods ⇒ customs.
 
     Returns:
-        A `TaxTreatment` whose ``components`` carry the per-head split.
-        ``currency`` is always ``entity_currency``.
+        A `TaxTreatment` in ``entity_currency`` with per-head ``components``.
 
     Raises:
         UnknownTaxRegimeError: ``tax_regime`` is not in `KNOWN_TAX_REGIMES`.
     """
     if tax_regime not in KNOWN_TAX_REGIMES:
-        # Fail loud on a misconfigured regime rather than silently booking zero
-        # tax for months. Validating the regime at entity creation is the
-        # proper guard (deferred with the entities CRUD endpoint); this is the
-        # last line of defence at capture.
         raise UnknownTaxRegimeError(tax_regime)
 
-    # Imported goods (customs duty + border tax) are a different mechanism from
-    # imported services (reverse charge), so a cross-border *goods* supply never
-    # routes through the services path. Domestic goods (same country) fall
-    # through to the normal domestic treatment; a goods supply whose place of supply
-    # is unknown falls through to UNCLASSIFIED below.
+    # Cross-border goods are customs, never services reverse charge.
     if (
         supply_type == "goods"
         and vendor_country is not None
@@ -446,8 +322,6 @@ def compute_tax(
     rule = _REGIMES.get(tax_regime)
 
     if rule is None:
-        # US sales/use tax, decided by the buyer state's rule — no longer a
-        # blanket zero.
         return _us_treatment(
             functional_amount=functional_amount,
             entity_currency=entity_currency,
@@ -456,12 +330,8 @@ def compute_tax(
             us_jurisdiction=us_jurisdiction,
         )
 
-    # Place of supply must come from the registry — never currency. Without
-    # the vendor's country we cannot tell import from domestic; rather than guess
-    # (wrong in both directions), book a conservative no-phantom treatment and flag
-    # for review: claim no ITC, assess no reverse charge, issue no
-    # self-invoice, expense the whole amount. The money path opens a recon
-    # exception on ``confidence == "exception"`` so finance enriches the vendor.
+    # Unknown place of supply: don't guess from currency. Book conservatively
+    # (no ITC, no RCM, whole amount expensed) and flag for review.
     if vendor_country is None or entity_country is None:
         return TaxTreatment(
             tax_type="UNCLASSIFIED",
@@ -482,12 +352,8 @@ def compute_tax(
             confidence="exception",
         )
 
-    # Import-vs-domestic and who-bears-the-tax are two independent axes, both from
-    # the registry — never currency:
-    #   * ``imported``: is the supplier offshore relative to the buyer — drives the
-    #     IGST vs CGST/SGST head split and the import legal reference.
-    #   * ``registered_in_buyer_country``: is the vendor GST-registered *in the
-    #     buyer's country* — the legal reverse-charge test.
+    # Independent axes: ``imported`` drives the head split; registration in the
+    # buyer's country is the legal reverse-charge test.
     buyer = entity_country.strip().upper()
     imported = vendor_country.strip().upper() != buyer
     registered = {c.strip().upper() for c in (vendor_registered_in or ())}
@@ -502,20 +368,14 @@ def compute_tax(
         entity_state=entity_state,
     )
 
-    # Reverse charge (the buyer self-assesses) when the vendor does *not* charge
-    # forward GST in the buyer's country — but only for a cross-border supply or an
-    # India domestic-unregistered supply (CGST s.9(4)). A registered foreign vendor
-    # (OIDAR) charges forward IGST → not RCM. A non-India domestic supply (e.g.
-    # Singapore) stays forward charge regardless of registration. Both RCM legs
-    # self-assess on the tax-exclusive amount; a forward-charge supply has GST
-    # embedded in (or added on top of) the amount and is extracted below.
+    # RCM: vendor not registered in buyer's country AND (cross-border OR India
+    # domestic-unregistered, CGST s.9(4)). Registered OIDAR vendors charge forward.
     reverse_charge = (not registered_in_buyer_country) and (
         imported or tax_regime == "IN-GST"
     )
 
     if reverse_charge:
-        # Self-assessed on the tax-exclusive amount; the wallet only pays the vendor
-        # (the GST is a payable to the government, not cash to the vendor).
+        # GST is a payable to government, not cash to the vendor.
         tax = _quantize(functional_amount * rate)
         gross = functional_amount
         legal_reference = (
@@ -527,17 +387,13 @@ def compute_tax(
         tax_type = "GST_RCM"
         self_invoice_required = True
     elif tax_inclusive:
-        # Domestic tax-inclusive: GST is embedded in the paid amount, extracted.
-        # The wallet paid the gross-inclusive amount.
         tax = _quantize(functional_amount * rate / (_ONE + rate))
         gross = functional_amount
         legal_reference = rule.legal_reference_domestic
         tax_type = "GST"
         self_invoice_required = False
     else:
-        # Domestic tax-exclusive: the vendor charged GST on top of the stated
-        # amount, so the buyer paid ``amount + tax`` — no phantom ITC
-        # extracted from a net figure.
+        # Vendor charged GST on top; extracting from a net figure is phantom ITC.
         tax = _quantize(functional_amount * rate)
         gross = functional_amount + tax
         legal_reference = (
@@ -546,7 +402,6 @@ def compute_tax(
         tax_type = "GST"
         self_invoice_required = False
 
-    # When ITC is blocked the output GST is still owed but not reclaimable.
     reclaim = _ZERO if blocked else tax
     if blocked:
         legal_reference += _BLOCKED_ITC_NOTE

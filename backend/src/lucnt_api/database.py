@@ -13,15 +13,8 @@ from uuid6 import uuid7
 
 from lucnt_api.config import settings
 
-# Explicitly configured pool + timeouts. Every value is sourced from
-# Settings, never hardcoded here — see `config.py` for the sizing rationale.
-#
-# `pool_pre_ping` costs one cheap round-trip per checkout and removes the entire
-# class of "first request after an idle period 500s" failures (a connection
-# reaped by Postgres, a proxy, or a container restart is detected and replaced
-# instead of handed to a request). `statement_timeout` is set as a server-side
-# session option so a runaway query is killed by Postgres rather than holding a
-# pool connection for as long as the client is willing to wait.
+# pre_ping replaces connections reaped while idle; statement_timeout is
+# server-side so Postgres kills runaway queries. Sizing: see `config.py`.
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,

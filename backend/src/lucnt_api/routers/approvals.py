@@ -1,11 +1,4 @@
-"""Approval queue (M6 approver persona) — makes review/human_hold verdicts real.
-
-The policy engine can return `review`/`human_hold`, but
-until now nothing could act on them — no endpoint listed them and `capture`
-rejected anything not `approved`, so two of four verdict types were dead ends.
-This router lists pending holds and lets an approver approve (budget re-checked)
-or reject them; an approved hold becomes capturable.
-"""
+"""Approval queue: list review/human_hold verdicts and approve or reject them."""
 
 from __future__ import annotations
 
@@ -38,9 +31,6 @@ from lucnt_api.services.spend_window import (
     reserved_spend,
 )
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/approvals",
     tags=["approvals"],
@@ -76,11 +66,7 @@ def list_approvals(
     db: Session = Depends(get_db),
     page: Page = Depends(paginate()),
 ) -> ApprovalListResponse:
-    """List holds awaiting approval (review + human_hold) for the current company.
-
-    Paginated: the queue grows with how long holds go unattended, which is
-    exactly the situation in which an unbounded response is least welcome.
-    """
+    """List holds awaiting approval (review + human_hold) for the current company."""
     stmt = select(Authorization).where(
         Authorization.company_id == company.id,
         Authorization.status.in_(_PENDING),
@@ -122,8 +108,7 @@ def approve(
             "authorization references a missing entity",
         )
     month_start, _ = period_starts(now_in_entity_tz(entity))
-    # Value this hold in the entity's functional currency for the re-check;
-    # fall back to the paid amount only for a legacy hold with no FX snapshot.
+    # Functional currency; paid amount only for a legacy hold with no FX snapshot.
     hold_functional = authorization.local_amount or authorization.amount
     projected = (
         committed_spend(db, agent.id, month_start)

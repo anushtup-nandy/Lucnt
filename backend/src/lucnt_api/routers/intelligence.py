@@ -1,17 +1,4 @@
-"""Intelligence router (Phase 5, M8) — recompute the CFO tables, serve live memory.
-
-Two endpoints, both ledger-reading (they never touch the frozen `authorize→capture`
-spine, like the Phase 4 recon scan):
-
-- `POST /intelligence/recompute` runs the pure intelligence services
-  (`services/intelligence.py` + `services/insight_generator.py`) over the whole
-  company ledger and **upserts** `fingerprints`/`memories` and regenerates
-  `insights`. It powers the Insights and Memory dashboard pages.
-- `GET /intelligence/query` computes an agent's living financial memory **live**
-  from its ledger (budget headroom, run-rate projection, cost-per-output,
-  fingerprint) so an agent can self-regulate *before* it spends. It is the SDK
-  `query()` backing and needs no prior recompute.
-"""
+"""Intelligence router: recompute fingerprints/memories/insights; serve `query()`."""
 
 from __future__ import annotations
 
@@ -59,9 +46,7 @@ from lucnt_api.services.insight_generator import (
     generate_insights,
 )
 from lucnt_api.services.intelligence import (
-    # Imported from the pure engine so the SQL cost-unit aggregate below uses
-    # the engine's own fallback label and money rounding rather than a copy
-    # that could drift from it.
+    # Shared with the SQL aggregate below so label and rounding cannot drift.
     _UNATTRIBUTED,
     CostUnit,
     FingerprintFeatures,
@@ -76,16 +61,13 @@ from lucnt_api.services.spend_window import now_in_entity_tz, period_committed_s
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
-_WARNING_PCT = Decimal("80")  # mirrors budgets._rollup — utilisation warning line
+_WARNING_PCT = Decimal("80")  # mirrors budgets._rollup
 _ONE_PLACE = Decimal("0.1")
 _QUERY_COST_UNITS = 5  # top cost-per-output rows returned by query()
-# Rows fetched per round trip when `recompute` streams the whole company ledger.
-# Mirrors `recon._LEDGER_CHUNK_SIZE`: big enough to amortise the round
-# trip, small enough that no single fetch reintroduces the memory spike.
+# Rows per round trip when `recompute` streams the ledger.
 _LEDGER_CHUNK_SIZE = 1_000
 
-# The column tuple `recompute` selects, in SELECT order. Declared next to
-# `_record_from_row` so the projection and its unpack cannot silently drift.
+# The column tuple `recompute` selects, in SELECT order.
 type _SpendRow = tuple[
     uuid.UUID,  # agent_id
     str,  # vendor
@@ -99,11 +81,7 @@ type _SpendRow = tuple[
 
 
 def _record(txn: Transaction) -> SpendRecord:
-    """Project a committed transaction to the intelligence value object.
-
-    Uses the entity-local figures so cross-agent comparisons stay currency-consistent.
-    Keep in sync with `_record_from_row`, its column-tuple twin.
-    """
+    """Project a transaction to a `SpendRecord`; twin of `_record_from_row`."""
     return SpendRecord(
         agent_id=txn.agent_id,
         vendor=txn.vendor,
@@ -117,19 +95,7 @@ def _record(txn: Transaction) -> SpendRecord:
 
 
 def _record_from_row(row: _SpendRow) -> SpendRecord:
-    """Project a streamed ledger row to the intelligence value object.
-
-    The column-tuple twin of `_record`. `recompute` scans the entire
-    company ledger, so it selects the eight columns a `SpendRecord` needs rather
-    than hydrating — and retaining — a `Transaction` entity per row.
-
-    Args:
-        row: `(agent_id, vendor, local_amount, local_currency, project,
-            model_used, tokens_consumed, transaction_date)`.
-
-    Returns:
-        The `SpendRecord` equivalent of that row.
-    """
+    """Column-tuple twin of `_record`, avoiding ORM hydration on a full scan."""
     agent_id, vendor, amount, currency, project, model_used, tokens, date = row
     return SpendRecord(
         agent_id=agent_id,
@@ -161,13 +127,7 @@ def _month_to_date(
 
 
 def _budget_block(db: Session, agent: Agent, entity: Entity) -> BudgetBlock:
-    """Live budget headroom for the current month (mirrors the budgets rollup).
-
-    Spend is the entity-local, current-month committed figure derived from the
-    ledger, not the never-reset ``agents.spent_ytd`` counter — so an agent
-    on-budget this month is not told it is "exhausted" by an inception-to-date
-    total compared against a monthly budget.
-    """
+    """Live current-month budget headroom from the ledger, not ``spent_ytd``."""
     budget = agent.monthly_budget
     spent, _today = period_committed_spend(db, agent.id, entity)
     remaining = budget - spent
@@ -199,9 +159,7 @@ def _build_intel(
 ) -> tuple[AgentIntel, FingerprintFeatures, SpendProjection, list[CostUnit]]:
     """Compute the full intelligence bundle for one agent from its records.
 
-    ``now`` is entity-local and ``fallback_currency`` is the entity's functional
-    currency; the fingerprint pins its home currency to it and ages its velocity
-    to ``now``, and the projection uses local month boundaries.
+    ``now`` must be entity-local: it sets month boundaries and velocity aging.
     """
     features = compute_fingerprint(records, home_currency=fallback_currency, now=now)
     currency = features.home_currency or fallback_currency
@@ -232,12 +190,9 @@ def recompute(
     company: Company = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> RecomputeResponse:
-    """Recompute fingerprints/memories/insights over the whole company ledger.
+    """Recompute fingerprints, memories and insights over the company ledger.
 
-    Upserts one fingerprint per agent and one memory per (agent, type); clears
-    the company's **un-applied** insights and regenerates them (applied insights
-    persist as a record of the action a human took). Idempotent — a second call
-    with no new spend yields the same state.
+    Idempotent; applied or dismissed insights are preserved.
     """
     now_utc = datetime.now(UTC)
     agents = {
@@ -253,11 +208,7 @@ def recompute(
         ).scalars()
     }
 
-    # Stream only the eight columns a `SpendRecord` needs, grouped in a
-    # single pass. Hydrating `Transaction` entities pinned the whole ledger in
-    # the identity map *alongside* the records derived from it, for a response
-    # of five scalars. Ordering by `agent_id` keeps each agent's rows
-    # contiguous, so the grouping walks the stream without random dict churn.
+    # Stream columns, not entities: ORM rows would pin the whole ledger in memory.
     records_by_agent: dict[uuid.UUID, list[SpendRecord]] = {}
     ledger = db.execute(
         select(
@@ -277,7 +228,6 @@ def recompute(
     for row in ledger:
         records_by_agent.setdefault(row[0], []).append(_record_from_row(row))
 
-    # One SELECT for every agent's fingerprint instead of one per agent.
     fingerprints = _existing_fingerprints(db, records_by_agent.keys())
 
     intels: list[AgentIntel] = []
@@ -287,8 +237,7 @@ def recompute(
             continue
         entity = entities.get(agent.entity_id)
         fallback = entity.currency if entity is not None else "USD"
-        # Compute in the entity's local time (month boundaries, velocity aging);
-        # stamp the fingerprint row with a real UTC wall-clock time.
+        # Compute in entity-local time; stamp the row in UTC.
         now_local = now_in_entity_tz(entity) if entity is not None else now_utc
         intel, features, _proj, _units = _build_intel(
             agent, records, now_local, fallback
@@ -321,19 +270,7 @@ def recompute(
 def _existing_fingerprints(
     db: Session, agent_ids: Collection[uuid.UUID]
 ) -> dict[uuid.UUID, Fingerprint]:
-    """Load the fingerprint rows for `agent_ids` in one query.
-
-    Replaces the per-agent SELECT that `_upsert_fingerprint` used to issue from
-    inside the recompute loop. `uq_fingerprints_agent` guarantees at most one
-    row per agent, so `agent_id` is a safe key.
-
-    Args:
-        db: Active session.
-        agent_ids: Agents whose fingerprints are about to be upserted.
-
-    Returns:
-        Existing fingerprints keyed by `agent_id`; agents with none are absent.
-    """
+    """Existing fingerprints keyed by `agent_id` (unique), in one query."""
     if not agent_ids:
         return {}
     rows = db.execute(
@@ -350,20 +287,9 @@ def _upsert_fingerprint(
     now: datetime,
     existing_by_agent: dict[uuid.UUID, Fingerprint],
 ) -> None:
-    """Insert or refresh the single fingerprint row for an agent (race-safe).
+    """Insert or refresh an agent's fingerprint row.
 
-    A concurrent recompute may insert the row between our prefetch and INSERT;
-    the SAVEPOINT lets us fall back to an update instead of 500-ing on the
-    `uq_fingerprints_agent` violation.
-
-    Args:
-        db: Active session.
-        company: Owning company (stamped on an inserted row).
-        agent: Agent the fingerprint describes.
-        features: Freshly computed feature vector and anomaly score.
-        now: UTC wall-clock time to stamp as `last_updated`.
-        existing_by_agent: Prefetched fingerprints from `_existing_fingerprints`
-            — the loop-invariant replacement for a per-agent SELECT.
+    The SAVEPOINT falls back to an update if a concurrent recompute inserted first.
     """
     existing = existing_by_agent.get(agent.id)
     if existing is None:
@@ -391,19 +317,7 @@ def _upsert_fingerprint(
 def _existing_memories(
     db: Session, drafts: Sequence[DraftMemory]
 ) -> dict[tuple[uuid.UUID, MemoryType], Memory]:
-    """Load the memory rows `drafts` will upsert, in one query.
-
-    Replaces the per-draft SELECT inside `_upsert_memories`. `uq_memories_agent_type`
-    guarantees at most one row per `(agent_id, memory_type)`, so that pair is a
-    safe key.
-
-    Args:
-        db: Active session.
-        drafts: Memories about to be upserted.
-
-    Returns:
-        Existing memories keyed by `(agent_id, memory_type)`.
-    """
+    """Existing memories keyed by `(agent_id, memory_type)` (unique), in one query."""
     agent_ids = {draft.agent_id for draft in drafts}
     if not agent_ids:
         return {}
@@ -419,19 +333,7 @@ def _upsert_memories(
 ) -> int:
     """Insert or refresh each (agent, type) memory; returns the count written.
 
-    Race-safe against a concurrent recompute via a per-row SAVEPOINT that falls
-    back to an update on the `uq_memories_agent_type` violation. That
-    fallback also covers the one case the prefetched map cannot see: two drafts
-    sharing a key, where the second insert collides with the first.
-
-    Args:
-        db: Active session.
-        company: Owning company (stamped on an inserted row).
-        drafts: Memories to upsert.
-        existing_by_key: Prefetched rows from `_existing_memories`.
-
-    Returns:
-        The number of memories written (inserted or refreshed).
+    The per-row SAVEPOINT also covers two drafts sharing a key.
     """
     written = 0
     for draft in drafts:
@@ -466,15 +368,9 @@ def _upsert_memories(
 
 
 def _sync_insights(db: Session, company: Company, drafts: list[DraftInsight]) -> None:
-    """Upsert insights on their stable `dedup_key`, preserving ids.
+    """Upsert insights on `dedup_key`, preserving ids; delete stale active ones.
 
-    Instead of delete-all + reinsert (which churned ids and raced a human's
-    "apply"), match each draft to an existing row by `dedup_key`:
-    - a dismissed/applied row for that key → leave it (the human handled it; do not
-      regenerate an active copy — no more nagging forever);
-    - an active row → refresh its content in place (stable id);
-    - no row → insert.
-    Finally, delete active rows whose condition no longer regenerates (stale).
+    A key a human already dismissed or applied is never regenerated.
     """
     existing = list(
         db.execute(select(Insight).where(Insight.company_id == company.id)).scalars()
@@ -534,23 +430,9 @@ def query(
     company: Company = Depends(get_current_company),
     db: Session = Depends(get_db),
 ) -> FinancialMemoryResponse:
-    """An agent's living financial memory (M8), served without a ledger scan.
+    """An agent's financial memory: budget, projection, cost-per-output, fingerprint.
 
-    Two paths, because this is the per-spend SDK call and a full scan per call is
-    O(n) per call and O(n^2) over an agent's lifetime:
-
-    * **Fast path** — an agent that has been through `/recompute` has a stored
-      `Fingerprint`, so the statistics are read rather than recomputed, and the
-      projection and cost-per-output come from SQL aggregates. No record is
-      loaded into Python.
-    * **Fallback** — no stored fingerprint (an agent that has never been
-      recomputed) computes live exactly as before. This is what keeps the
-      documented "needs no prior recompute" contract true.
-
-    **Staleness is real and deliberate.** On the fast path the fingerprint
-    statistics — mean, stddev, median, top vendors, anomaly score — are as fresh
-    as the last `/recompute`. `budget` is always live (a SQL sum over the ledger),
-    so spend headroom, the figure an agent gates on, is never stale.
+    Fingerprint stats are as fresh as the last `/recompute`; `budget` is always live.
     """
     agent_row = db.execute(
         select(Agent).where(Agent.company_id == company.id, Agent.slug == agent)
@@ -609,24 +491,7 @@ def query(
 
 
 def _cost_units_for_agent(db: Session, agent_id: uuid.UUID) -> list[CostUnit]:
-    """`cost_per_output` as one `GROUP BY`, instead of scanning every record.
-
-    Deliberately mirrors `services.intelligence.cost_per_output` term for term —
-    same `(project, currency)` grouping, same `"(unattributed)"` fallback for a
-    null *or empty* project, same "tokens only when every member has them" rule,
-    and the same `_q_money` rounding applied in Python so the SQL sum is never
-    quantized differently. `test_sql_cost_units_match_the_pure_function` pins the
-    two against each other; that test, not this comment, is what stops them
-    drifting.
-
-    Args:
-        db: Session to query.
-        agent_id: The agent whose spend to group.
-
-    Returns:
-        Cost units, dearest average first — the same list `cost_per_output`
-        would return for the same rows.
-    """
+    """SQL twin of `cost_per_output`; must match it term for term (test-pinned)."""
     unit_expr = case(
         (
             or_(Transaction.project.is_(None), Transaction.project == ""),
@@ -640,8 +505,7 @@ def _cost_units_for_agent(db: Session, agent_id: uuid.UUID) -> list[CostUnit]:
             Transaction.local_currency,
             func.coalesce(func.sum(Transaction.local_amount), 0),
             func.count(),
-            # A single missing token count disqualifies the whole group, exactly
-            # as `all(m.tokens is not None ...)` does in the pure function.
+            # One missing token count disqualifies the group, as in the pure fn.
             func.count().filter(Transaction.tokens_consumed.is_(None)),
             func.coalesce(func.sum(Transaction.tokens_consumed), 0),
         )
@@ -674,12 +538,9 @@ def _cost_units_for_agent(db: Session, agent_id: uuid.UUID) -> list[CostUnit]:
 def _month_to_date_for_agent(
     db: Session, agent_id: uuid.UUID, home_currency: str | None, now: datetime
 ) -> Decimal:
-    """The SQL twin of `_month_to_date`.
+    """SQL twin of `_month_to_date`.
 
-    Matches it exactly, including the two things that make it *not*
-    interchangeable with `spend_window.committed_spend`: it filters to the home
-    currency, and it does **not** sign-flip reversals. Collapsing the two would
-    silently change the projection's `month_to_date`.
+    Not `committed_spend`: home-currency only and no reversal sign-flip.
     """
     if home_currency is None:
         return Decimal("0")
@@ -697,13 +558,7 @@ def _month_to_date_for_agent(
 def _fingerprint_block_from_vector(
     vector: Mapping[str, Any],
 ) -> FingerprintBlock | None:
-    """Rebuild the fingerprint view from a persisted `feature_vector`.
-
-    `as_feature_vector` stores every money/ratio field as `str(Decimal)`, so this
-    round-trips exactly — no float ever touches the figures. `Any` is unavoidable
-    here: the source is a JSONB column, so the values are genuinely untyped until
-    this function narrows them.
-    """
+    """Rebuild the fingerprint view from a persisted JSONB `feature_vector`."""
     total_records = int(vector.get("total_records") or 0)
     if total_records == 0:
         return None
@@ -789,10 +644,7 @@ def _headline(
     projection: SpendProjection,
     cost_units: list[CostUnit],
 ) -> str:
-    """One-line answer to `q`, keyword-routed to the most relevant dimension.
-
-    No LLM: a plain keyword match picks budget / cost / on-track (the default).
-    """
+    """One-line answer to `q`, keyword-routed to budget, cost or on-track."""
     ql = (q or "").lower()
     if any(w in ql for w in ("cost", "output", "per unit", "expensive")):
         attributed = [u for u in cost_units if u.unit != "(unattributed)"]
@@ -805,7 +657,6 @@ def _headline(
             f"{budget.remaining} {currency} of {budget.monthly_budget} left this "
             f"cycle ({budget.pct_used}% used)."
         )
-    # Default: the on-track / month-end projection (the CFO's headline question).
     if projection.on_track:
         return (
             f"On track: projecting {projection.projected_month_end} {currency} "

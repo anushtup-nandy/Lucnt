@@ -1,8 +1,4 @@
-"""Pydantic schemas for the budgets router (Phase 3, M6).
-
-`spent`/`remaining`/`pct_used`/`status` are derived at read time from live agent
-spend, never stored — so a budget view can never drift from the ledger.
-"""
+"""Budgets schemas. Utilisation is derived at read time, never stored."""
 
 from __future__ import annotations
 
@@ -11,10 +7,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Upper bound on a settable monthly budget: a sane business ceiling so a
-# fat-fingered or malicious PATCH can't set an effectively-infinite cap that lets
-# every spend through. Generous (100M per currency unit); raise if a real entity
-# needs more.
+# Ceiling so a PATCH can't set an effectively-infinite cap.
 MAX_MONTHLY_BUDGET = Decimal("100000000")
 
 
@@ -31,11 +24,8 @@ class AgentBudget(BaseModel):
     spent: Decimal
     spent_today: Decimal
     remaining: Decimal
-    # What the authorize gate will actually grant. `remaining` ignores
-    # outstanding holds; the gate does not — `reserved` is the live-hold total
-    # measured with the gate's own predicate, and `available` (= remaining −
-    # reserved, may go negative like `remaining`) is the number an agent should
-    # self-regulate on.
+    # `remaining` ignores live holds; `available` = remaining - reserved is what
+    # the authorize gate grants (may go negative).
     reserved: Decimal
     available: Decimal
     pct_used: Decimal
@@ -58,11 +48,9 @@ class WorkflowBudget(BaseModel):
 
 
 class BudgetsResponse(BaseModel):
-    """Response body for `GET /budgets` — per-agent + per-workflow rollups.
+    """`GET /budgets` — per-agent page plus unpaginated workflow rollups.
 
-    `total` counts every agent matching the request's filters, not the length of
-    the returned `agents` page. `workflows` is unpaginated and rolls up
-    *all* member agents, so a rollup stays correct regardless of the page.
+    `total` counts all matching agents, not the page length.
     """
 
     model_config = ConfigDict(frozen=True)

@@ -1,9 +1,4 @@
-"""Insights router (Phase 5, M8) — the "your CFO, always on" recommendations.
-
-Reads the `insights` table that `POST /intelligence/recompute` populates; it never
-computes on the request path. `POST /insights/{id}/apply` marks an insight acted on
-(applied insights survive the next recompute as a record of the action taken).
-"""
+"""Insights router: reads insights populated by `POST /intelligence/recompute`."""
 
 from __future__ import annotations
 
@@ -25,9 +20,6 @@ from lucnt_api.pagination import Page, count_total, paginate
 from lucnt_api.schemas.intelligence import InsightResponse, InsightsListResponse
 from lucnt_api.services.lookups import entity_or_404
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/insights",
     tags=["insights"],
@@ -70,11 +62,7 @@ def list_insights(
     entity: str | None = Query(default=None, description="Filter by entity code"),
     page: Page = Depends(paginate()),
 ) -> InsightsListResponse:
-    """List the company's insights, newest first, with an unapplied headline count.
-
-    Dismissed insights are hidden by default (they are resolved); pass
-    `include_dismissed=true` to see them.
-    """
+    """List the company's insights, newest first, with an unapplied headline count."""
     stmt = select(Insight).where(Insight.company_id == company.id)
     if insight_type is not None:
         stmt = stmt.where(Insight.insight_type == insight_type)
@@ -83,10 +71,7 @@ def list_insights(
     if not include_dismissed:
         stmt = stmt.where(Insight.is_dismissed.is_(False))
     if entity is not None:
-        # `insights.agent_id` is nullable: a company-wide insight belongs to no
-        # agent and therefore to no entity. Those are kept in every entity's view
-        # rather than vanishing when the switcher moves — they are true of the
-        # company regardless of which entity you are looking at.
+        # Company-wide insights (no agent) appear in every entity's view.
         entity_row = entity_or_404(db, company, entity)
         stmt = stmt.outerjoin(Agent, Agent.id == Insight.agent_id).where(
             or_(Insight.agent_id.is_(None), Agent.entity_id == entity_row.id)

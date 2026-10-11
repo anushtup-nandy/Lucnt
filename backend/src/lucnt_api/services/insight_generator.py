@@ -1,17 +1,6 @@
-"""Insight & memory generation (Phase 5, M8) — pure, draft-only.
+"""Insight & memory drafting (M8) — pure; the router persists the results.
 
-Given per-agent intelligence bundles (`AgentIntel`) built by the router from the
-pure `services/intelligence.py` primitives, this module drafts the actionable
-`insights` and the durable per-agent `memories`. It is pure and side-effect-free
-(mirrors `services/recovery_agent.py`): it computes value objects; the router
-persists them. Keeping it SQLAlchemy-free makes every rule unit-testable.
-
-Insight rules — each honestly computable from ledger-derived intelligence:
-- **budget_risk** — an agent's run-rate projects past its monthly budget.
-- **anomaly** — an agent's recent spend is a statistical outlier vs its own
-  fingerprint (``anomaly_score`` at/above the fingerprint threshold).
-- **cost_spike** — a unit of output costs at least ``_COST_SPIKE_FACTOR`` times
-  the company's median unit cost in the same currency.
+Rules: budget_risk (run-rate overrun), anomaly (z ≥ threshold), cost_spike.
 """
 
 from __future__ import annotations
@@ -37,9 +26,8 @@ _COST_SPIKE_FACTOR = Decimal("3")
 _COST_SPIKE_MIN_UNITS = 3  # units needed in a currency to establish a baseline
 _COST_SPIKE_MIN_CHARGES = 2  # a one-off charge is not a sustained cost spike
 
-# Column-length guards. Titles/summaries interpolate agent names and project
-# labels (each up to 255 chars); an over-long composed string would raise a
-# DataError and roll back the *whole company's* recompute.
+# Column-length guards: an over-long string raises DataError and rolls back the
+# whole company's recompute.
 _TITLE_MAX = 255
 _VALUE_TEXT_MAX = 100
 _ACTION_LABEL_MAX = 100
@@ -47,24 +35,19 @@ _SUMMARY_MAX = 255
 
 
 def _clamp(text: str, limit: int) -> str:
-    """Truncate `text` to at most `limit` characters, ellipsising if it overflows."""
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _dedup_key(
     insight_type: InsightType, agent_id: uuid.UUID | None, subject: str = ""
 ) -> str:
-    """Stable natural key `type:agent:subject` — the recompute upsert key.
-
-    ``subject`` distinguishes per-unit insights (the cost_spike project); it is
-    empty for the per-agent types. Must match the migration back-fill.
-    """
+    """Recompute upsert key `type:agent:subject`; must match the migration back-fill."""
     return f"{insight_type.value}:{agent_id if agent_id is not None else ''}:{subject}"
 
 
 @dataclass(frozen=True)
 class AgentIntel:
-    """The intelligence bundle for one agent — the generator's input contract."""
+    """Intelligence bundle for one agent — the generator's input."""
 
     agent_id: uuid.UUID
     agent_name: str
@@ -81,7 +64,7 @@ class DraftInsight:
 
     insight_type: InsightType
     agent_id: uuid.UUID | None
-    dedup_key: str  # stable natural key (type:agent:subject) for in-place upsert
+    dedup_key: str
     title: str
     body: str
     value_text: str | None
@@ -129,11 +112,7 @@ def _median(values: Sequence[Decimal]) -> Decimal:
 
 
 def generate_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
-    """Draft every insight the current intelligence supports, most urgent first.
-
-    Ordered budget_risk -> anomaly -> cost_spike so the recovery-style inbox
-    surfaces money-at-risk before informational cost signals.
-    """
+    """Draft every supported insight, money-at-risk first."""
     return [
         *_budget_risk_insights(intels),
         *_anomaly_insights(intels),
@@ -179,8 +158,6 @@ def _anomaly_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
         stats = features.amount_stats
         if not features.enough_data or stats is None or features.anomaly_score <= 0:
             continue
-        # Only surface a genuinely out-of-pattern spend: the fingerprint's
-        # anomaly_score is the max recent z, ~1–2 for a normal agent.
         if features.anomaly_score < ANOMALY_Z_THRESHOLD:
             continue
         out.append(
@@ -204,13 +181,12 @@ def _anomaly_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
 
 
 def _cost_spike_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
-    # Pool real (attributed, repeated) units across the company, per currency.
     by_currency: dict[str, list[tuple[AgentIntel, CostUnit]]] = defaultdict(list)
     for intel in intels:
         for unit in intel.cost_units:
             if unit.unit == _UNATTRIBUTED:
                 continue
-            if unit.count < _COST_SPIKE_MIN_CHARGES:  # one-off is not a spike
+            if unit.count < _COST_SPIKE_MIN_CHARGES:
                 continue
             by_currency[unit.currency].append((intel, unit))
 
@@ -220,8 +196,7 @@ def _cost_spike_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
             continue
         costs = [u.avg_cost for _, u in pairs]
         for idx, (intel, unit) in enumerate(pairs):
-            # Leave-one-out median: the candidate is excluded from the
-            # baseline it is compared against, so it cannot inflate its own median.
+            # Leave-one-out so the candidate can't inflate its own baseline.
             median_cost = _median(costs[:idx] + costs[idx + 1 :])
             if median_cost <= 0:
                 continue
@@ -296,10 +271,7 @@ def _agent_memories(intel: AgentIntel) -> list[DraftMemory]:
             )
         )
     elif features.total_records > 0:
-        # Cold-start row: the agent has spent but not enough same-currency
-        # history to profile yet. Emit a "still learning" SPEND_PATTERN memory so a
-        # new agent has a row instead of a blank Memory page; it is upserted into
-        # the real profile once the baseline fills in.
+        # Cold start: a "still learning" row instead of a blank Memory page.
         out.append(
             DraftMemory(
                 agent_id=intel.agent_id,

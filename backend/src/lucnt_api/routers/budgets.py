@@ -1,11 +1,7 @@
-"""Budgets router — read the live spend rollups, adjust an agent's cap (M6).
+"""Budgets router: live spend rollups and agent cap adjustment.
 
-Spend is derived from the ledger for the **current month** in the entity's local
-timezone and functional currency (`services/spend_window.py`), so the rollups reset
-at the period boundary and match the invariant `authorize()` enforces — never the
-never-reset `agents.spent_ytd` counter, which mis-reads inception-to-date spend
-against a *monthly* budget. Workflow spend sums its member
-agents' current-month spend.
+Spend is current-month ledger spend (entity tz, functional currency), matching
+the `authorize()` invariant — never `agents.spent_ytd`.
 """
 
 from __future__ import annotations
@@ -42,9 +38,6 @@ from lucnt_api.services.spend_window import (
     reserved_spend,
 )
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/budgets",
     tags=["budgets"],
@@ -79,12 +72,7 @@ def _rollup(spent: Decimal, budget: Decimal) -> tuple[Decimal, Decimal, str]:
 def _agent_budget(
     agent: Agent, spent: Decimal, spent_today: Decimal, reserved: Decimal
 ) -> AgentBudget:
-    """Build the budget view for a single agent from its current-month spend.
-
-    `reserved`/`available` mirror the authorize gate's arithmetic: the
-    gate subtracts live holds from headroom, so the read reports them too —
-    otherwise an agent self-regulating on this read sees room the gate refuses.
-    """
+    """Build one agent's budget view; `available` nets live holds like the gate."""
     remaining, pct_used, status_label = _rollup(spent, agent.monthly_budget)
     return AgentBudget(
         id=agent.id,
@@ -114,18 +102,8 @@ def get_budgets(
 ) -> BudgetsResponse:
     """Per-agent budget utilisation plus per-workflow rollups for the company.
 
-    The `agents` array is paginated and `total` counts all matching agents; the
-    `workflows` rollups are configuration-shaped (bounded by how many workflows
-    a customer authors, not by ledger volume) and are always returned whole, so
-    a rollup never silently omits a member that fell off the page.
-
-    `agent` narrows to a single slug — the SDK's `check_budget()` path, which
-    would otherwise download every agent's budget to read one row.
-
-    An `agent_owner` sees only their own agents, narrowed in the SQL, and gets
-    **no workflow rollups at all**: a rollup sums across every member of a
-    workflow, so returning one to a scoped principal would report other owners'
-    spend under a different name. An empty list is the honest answer.
+    `agents` is paginated; `workflows` is always whole. An `agent_owner` gets no
+    workflow rollups, since they would sum other owners' spend.
     """
     company = ctx.company
     owned_only = ctx.perms is not None and ctx.perms.agent_scope == "owned"
@@ -147,8 +125,7 @@ def get_budgets(
         else db.execute(
             select(Workflow)
             .where(Workflow.company_id == company.id)
-            # Eager-load members: the rollup below reads `workflow.agents` for
-            # every workflow, which lazy-loading turns into a query per row.
+            # Avoid an N+1 on `workflow.agents` below.
             .options(selectinload(Workflow.agents))
             .order_by(Workflow.name)
         )
@@ -161,10 +138,7 @@ def get_budgets(
         .all()
     )
 
-    # Current-month committed spend for the whole company in one aggregate per
-    # entity, entity-local period + functional currency. Batched because
-    # the per-agent form cost two queries each, and because the workflow
-    # rollups below need members that the current page may not contain.
+    # Company-wide, not page-scoped: workflow members may be off this page.
     month_spend = company_period_committed_spend(db, company.id, entities)
     # Live holds per agent, measured with the gate's own predicate.
     reserved = company_reserved_spend(db, company.id)

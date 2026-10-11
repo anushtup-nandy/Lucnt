@@ -1,11 +1,4 @@
-"""Transactions router — the authorize→capture spine.
-
-`authorize()` runs the full policy engine (`services/policy_engine.py`, Phase 3):
-an always-on monthly-budget invariant plus every active company/agent-scoped
-policy (merchant lists, velocity, amount thresholds, time-of-day), reduced
-most-restrictive-wins to a verdict + machine-readable `code`. `capture()` commits
-the spend and books tax + double-entry journal (Phase 2).
-"""
+"""Transactions router: the authorize→capture spine, void, and reversal."""
 
 from __future__ import annotations
 
@@ -92,17 +85,13 @@ from lucnt_api.services.vendors import (
 )
 from lucnt_api.services.withholding import WithholdingOutcome, determine_withholding
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/transactions",
     tags=["transactions"],
     dependencies=[Depends(require_nav("transactions"))],
 )
 
-# Verdict severity for combining the withholding gate with the policy verdict,
-# most-restrictive-wins — mirrors the policy engine's own ordering.
+# Most-restrictive-wins ordering; mirrors the policy engine's.
 _VERDICT_SEVERITY: dict[VerdictStatus, int] = {
     VerdictStatus.APPROVED: 0,
     VerdictStatus.REVIEW: 1,
@@ -114,11 +103,7 @@ _VERDICT_SEVERITY: dict[VerdictStatus, int] = {
 def _resolve_agent(
     db: Session, company: Company, slug: str, *, for_update: bool = False
 ) -> Agent:
-    """Look up an agent by slug, scoped to the current company.
-
-    `for_update` takes a row lock so the authorize() check-and-reserve is atomic
-    against concurrent authorizes for the same agent.
-    """
+    """Look up an agent by slug; `for_update` locks it for atomic check-and-reserve."""
     stmt = select(Agent).where(Agent.company_id == company.id, Agent.slug == slug)
     if for_update:
         stmt = stmt.with_for_update()
@@ -146,9 +131,7 @@ def _fetch_active_policies(db: Session, company: Company, agent: Agent) -> list[
 
 def _verdict_from(authorization: Authorization) -> Verdict:
     """Reconstruct the wire verdict from a persisted hold (idempotent replay)."""
-    # The single construction point for every verdict `authorize` returns, which
-    # makes it the one honest place to count them. Labelled by the
-    # `VerdictStatus` enum, so the label set is closed and cannot inflate.
+    # Sole verdict construction point, so the one place to count them.
     metrics.authorize_verdicts_total.labels(verdict=authorization.status.value).inc()
     return Verdict(
         authorization_id=authorization.id,
@@ -161,13 +144,9 @@ def _verdict_from(authorization: Authorization) -> Verdict:
 def _resolve_tax_rate_row(
     db: Session, regime: str, when: datetime, tax_category: str | None
 ) -> TaxRate:
-    """Effective-dated statutory rate *row* for a regime/slab on a date.
+    """Effective-dated rate row for a regime/slab; fails closed (422) if missing.
 
-    Resolved at the money-path boundary and injected into the pure tax engine,
-    keyed by the transaction date, so a rate change never back-applies to a
-    historical supply. The whole row is returned so the applied rule id + source can
-    be stamped on the tax records. Fail-closed like FX: a missing rate stops
-    the spend.
+    Keyed by transaction date so a rate change never back-applies.
     """
     try:
         return resolve_rate_row(
@@ -194,17 +173,10 @@ def _compute_tax(
     supply_type: str,
     when: datetime,
 ) -> tuple[TaxTreatment, uuid.UUID | None, str | None]:
-    """Gather the engine's boundary inputs; return the treatment + applied rule.
+    """Resolve rate + vendor place-of-supply and run the pure tax engine.
 
-    Resolves the effective-dated rate + the vendor's place-of-supply attributes and
-    calls the pure engine. For India/Singapore the rate is the regime-level slab;
-    for the US it is the buyer state's sales/use-tax rule, resolved by `us_state` —
-    an unconfigured state routes to the exception queue.
-    An unenriched vendor (no country) books `UNCLASSIFIED` and is flagged.
-
-    Also returns the ``(applied_rule_id, applied_rule_source)`` of the `tax_rates`
-    row that supplied the rate — stamped on the tax records for the audit trail;
-    both ``None`` when no rate was applied (US-unconfigured / no row).
+    Returns ``(treatment, applied_rule_id, applied_rule_source)``; the rule fields
+    are ``None`` when no rate was applied (e.g. unconfigured US state).
     """
     vendor = resolve_or_create_vendor(db, company.id, vendor_name)
 
@@ -230,8 +202,7 @@ def _compute_tax(
             applied_rule_id = rule.rule_id
             applied_rule_source = rule.source
         else:
-            # State unconfigured or no rule row → the engine routes to the recon
-            # exception queue rather than booking a silent zero.
+            # Engine routes this to the recon queue rather than a silent zero.
             rate = Decimal("0")
     else:
         row = _resolve_tax_rate_row(db, entity.tax_regime, when, tax_category)
@@ -267,12 +238,9 @@ def _withholding_outcome(
     functional_amount: Decimal,
     on_date: date,
 ) -> WithholdingOutcome:
-    """Compute the India s.195 withholding outcome for a payment.
+    """India s.195 withholding outcome for a payment.
 
-    Read-only vendor lookup (never creates a row at authorize) + the pure engine
-    with the config rates/threshold. An unknown/unenriched vendor has no country, so
-    withholding does not apply (that vendor is caught by the capture-time
-    UNCLASSIFIED flag instead). Reused by the authorize gate and the capture record.
+    Read-only vendor lookup: never creates a vendor row at authorize.
     """
     normalized = normalize_vendor_name(vendor_name)
     vendor = db.execute(
@@ -301,13 +269,7 @@ def _persist_tax_records(
     applied_rule_id: uuid.UUID | None = None,
     applied_rule_source: str | None = None,
 ) -> None:
-    """Persist one `TaxRecord` per GST-head component.
-
-    A single-head supply writes one row; an India intra-state supply writes two
-    (CGST + SGST). A contra (reversal) passes a treatment with negated components.
-    Every row is stamped with the `tax_rates` row that produced the rate + its
-    source, for the audit trail.
-    """
+    """Persist one `TaxRecord` per tax-head component (e.g. CGST + SGST)."""
     for comp in tax.components:
         db.add(
             TaxRecord(
@@ -333,12 +295,7 @@ def _flag_unclassified_tax(
 ) -> None:
     """Open a recon exception when tax could not be classified.
 
-    Two `confidence="exception"` paths land here: an unenriched vendor with no
-    place-of-supply data, and a US spend whose state is disputed or
-    unconfigured. Both book conservatively (no tax asserted) and are flagged
-    for a human rather than guessed. Non-recoverable, so ``amount_at_stake`` is 0
-    (it does not inflate the inbox's ``$ at stake``). One row per (transaction,
-    type) by ``uq_recon_txn_type`` — each unclassified spend is a distinct gap.
+    ``amount_at_stake`` is 0: nothing is recoverable, so it must not inflate the inbox.
     """
     if tax.tax_type == "UNCLASSIFIED":
         reason = "place_of_supply_unknown"
@@ -384,12 +341,7 @@ def _flag_unclassified_tax(
 def _capture_response(
     transaction: Transaction, tax: TaxTreatment, journal_lines: list[JournalEntry]
 ) -> TransactionSchema:
-    """Assemble the capture wire response from a transaction + its tax/journal.
-
-    Tax and journal are pure functions of the transaction + entity, so an
-    idempotent capture replay rebuilds the identical response by recomputing
-    them — no need to persist or re-read the derived rows.
-    """
+    """Assemble the capture wire response from a transaction + its tax/journal."""
     return TransactionSchema(
         id=transaction.id,
         authorization_id=transaction.authorization_id,
@@ -428,12 +380,9 @@ def _capture_response(
 def _replay_capture(
     db: Session, company: Company, authorization_id: uuid.UUID
 ) -> TransactionSchema:
-    """Return the existing transaction for an already-captured authorization.
+    """Idempotent capture retry: return the first capture, never double-book.
 
-    A retried capture (its predecessor committed but the response was lost) hits
-    the `authorization_id` unique constraint. Rather than 409, return the first
-    capture's transaction with journal + tax rebuilt deterministically — a safe,
-    idempotent no-op that never double-books.
+    Tax and journal are pure functions of the row, so they are recomputed.
     """
     existing = db.execute(
         select(Transaction).where(
@@ -442,7 +391,6 @@ def _replay_capture(
         )
     ).scalar_one_or_none()
     if existing is None:
-        # The conflict was not a duplicate capture (unexpected) — surface it.
         raise HTTPException(status.HTTP_409_CONFLICT, "Capture conflict")
     entity = db.get(Entity, existing.entity_id)
     if entity is None:
@@ -469,13 +417,7 @@ def _replay_capture(
 
 
 def _controls_block(agent: Agent, entity: Entity) -> tuple[str, str] | None:
-    """`(code, reason)` if agent/entity state forbids any spend, else None.
-
-    A paused/disabled or non-live agent or an inactive entity is
-    blocked before the policy engine even runs — "pause this agent" must actually
-    stop spend. `is_live` fails closed here; the live/test key partition
-    refines how test agents authorize under test keys.
-    """
+    """`(code, reason)` if agent/entity state forbids any spend, else None."""
     if agent.status != AgentStatus.ACTIVE:
         return "agent_inactive", f"agent is {agent.status.value}, not active"
     if not agent.is_live:
@@ -503,13 +445,7 @@ def _persist_authorization(
 ) -> Verdict:
     """Persist the hold and return its verdict, idempotency-race-safe.
 
-    The FX snapshot (`exchange_rate`/`local_amount`/`local_currency`) is the
-    hold's value in the entity's functional currency; left None for a
-    controls-blocked hold, which never reserves budget.
-
-    `expires_at` bounds how long an approved hold can reserve budget.
-    Stamped on every hold, approved or not, so the column is never
-    retrospectively meaningful only for some rows.
+    FX fields are None for a controls-blocked hold, which never reserves budget.
     """
     authorization = Authorization(
         expires_at=datetime.now(UTC)
@@ -542,9 +478,7 @@ def _persist_authorization(
     try:
         db.commit()
     except IntegrityError:
-        # Lost the idempotency-key race to a concurrent authorize: return the
-        # hold that won the unique index. Any other IntegrityError here is
-        # unexpected — re-raise it.
+        # Lost the idempotency-key race: return the winning hold.
         db.rollback()
         if idempotency_key is None:
             raise
@@ -567,9 +501,7 @@ def authorize(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Verdict:
     """Evaluate the policy engine on a spend before any money moves (M5)."""
-    # Idempotent replay: a retried authorize with the same client key
-    # returns the original hold's verdict, so a timed-out spend() that actually
-    # committed does not mint a second hold (which, captured, would double-book).
+    # Replay: a second hold for a retried spend() could be captured twice.
     if idempotency_key is not None:
         prior = db.execute(
             select(Authorization).where(
@@ -580,15 +512,10 @@ def authorize(
         if prior is not None:
             return _verdict_from(prior)
 
-    # Lock the agent row so the check-and-reserve below is atomic: concurrent
-    # authorizes for the same agent serialize here, and each one sees the prior's
-    # hold in the reservation sum before it decides. The lock is released
-    # when this request's transaction commits.
+    # Row lock serializes concurrent authorizes so each sees prior holds.
     agent = _resolve_agent(db, company, request.agent, for_update=True)
     entity = entity_or_404(db, company, request.entity)
 
-    # A paused/disabled/non-live agent or an inactive entity cannot
-    # spend — short-circuit to a blocked hold before running the policy engine.
     controls = _controls_block(agent, entity)
     if controls is not None:
         code, reason = controls
@@ -609,10 +536,7 @@ def authorize(
     now = now_in_entity_tz(entity)
     month_start, day_start = period_starts(now)
 
-    # Value the spend in the entity's functional currency so the budget
-    # invariant compares like with like, and snapshot the rate on the hold so its
-    # reservation is measured in one currency. Fail closed on an unknown currency
-    # rather than mis-valuing the spend — enforcement before money moves.
+    # Budget compares in functional currency; fail closed on unknown currency.
     currency = request.currency or entity.currency
     try:
         exchange_rate, functional_amount = convert(
@@ -625,10 +549,7 @@ def authorize(
     except FxRateUnavailableError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
-    # Spend measured against the budget = committed (ledger, period-resetting) +
-    # reserved (outstanding approved holds). The stored spent_ytd/spent_today
-    # counters are a display cache only; the invariant derives from truth here
-    # so it self-resets and holds count against headroom.
+    # Committed (ledger) + reserved (open holds); spent_* columns are display-only.
     reserved = reserved_spend(db, agent.id)
     spent_month = committed_spend(db, agent.id, month_start) + reserved
     spent_today = committed_spend(db, agent.id, day_start) + reserved
@@ -648,8 +569,6 @@ def authorize(
     )
     decision = evaluate_spend(policies, ctx)
 
-    # Bump per-policy telemetry: hit for every rule that fired, block for the
-    # ones that returned a blocking verdict (drives the "blocked N times" UI).
     for policy in policies:
         if policy.id in decision.fired_policy_ids:
             policy.hit_count += 1
@@ -660,11 +579,8 @@ def authorize(
         iter(decision.blocking_policy_ids or decision.fired_policy_ids), None
     )
 
-    # The India s.195 withholding gate — a remittance to a non-resident vendor
-    # missing the treaty documentation (TRC/Form 10F) above the 15CB threshold is
-    # held for documentation *before money moves*, combined most-restrictively with
-    # the policy verdict. This is the one tax path that blocks a payment after
-    # policy passes (a bank won't process the remittance without a 15CA/15CB).
+    # s.195 gate: banks refuse a non-resident remittance lacking TRC/Form 10F
+    # docs above the 15CB threshold, so hold it before money moves.
     final_status: VerdictStatus = decision.status
     final_code: str = decision.code.value
     final_reason: str | None = decision.reason
@@ -725,12 +641,7 @@ def capture(
             status.HTTP_409_CONFLICT,
             f"Cannot capture a {authorization.status.value} authorization",
         )
-    # An explicit void() is the caller stating the spend did not happen, so
-    # capturing it afterwards is a contradiction the server must refuse. Note
-    # `expires_at` is deliberately NOT checked: a slow-but-real spend arriving
-    # after the TTL is still a real spend, and refusing to book it would lose
-    # money from the ledger — strictly worse than the stale reservation the TTL
-    # already released.
+    # `expires_at` is deliberately not checked: a late real spend must still book.
     if authorization.released_at is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -739,13 +650,8 @@ def capture(
             f"captured; re-authorize the spend instead.",
         )
 
-    # Locked up front, deliberately: inserting the transaction below takes
-    # a KEY SHARE lock on this agent row (the FK), and the spend-counter UPDATE
-    # after it upgrades that to an exclusive lock. A concurrent authorize()
-    # holding/waiting FOR UPDATE between those two steps closed a lock-upgrade
-    # cycle — the load test produced Postgres deadlocks at 50 users until this
-    # took the exclusive lock *before* the insert. Consistent lock ordering
-    # (agent row first, always) is the fix, not a retry.
+    # Lock the agent row before the insert: the FK's KEY SHARE upgraded by the
+    # counter UPDATE deadlocks against a concurrent authorize() FOR UPDATE.
     agent = db.get(Agent, authorization.agent_id, with_for_update=True)
     if agent is None:  # FK-guaranteed; explicit guard, not an assert
         raise HTTPException(
@@ -758,18 +664,10 @@ def capture(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "authorization references a missing entity",
         )
-    # An omitted currency defaults to the entity's own (functional)
-    # currency, not a hardcoded "USD".
     currency = authorization.currency or entity.currency
 
-    # Settlement overrides (Phase 3.5): the actual amount/model/tokens known only
-    # after the spend (e.g. real LLM cost from meter()); the authorization's held
-    # values stand when not provided.
-    #
-    # A settlement may *correct* the estimate but not blow past it — the
-    # verdict was rendered on the authorized amount and only that amount was
-    # reserved against the budget at authorize(). Cap the override at
-    # auth x settlement_buffer; a larger true cost must be re-authorized.
+    # Settlement may correct the estimate, capped at auth x settlement_buffer:
+    # the verdict and reservation covered only the authorized amount.
     paid_amount = request.amount if request.amount is not None else authorization.amount
     if request.amount is not None:
         max_settlement = authorization.amount * settings.settlement_buffer
@@ -788,9 +686,7 @@ def capture(
     )
 
     capture_date = datetime.now(UTC)
-    # Convert the paid amount into the entity's functional currency and snapshot
-    # the rate on the ledger row. Fail closed if no rate exists,
-    # rather than silently booking at 1.0 (which corrupts tax + the budget).
+    # Fail closed on a missing FX rate; booking at 1.0 corrupts tax and budget.
     try:
         exchange_rate, local_amount = convert(
             db,
@@ -837,11 +733,7 @@ def capture(
         db.rollback()
         return _replay_capture(db, company, request.authorization_id)
 
-    # Increment spend counters atomically at the DB (UPDATE ... SET
-    # x = x + :amt) rather than a Python read-modify-write, so concurrent
-    # captures can't lost-update each other and under-count spend. These
-    # counters are a display cache; the authorize() budget invariant derives
-    # committed spend from the ledger directly.
+    # Atomic SQL increment: a Python read-modify-write loses concurrent updates.
     db.execute(
         update(Agent)
         .where(Agent.id == agent.id)
@@ -852,11 +744,7 @@ def capture(
         .execution_options(synchronize_session=False)
     )
 
-    # Phase 2 (Books): compute tax + double-entry journal synchronously, in the
-    # same transaction as the capture, keyed off the persisted `transactions`
-    # row (lane-agnostic). The card/invoice rails book through this exact path
-    # once they land. Tax is assessed on the functional amount; the journal is
-    # booked in functional currency.
+    # Tax + journal book in the capture's DB transaction, keyed off the row.
     tax, applied_rule_id, applied_rule_source = _compute_tax(
         db,
         company,
@@ -871,18 +759,12 @@ def capture(
         when=capture_date,
     )
     _persist_tax_records(db, transaction.id, tax, applied_rule_id, applied_rule_source)
-    # Reverse charge requires a buyer-issued self-invoice (r.46): produce the
-    # actual record so `self_invoice_generated` is truthful, not fabricated.
+    # Reverse charge requires a buyer-issued self-invoice (r.46).
     if tax.self_invoice_required:
         db.add(build_self_invoice(transaction, entity, tax))
-    # Conservative-default paths (unenriched vendor, US disputed/
-    # unconfigured state) flag for review rather than letting the engine guess.
     if tax.confidence == "exception":
         _flag_unclassified_tax(db, company, transaction, tax)
-    # Record the India s.195 withholding obligation for a non-resident
-    # remittance — the compliance record beside GST (GL leg + 15CA/15CB generation
-    # deferred). Any withholding *block* already gated this at authorize; a
-    # capture means it was cleared to proceed, so the record is never blocked.
+    # Record only; any withholding block was already enforced at authorize.
     withholding = _withholding_outcome(
         db,
         company,
@@ -906,8 +788,7 @@ def capture(
     journal_lines = generate_journal(transaction, entity, tax, accounts)
     db.add_all(journal_lines)
 
-    # Build the response before commit (expire_on_commit would otherwise force a
-    # reload per attribute); the same builder serves the idempotent replay path.
+    # Build before commit; expire_on_commit would reload every attribute.
     result = _capture_response(transaction, tax, journal_lines)
     db.commit()
     return result
@@ -921,18 +802,7 @@ def void(
 ) -> VoidResult:
     """Release an approved hold whose spend never happened.
 
-    Without this, a hold orphaned by a vendor error after `authorize()` — or by a
-    crash between authorize and capture — reserves the agent's budget forever
-    (`services/spend_window.py::reserved_spend`), silently and permanently
-    shrinking what the agent can spend. `meter()` calls this on its error path.
-
-    Idempotent: voiding an already-voided hold returns 200 with
-    `already_released=True`, describing the original release. The SDK invokes
-    this while already handling a failure, so a retry must not become a second
-    error to handle.
-
-    A captured hold cannot be voided — the money moved and the ledger says so.
-    Reverse the transaction instead (`POST /transactions/{id}/reverse`).
+    Idempotent. A captured hold cannot be voided; reverse the transaction instead.
     """
     authorization = db.execute(
         select(Authorization).where(
@@ -968,8 +838,7 @@ def void(
     authorization.release_reason = request.reason
     db.commit()
     db.refresh(authorization)
-    # released_at was just assigned a non-None value; the guard is for the type
-    # checker (the column is nullable).
+    # Narrows the nullable column for the type checker.
     if authorization.released_at is None:  # pragma: no cover - defensive
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "void did not persist"
@@ -988,12 +857,9 @@ def reverse_transaction(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TransactionSchema:
-    """Reverse a committed transaction with a contra entry (refund/credit note).
+    """Reverse a committed transaction with a contra entry, freeing its budget.
 
-    Books a new reversal transaction (positive amount, contra journal) that
-    negates the original and frees the agent's budget; the original is flagged
-    reversed. Admin-scoped and audited. Idempotent: reversing an already-reversed
-    transaction (or a reversal itself) is a 409.
+    Admin-only and audited. Reversing a reversal or a reversed row is a 409.
     """
     original = db.execute(
         select(Transaction).where(
@@ -1021,10 +887,7 @@ def reverse_transaction(
         ).scalars()
     )
 
-    # Same lock ordering as capture(): take the agent row exclusively
-    # BEFORE inserting the reversal, whose FK would otherwise grab a KEY SHARE
-    # that the spend-counter UPDATE below then upgrades — the lock-upgrade
-    # cycle that deadlocked against a concurrent authorize() FOR UPDATE.
+    # Same lock ordering as capture(): agent row before the insert (deadlock).
     db.execute(select(Agent.id).where(Agent.id == original.agent_id).with_for_update())
 
     now = datetime.now(UTC)
@@ -1057,8 +920,7 @@ def reverse_transaction(
     db.add(reversal)
     db.flush()
 
-    # Contra journal: swap debit<->credit on each original line. Balances by
-    # construction and nets this spend's ledger effect back to zero.
+    # Contra journal: swap debit/credit on each original line.
     contra_lines = [
         JournalEntry(
             transaction_id=reversal.id,
@@ -1076,10 +938,7 @@ def reverse_transaction(
     ]
     db.add_all(contra_lines)
 
-    # Contra tax records (negated) so a GST return nets the reversal correctly.
-    # Resolve the rate + place of supply at the *original* supply date so the contra
-    # exactly negates the booked tax even if the statutory rate/registry has since
-    # changed; one negated row per head component.
+    # Use the original supply date so the contra negates the tax actually booked.
     tax, applied_rule_id, applied_rule_source = _compute_tax(
         db,
         company,
@@ -1111,8 +970,6 @@ def reverse_transaction(
 
     original.is_reversed = True
 
-    # Free the agent's budget: the derived committed_spend nets the reversal, and
-    # the display counters are decremented to match (atomic update).
     db.execute(
         update(Agent)
         .where(Agent.id == original.agent_id)
@@ -1156,12 +1013,7 @@ def list_transactions(
     ),
     page: Page = Depends(paginate()),
 ) -> TransactionListResponse:
-    """List committed transactions for the current company, filterable/paginated.
-
-    `reversed=` exists as a server-side filter rather than a client-side one for
-    the reason D5 gives: filtering a paginated response in the browser reports
-    "3 of 3" while the next page holds four more.
-    """
+    """List committed transactions for the current company, filterable and paginated."""
     company = ctx.company
     stmt = select(Transaction).where(Transaction.company_id == company.id)
     if ctx.perms is not None and ctx.perms.agent_scope == "owned":
@@ -1204,13 +1056,7 @@ def get_transaction(
     ctx: AuthContext = Depends(require_nav("transactions")),
     db: Session = Depends(get_db),
 ) -> TransactionFull:
-    """Full detail for one transaction: the row, its tax treatment, its journal.
-
-    The journal and the tax record are joins, so they are on the single-row
-    endpoint and deliberately not on the list — there they would be an N+1 per
-    page. Here they are two queries, and they are what makes the page worth
-    opening: the balanced double entry is the product's central claim.
-    """
+    """Full detail for one transaction: the row, its tax treatment, its journal."""
     stmt = select(Transaction).where(
         Transaction.id == transaction_id, Transaction.company_id == ctx.company.id
     )
@@ -1228,8 +1074,7 @@ def get_transaction(
         db.execute(
             select(JournalEntry)
             .where(JournalEntry.transaction_id == transaction.id)
-            # Debits before credits, then by account code, so the rendered entry
-            # reads the way an accountant writes one.
+            # Debits before credits, then by account code.
             .order_by(JournalEntry.credit, JournalEntry.account_code)
         )
         .scalars()

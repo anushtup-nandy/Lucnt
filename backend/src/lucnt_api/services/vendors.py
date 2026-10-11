@@ -1,14 +1,7 @@
-"""Vendor registry resolution.
+"""Vendor registry get-or-create used by the capture path.
 
-`resolve_or_create_vendor` is the get-or-create the capture path uses to attach a
-place-of-supply record to every spend. A new vendor is created **unregistered**
-with no place-of-supply data, so the tax engine falls back to the currency
-heuristic until a finance admin enriches it via the vendors CRUD — the caller
-never has to change the frozen wire contract (``vendor`` stays a free string).
-
-Concurrency-safe like `chart_of_accounts.ensure_default_accounts`: the insert is
-savepoint-isolated and the committed row is adopted on the unique-constraint race,
-so a first-ever spend to a vendor never 500s *after* the vendor was paid.
+New vendors are unenriched, so the tax engine uses its currency fallback. The
+insert is savepoint-isolated so a race never 500s after the vendor was paid.
 """
 
 from __future__ import annotations
@@ -28,10 +21,9 @@ def normalize_vendor_name(name: str) -> str:
 
 
 def resolve_or_create_vendor(db: Session, company_id: uuid.UUID, name: str) -> Vendor:
-    """Return the company's vendor by normalized name, creating an unenriched one.
+    """Return the vendor by normalized name, creating an unenriched one.
 
-    Does not commit — the caller owns the transaction (the capture that resolves
-    the vendor commits it together with the ledger write).
+    Does not commit; the caller's capture commits it with the ledger write.
     """
     normalized = normalize_vendor_name(name)
     existing = db.execute(
@@ -43,8 +35,6 @@ def resolve_or_create_vendor(db: Session, company_id: uuid.UUID, name: str) -> V
     if existing is not None:
         return existing
 
-    # Unenriched: no country and registered nowhere (gst_registered_in defaults to
-    # []). The tax engine routes such a vendor conservatively and flags it.
     vendor = Vendor(
         company_id=company_id,
         name=name,
@@ -56,7 +46,7 @@ def resolve_or_create_vendor(db: Session, company_id: uuid.UUID, name: str) -> V
             db.flush()
         return vendor
     except IntegrityError:
-        # A concurrent capture created it first — adopt the committed row.
+        # Lost the race to a concurrent capture: adopt the committed row.
         return db.execute(
             select(Vendor).where(
                 Vendor.company_id == company_id,

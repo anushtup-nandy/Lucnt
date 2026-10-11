@@ -1,15 +1,4 @@
-"""Agents router — read-only.
-
-**Owner scoping.** The `agent_owner` persona sees only agents whose
-`owner_user_id` is theirs, and that narrowing happens **in the SQL** — see
-`scope_agents`. Filtering after the query would still have read the other
-owner's rows out of the database, and would make `total` count rows the caller
-may not see. Scoping is proven by the cross-owner leak test, not by a hidden nav
-item.
-
-`PATCH /agents/{id}` remains out of scope: the auth this phase adds unblocks it,
-but nothing in P7 needs it.
-"""
+"""Agents router (read-only); `agent_owner` scoping is applied in SQL."""
 
 from __future__ import annotations
 
@@ -26,9 +15,6 @@ from lucnt_api.schemas.agent import AgentDetail, AgentListResponse
 from lucnt_api.services.lookups import entity_or_404
 from lucnt_api.services.permissions import scope_agents
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/agents",
     tags=["agents"],
@@ -69,8 +55,7 @@ def get_agent(
 ) -> AgentDetail:
     """Full detail for a single agent.
 
-    A scoped-out agent is a 404, not a 403: telling an `agent_owner` that a given
-    id exists but belongs to someone else is itself a disclosure.
+    A scoped-out agent is a 404, not a 403, so its existence is not disclosed.
     """
     stmt = select(Agent).where(Agent.id == agent_id, Agent.company_id == ctx.company.id)
     stmt = scope_agents(stmt, ctx.perms, ctx.user.id if ctx.user else None)

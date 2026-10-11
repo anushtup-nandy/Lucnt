@@ -1,10 +1,6 @@
-"""Pricing feed router — the server half of the SDK's pricing story.
+"""Pricing feed router: the pack the SDK merges over its packaged fallback.
 
-`GET /pricing/feed` serves the pack the SDK merges over its packaged fallback.
-Date-ranged rates are resolved here against today's UTC date, so a price
-change (or a lapsing introductory rate) is a server-side data edit, never a
-client release. Authenticated with any valid API key: pricing is not a secret,
-but an unauthenticated endpoint would be a free amplification target.
+Auth required: pricing is not secret, but an open endpoint is an amplification target.
 """
 
 from __future__ import annotations
@@ -25,13 +21,9 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 def get_pricing_feed(
     company: Company = Depends(get_current_company),
 ) -> JSONResponse:
-    """Today's effective vendor pricing, flattened for the SDK.
+    """Today's effective vendor pricing, date ranges resolved, in the SDK's shape.
 
-    The response shape matches the SDK's packaged `pricing.json` exactly
-    (`version` / `estimation` / `vendors`), with all money as strings and any
-    date-ranged rates already resolved — the client stays date-dumb.
-    `Cache-Control` matches the SDK's default client-side TTL so intermediary
-    caches and the SDK agree on freshness.
+    `Cache-Control` matches the SDK's default client-side TTL.
     """
     today = datetime.now(UTC).date()
     return JSONResponse(

@@ -1,31 +1,7 @@
 """Redis-backed fixed-window rate limiting.
 
-Three buckets, because the abuse they stop is not the same shape:
-
-* ``auth_failure`` — keyed by client IP and checked **before** the API-key hash
-  lookup. The cost of a brute-force attempt is a DB round trip, so a limiter
-  placed after the lookup would still pay for every guess. Only *failures*
-  increment it, so a busy legitimate client is never penalised.
-* ``expensive`` — the scan/recompute endpoints, which walk the ledger. Valid
-  credentials are enough to pin a worker today, so these need a far
-  tighter bucket than ordinary reads.
-* ``default`` — every other authenticated call, keyed by API key. Generous; it
-  exists to stop row/telemetry inflation from a runaway agent loop, not to
-  shape normal traffic.
-
-**Shared state, deliberately.** A per-process counter multiplies the effective
-limit by the worker count and resets on deploy. Redis keeps it correct for any
-topology, which matters because the deployment topology is not settled yet.
-
-**Fail-open, deliberately.** A Redis outage must not take down the money path:
-rate limiting is a mitigation, not an authorization boundary, so an unreachable
-Redis logs a warning and admits the request. The inverse — failing closed —
-would convert a cache blip into a total outage of `authorize()`.
-
-**Deployment requirement.** The IP is read from `request.client.host`. Once nginx
-fronts the app, it MUST set `real_ip_header`/`set_real_ip_from`, otherwise every
-client collapses into a single IP bucket and the `auth_failure` limit becomes a
-self-inflicted lockout for all of them.
+Fails open: a Redis outage must not take down `authorize()`. nginx MUST set
+`real_ip_header`/`set_real_ip_from`, or all clients share one IP bucket.
 """
 
 from __future__ import annotations
@@ -54,10 +30,7 @@ _WINDOW_SECONDS = 60
 
 
 class Bucket(enum.StrEnum):
-    """A named limit. The value is part of the Redis key, so keep it stable.
-
-    `str, Enum` rather than `enum.StrEnum` — the project targets Python 3.10.
-    """
+    """A named limit. The value is part of the Redis key, so keep it stable."""
 
     DEFAULT = "default"
     AUTH_FAILURE = "auth_failure"
@@ -66,14 +39,7 @@ class Bucket(enum.StrEnum):
 
 @dataclass(frozen=True)
 class _Reading:
-    """A counter reading. The comparison is the caller's, deliberately.
-
-    `check()` has already counted the current request, so it admits while
-    `count <= limit`. `guard_auth_attempt()` reads *prior* failures and has not
-    counted anything, so a budget of N spent failures must refuse the next
-    attempt: `count >= limit`. Folding both into one `allowed` flag here is what
-    produced an off-by-one the first time round.
-    """
+    """A counter reading; callers compare differently (see `check` vs guard)."""
 
     count: int
     limit: int
@@ -82,23 +48,13 @@ class _Reading:
 def client_ip(request: Request) -> str:
     """Best-effort client address, `unknown` when the transport hides it.
 
-    Deliberately does *not* read `X-Forwarded-For`: an attacker can forge that
-    header, which would make the `auth_failure` bucket trivially evadable. The
-    proxy is responsible for rewriting the real address (see module docstring).
+    Never reads the forgeable `X-Forwarded-For`; the proxy rewrites the address.
     """
     return request.client.host if request.client else "unknown"
 
 
 class RateLimiter:
-    """Fixed-window counter over Redis.
-
-    A fixed window (rather than a sliding log or token bucket) is two commands
-    per check — `INCR` plus a first-hit `EXPIRE` — and needs no Lua or sorted
-    sets. Its known weakness is a burst straddling a window boundary admitting
-    up to 2x the limit; for brute-force and resource-abuse mitigation that is an
-    acceptable trade against the extra round trips a sliding window costs on the
-    blocking money path.
-    """
+    """Fixed-window counter over Redis (boundary bursts may admit up to 2x)."""
 
     def __init__(self, client: redis.Redis | None) -> None:
         """Store the backing client; `None` disables limiting entirely."""
@@ -122,11 +78,7 @@ class RateLimiter:
         return int(seconds) // _WINDOW_SECONDS
 
     def _hit(self, bucket: Bucket, identity: str, *, increment: bool) -> _Reading:
-        """Read (and optionally increment) the counter for one identity.
-
-        On any Redis error returns a zero count, which every caller reads as
-        "admit" — the fail-open path described in the module docstring.
-        """
+        """Read (optionally increment) a counter; zero on Redis error (fail open)."""
         limit = self._limit_for(bucket)
         if self._client is None or not settings.rate_limit_enabled:
             return _Reading(count=0, limit=limit)
@@ -141,8 +93,7 @@ class RateLimiter:
                 raw = self._client.get(key)
                 count = int(raw) if raw is not None else 0
         except redis.RedisError:
-            # Logged AND counted: a log line alone left the fail-open
-            # unalerted — the metric is what a monitoring rule can page on.
+            # The metric is what alerting pages on.
             metrics.rate_limiter_fail_open_total.labels(bucket=bucket.value).inc()
             logger.warning(
                 "rate limiter unavailable; admitting request",
@@ -174,16 +125,13 @@ class RateLimiter:
     def guard_auth_attempt(self, ip: str) -> None:
         """Reject a caller that has already burned through its failed attempts.
 
-        Read-only on purpose, and called *before* the key lookup: a successful
-        request must not consume the failure budget, and a guess must not cost a
-        DB round trip once the budget is gone.
+        Read-only and called before the key lookup, so guesses cost no DB trip.
 
         Raises:
             HTTPException: 429 when too many recent attempts from `ip` failed.
         """
         reading = self._hit(Bucket.AUTH_FAILURE, ip, increment=False)
-        # `>=`: nothing was counted here, so a fully-spent budget of N failures
-        # must refuse the next attempt rather than admit an N+1'th.
+        # `>=`: nothing was counted here, so N spent failures refuse the next.
         if reading.count >= reading.limit:
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
@@ -198,12 +146,7 @@ class RateLimiter:
 
 @lru_cache(maxsize=1)
 def get_limiter() -> RateLimiter:
-    """The process-wide limiter, backed by a lazily-connected Redis pool.
-
-    Cached so the connection pool is built once. `redis.from_url` does not
-    connect eagerly, so an unreachable Redis surfaces as a `RedisError` on first
-    use and is handled by the fail-open path rather than breaking startup.
-    """
+    """The process-wide limiter; Redis connects lazily, so startup never fails."""
     if not settings.rate_limit_enabled:
         return RateLimiter(None)
     client: redis.Redis = redis.from_url(

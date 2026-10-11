@@ -1,22 +1,6 @@
-"""The one RBAC seam: `resolve_perms(user) -> Perms`.
+"""The one RBAC seam: `resolve_perms(user) -> Perms`. No `if role ==` elsewhere.
 
-"Presets now, custom later": `users.role` is a typed enum today
-and permissions resolve through this single function, so swapping in
-table-backed RBAC later is a change to one module rather than to every router.
-
-**No scattered `if role == ...` checks anywhere else.** If you find yourself
-writing one, the answer belongs in `_ROLE_TABLE` below.
-
-Two mechanics are non-negotiable:
-
-1. **Nav is data.** The frontend renders `perms.nav`; it never hardcodes a
-   sidebar. The same tuple is the server-side route gate (`require_nav`), so the
-   thing that hides a page is the thing that denies its endpoint — they cannot
-   drift apart.
-2. **Scope is enforced in the query.** `perms.agent_scope == "owned"` filters
-   `agents.owner_user_id` in SQL (`scope_agents`). Hiding a nav item without
-   scoping the query is a security hole, not a UI decision — the guarantee is the
-   cross-owner leak test, not a hidden link.
+Nav is data and doubles as the route gate; agent scope is enforced in SQL.
 """
 
 from __future__ import annotations
@@ -32,8 +16,7 @@ from lucnt_api.models.user import User, UserRole
 
 __all__ = ["NavItem", "NavKey", "Perms", "resolve_perms", "scope_agents", "NAV_LABELS"]
 
-# One key per dashboard domain. These are the strings the frontend routes on and
-# the strings `require_nav` gates on — the single vocabulary shared by both.
+# Shared vocabulary: frontend routes and `require_nav` gates both use these.
 NavKey = Literal[
     "overview",
     "agents",
@@ -93,10 +76,7 @@ class Perms:
         return any(item.key == key for item in self.nav)
 
 
-# role -> (nav keys in display order, landing path, agent scope, write flags)
-#
-# Personas. `cfo` is the mockup's only persona
-# ("Arvind Sharma, Finance, admin") and therefore the only one that sees all 12.
+# role -> nav keys (display order), landing path, agent scope, write flags.
 _ROLE_TABLE: dict[UserRole, dict[str, Any]] = {
     UserRole.ENGINEER: {
         "nav": (
@@ -138,7 +118,6 @@ _ROLE_TABLE: dict[UserRole, dict[str, Any]] = {
         "can_approve": True,
     },
     UserRole.AUDITOR: {
-        # Read-only: every write path 403s for this role, server-side.
         "nav": ("books", "overview", "agents", "transactions", "recon", "settings"),
         "landing": "/books",
         "agent_scope": "all",
@@ -152,13 +131,7 @@ _ROLE_TABLE: dict[UserRole, dict[str, Any]] = {
 def resolve_perms(user: User) -> Perms:
     """The single source of truth for what a user may see and do.
 
-    Args:
-        user: The authenticated human principal.
-
-    Returns:
-        A frozen `Perms` for this request. `can_read_books` is *derived* from nav
-        membership rather than stated twice, so a role that gains the Books page
-        cannot end up with the page and not the data (or the reverse).
+    `can_read_books` derives from nav so page and data access can't diverge.
     """
     spec = _ROLE_TABLE[user.role]
     nav = tuple(
@@ -180,20 +153,10 @@ def resolve_perms(user: User) -> Perms:
 def scope_agents(
     stmt: Select[Any], perms: Perms | None, user_id: uuid.UUID | None
 ) -> Select[Any]:
-    """Narrow a statement selecting `Agent` to the rows this principal may see.
+    """Narrow an `Agent` select to rows this principal may see, in SQL.
 
-    A no-op for API-key principals (`perms is None`) and for `agent_scope="all"`.
-    For `agent_owner` it adds `agents.owner_user_id = :user_id` **to the SQL** —
-    which is the whole point: filtering after the fact would still have read the
-    other owner's rows out of the database, and would break pagination totals.
-
-    Args:
-        stmt: A `select(Agent)`-rooted statement, or one already joined to `Agent`.
-        perms: Resolved perms, or `None` for an API-key principal.
-        user_id: The human principal's id, or `None`.
-
-    Returns:
-        The statement, narrowed where required.
+    Filtering in SQL (not after) avoids reading others' rows and keeps
+    pagination totals right. No-op for API keys (`perms is None`) and "all" scope.
     """
     if perms is None or perms.agent_scope == "all" or user_id is None:
         return stmt

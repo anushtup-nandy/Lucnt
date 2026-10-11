@@ -1,17 +1,6 @@
-"""Pydantic response schemas for the Books router (Module 2/4).
+"""Books schemas. ``balance`` is debit - credit (positive = net debit).
 
-All figures are derived read-only from `journal_entries` joined to
-`transactions` (company scope) and `accounts` (category). Money is `Decimal`.
-Sign convention: an account's ``balance`` is ``debit - credit`` (positive = net
-debit); statements re-sign per the account's normal side.
-
-**Currency.** Every figure is denominated in a single
-functional currency and carries its ``currency``. A statement is inherently
-per-currency: a trial balance / balance sheet only balances *within* one
-currency, so the balance identities are reported per currency (``currencies``)
-and the top-level ``balanced`` holds only if *every* currency balances. A
-consolidated multi-currency total (FX-translated to a group reporting currency)
-is deferred; the books never sum mixed currencies into one bogus total.
+Statements are per-currency; mixed currencies are never summed into one total.
 """
 
 from __future__ import annotations
@@ -39,10 +28,7 @@ class JournalLineRead(BaseModel):
 
 
 class JournalGroup(BaseModel):
-    """All postings for a single transaction (the journal explorer's unit).
-
-    One transaction posts to one entity, so a group is single-currency.
-    """
+    """All postings for one transaction; always single-currency."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -65,11 +51,7 @@ class JournalsResponse(BaseModel):
 
 
 class GLAccount(BaseModel):
-    """One account's postings and running totals in the general ledger.
-
-    An account is sectioned per currency — the same account code posted to by
-    entities in different currencies yields one section per currency.
-    """
+    """One account's general-ledger totals, sectioned per currency."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -80,13 +62,9 @@ class GLAccount(BaseModel):
     total_debit: Decimal
     total_credit: Decimal
     balance: Decimal
-    # How many journal lines this section totals. Always populated, so a client
-    # can tell that postings exist even when `entries` is empty.
+    # Always populated, so an empty `entries` is never read as "no postings".
     entry_count: int = 0
-    # Populated only for a single-account request (`?account=CODE`). The default
-    # listing returns totals per account and leaves this empty rather than
-    # serialising every line in the ledger — `entry_count` is the honest signal
-    # that lines exist, so an empty list is never mistaken for "no postings".
+    # Only filled for a single-account request (`?account=CODE`).
     entries: list[JournalLineRead] = Field(default_factory=list)
 
 
@@ -227,10 +205,9 @@ class ManualJournalLineInput(BaseModel):
 
 
 class ManualJournalRequest(BaseModel):
-    """`POST /books/journal` — a balanced manual journal (accrual, adjustment).
+    """`POST /books/journal` — a balanced manual journal in functional currency.
 
-    Admin-scoped and audited. Booked in the entity's functional currency;
-    the lines must balance (Σ debit == Σ credit) and reference real CoA accounts.
+    Admin-only and audited; lines must balance and reference real CoA accounts.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -244,11 +221,9 @@ class ManualJournalRequest(BaseModel):
 
 
 class FundingRequest(BaseModel):
-    """`POST /books/funding` — a wallet funding / opening-balance top-up.
+    """`POST /books/funding` — Dr Wallet / Cr Contributed Capital top-up.
 
-    Books Dr Wallet / Cr Contributed Capital in the entity's functional currency,
-    so a funded entity's balance sheet no longer shows negative cash & equity from
-    day one. Admin-scoped and audited.
+    Admin-only and audited.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -299,11 +274,9 @@ class TaxSettlementHead(BaseModel):
 
 
 class TaxSettlementResponse(BaseModel):
-    """The computed GST position + the settlement journal booked (if any).
+    """GST position and settlement journal: per-head payable cleared against ITC.
 
-    Clears the accumulated per-head GST Payable against Input Tax Credit so the
-    balance sheet no longer shows an ever-growing liability + asset; the net is
-    booked as GST Payable to Government, and any excess ITC carries forward.
+    The net is booked as GST Payable to Government; excess ITC carries forward.
     """
 
     model_config = ConfigDict(frozen=True)

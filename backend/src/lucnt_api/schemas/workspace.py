@@ -37,12 +37,7 @@ class EntityListResponse(BaseModel):
 
 
 class ApiKeySummary(BaseModel):
-    """An API key as the Developers page may see it: **never the secret**.
-
-    Only the hash is stored, so the plaintext is unrecoverable by construction —
-    this schema simply makes that explicit. `key_prefix` is the first 12
-    characters (`lucnt_live_8`), which identifies a key without revealing it.
-    """
+    """An API key without its secret; `key_prefix` (12 chars) identifies it."""
 
     model_config = ConfigDict(frozen=True, from_attributes=True)
 

@@ -1,9 +1,4 @@
-"""Account ORM model — one line of the company's Chart of Accounts (Phase 2).
-
-Journal entries map a transaction + its tax treatment onto these accounts
-(`services/journal_generator.py`). Company-scoped; the default set is created
-idempotently by `services/chart_of_accounts.py`.
-"""
+"""Account ORM model: one line of a company's Chart of Accounts."""
 
 from __future__ import annotations
 
@@ -37,8 +32,7 @@ class Account(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "accounts"
     __table_args__ = (
-        # `account_code` is unique within a company so the journal generator can
-        # resolve an account unambiguously by code (mirrors uq_agents_company_slug).
+        # The journal generator resolves accounts by code.
         UniqueConstraint("company_id", "account_code", name="uq_accounts_company_code"),
     )
 

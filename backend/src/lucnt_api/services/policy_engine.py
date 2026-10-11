@@ -1,19 +1,6 @@
-"""Policy engine (Module 5) — the verdict at `authorize`.
+"""Policy engine (M5): the pre-spend verdict at `authorize`, most-restrictive-wins.
 
-This is what makes LUCNT "infrastructure, not a passive ledger": it runs
-*before* money moves and can **block** a spend. Given the layered policies for a
-company/agent and a `SpendContext`, it returns a `Decision`
-(status ∈ {approved, blocked, review, human_hold} + a machine-readable `code` +
-reason) using **most-restrictive-wins**.
-
-Layering (M5): a company-wide monthly budget invariant
-is *always* enforced (never fail-open on budget), then every active policy —
-company-scoped first, agent-scoped on top — contributes a candidate verdict.
-
-Design mirrors `tax_engine`: the evaluators are pure. The one impure input
-(a count of recent spends, for velocity) is injected as a closure so the engine
-imports no SQLAlchemy; the router (`routers/transactions.py`) supplies the DB
-query and the clock.
+The monthly budget is always enforced (never fail-open); evaluators are pure.
 """
 
 from __future__ import annotations
@@ -34,11 +21,7 @@ from lucnt_api.models.policy import Policy, PolicyRuleType
 
 
 class VerdictCode(enum.StrEnum):
-    """Machine-readable reason a verdict was reached.
-
-    The SDK maps these to typed exceptions under `strict=True`
-    (`sdk/src/lucnt/exceptions.py`).
-    """
+    """Machine-readable verdict reason; the SDK maps these to typed exceptions."""
 
     OK = "ok"
     BUDGET_EXHAUSTED = "budget_exhausted"
@@ -60,12 +43,9 @@ class BudgetCapConfig(BaseModel):
 
 
 class MerchantListConfig(BaseModel):
-    """Allow- or block-list of vendors (matched case-insensitively).
+    """Allow- or block-list of vendors (case-insensitive).
 
-    The list is bounded on two grounds: it is hand-authored configuration,
-    and `evaluate()` scans it linearly on every `authorize()` — so an unbounded
-    list is latency on the blocking money path, not just an oversized payload.
-    Each entry mirrors the `vendor` column it is compared against.
+    Bounded: it is scanned linearly on every `authorize()` (blocking money path).
     """
 
     model_config = {"extra": "forbid"}
@@ -78,7 +58,6 @@ class MerchantListConfig(BaseModel):
     @field_validator("vendors")
     @classmethod
     def _check_vendor_lengths(cls, value: list[str]) -> list[str]:
-        """Reject an entry wider than the `vendor` column it is matched against."""
         for vendor in value:
             if len(vendor) > VENDOR_MAX:
                 raise ValueError(f"vendor entries must be <= {VENDOR_MAX} characters")
@@ -102,10 +81,9 @@ class AmountThresholdConfig(BaseModel):
 
 
 class TimeOfDayConfig(BaseModel):
-    """Allowed spend window `[start_hour, end_hour)` (entity-local), optional weekdays.
+    """Allowed window `[start_hour, end_hour)` entity-local; start > end is overnight.
 
-    `start_hour > end_hour` denotes an overnight window (e.g. 22→6). `days` uses
-    Python weekday numbering (Mon=0 … Sun=6); `None` means every day is allowed.
+    `days` uses Python weekday numbers (Mon=0); `None` allows every day.
     """
 
     model_config = {"extra": "forbid"}
@@ -124,11 +102,10 @@ _CONFIG_BY_RULE: dict[PolicyRuleType, type[BaseModel]] = {
 
 
 def parse_config(rule_type: PolicyRuleType, raw: dict[str, object]) -> BaseModel:
-    """Validate a raw `config_json` against the schema for its rule type.
+    """Validate a raw `config_json` against its rule type's schema.
 
-    Raises `pydantic.ValidationError` on a malformed config — callers that
-    persist policies (`POST /policies`) validate here so a broken rule can never
-    reach the engine.
+    Raises:
+        pydantic.ValidationError: Malformed config.
     """
     return TypeAdapter(_CONFIG_BY_RULE[rule_type]).validate_python(raw)
 
@@ -147,8 +124,7 @@ class SpendContext:
     agent_monthly_budget: Decimal
     agent_spent: Decimal  # accumulator compared to the monthly budget
     agent_spent_today: Decimal
-    # Prior committed spends within a rolling window ending at `now` — injected
-    # by the router (a DB count); keeps this module free of SQLAlchemy.
+    # Injected DB count of recent spends; keeps this module SQLAlchemy-free.
     recent_count: Callable[[timedelta], int]
 
 
@@ -172,7 +148,6 @@ class Decision:
     blocking_policy_ids: tuple[uuid.UUID, ...]
 
 
-# Restrictiveness ranking for most-restrictive-wins.
 _SEVERITY: dict[VerdictStatus, int] = {
     VerdictStatus.APPROVED: 0,
     VerdictStatus.REVIEW: 1,
@@ -290,11 +265,7 @@ def _eval_time_of_day(cfg: TimeOfDayConfig, ctx: SpendContext) -> _Candidate | N
 
 
 def _evaluate_policy(policy: Policy, ctx: SpendContext) -> _Candidate | None:
-    """Parse a policy's config and run its evaluator; `None` = the rule approved.
-
-    Dispatch is by the concrete parsed type so mypy narrows each config without
-    a cast — `parse_config` guarantees the type matches `policy.rule_type`.
-    """
+    """Run one policy's evaluator; `None` means the rule approved."""
     cfg = parse_config(policy.rule_type, policy.config_json)
     if isinstance(cfg, BudgetCapConfig):
         return _eval_budget_cap(cfg, ctx)
@@ -310,15 +281,11 @@ def _evaluate_policy(policy: Policy, ctx: SpendContext) -> _Candidate | None:
 
 
 def evaluate_spend(policies: Sequence[Policy], ctx: SpendContext) -> Decision:
-    """Evaluate the always-on budget invariant plus every policy; reduce to one verdict.
+    """Evaluate the budget invariant plus every policy; most restrictive wins.
 
     Args:
-        policies: Active policies applicable to this spend (company + agent scope);
-            the caller is responsible for scope/active filtering.
+        policies: Active, already scope-filtered policies.
         ctx: The spend under authorization.
-
-    Returns:
-        A `Decision` — most-restrictive-wins across all firing rules.
     """
     candidates: list[_Candidate] = []
     fired: list[uuid.UUID] = []

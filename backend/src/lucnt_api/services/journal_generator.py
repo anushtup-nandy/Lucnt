@@ -1,24 +1,11 @@
-"""Journal generator.
+"""Journal generator: transaction + tax treatment -> balanced double-entry lines.
 
-Maps a captured transaction + its tax treatment onto double-entry journal
-lines against the company's Chart of Accounts. Pure: it builds and returns
-unsaved `JournalEntry` rows; the caller adds them to the session.
+Pure; booked in functional currency. One shape covers every tax case:
 
-All amounts are booked in the entity's **functional currency** (FX-converted at
-capture), never the raw paid amount, so a single entity's journal never mixes
-currencies.
-
-One **unified** double-entry that balances by construction (Σ debit == Σ credit)
-covers every case — reverse charge, domestic inclusive/exclusive, the CGST/SGST/IGST
-head split, blocked ITC and US no-tax:
-
-    Cr Wallet(gross)                              # cash out (gross_amount)
-    Dr InputTaxCredit[head](reclaim)  per head    # capitalised input credit
-    Cr GSTPayable[head](tax)          per head     # reverse-charge output GST only
-    Dr Expense(gross + Σpayable − Σreclaim)        # the residual that balances it
-
-A journal that does not balance is a bug, not a data condition — the generator
-asserts and raises rather than persisting a broken ledger.
+    Cr Wallet(gross)
+    Dr InputTaxCredit[head](reclaim)  per head
+    Cr GSTPayable[head](tax)          per head, reverse charge only
+    Dr Expense(gross + Σpayable − Σreclaim)
 """
 
 from __future__ import annotations
@@ -41,9 +28,7 @@ from lucnt_api.services.tax_engine import TaxTreatment
 
 _ZERO = Decimal("0")
 
-# Whole-token vendor keywords: matched against the vendor's tokenised
-# words, so "roads" no longer matches "ads" and "metabase" no longer matches
-# "meta". Plurals are listed explicitly (word-boundary alone misses "airlines").
+# Whole-token match ("roads" must not hit "ads"); plurals listed explicitly.
 _TRAVEL_KEYWORDS = frozenset(
     {
         "airline",
@@ -67,12 +52,7 @@ def _select_expense_code(
     tokens_consumed: int | None,
     category: str | None,
 ) -> str:
-    """Pick the expense account for a spend from caller category / vendor signals.
-
-    An explicit, known caller `category` wins; otherwise LLM/API spend (a
-    model or token count) books to AI & Compute, and a **whole-token** vendor
-    match routes to Travel or Marketing, falling back to Software & Subscriptions.
-    """
+    """Pick the expense account: known category, else AI/travel/marketing/software."""
     if category is not None:
         code = CATEGORY_TO_ACCOUNT.get(category.strip().lower())
         if code is not None:
@@ -93,24 +73,11 @@ def generate_journal(
     tax: TaxTreatment,
     accounts: dict[str, Account],
 ) -> list[JournalEntry]:
-    """Produce balanced double-entry lines for a captured transaction.
-
-    Args:
-        transaction: The committed transaction (must already have an ``id``).
-        entity: The transaction's legal entity (its ``code`` is the ledger).
-        tax: The tax treatment from `tax_engine.compute_tax`.
-        accounts: The company's Chart of Accounts, keyed by code
-            (from `chart_of_accounts.ensure_default_accounts`).
-
-    Returns:
-        Unsaved `JournalEntry` rows whose debits equal their credits.
+    """Produce balanced double-entry lines for a captured transaction (with an id).
 
     Raises:
         ValueError: if the generated journal does not balance (a bug).
     """
-    # All legs are in the entity's functional currency; the tax amounts from
-    # `tax_engine` are already functional too, so the journal is single-currency and
-    # balances.
     currency: str = transaction.local_currency
     ledger = entity.code
     txn_id = transaction.id
@@ -121,7 +88,6 @@ def generate_journal(
     def line(
         account: Account, *, debit: Decimal = _ZERO, credit: Decimal = _ZERO
     ) -> JournalEntry:
-        """One unsaved, self-sufficient line in the functional currency."""
         return JournalEntry(
             transaction_id=txn_id,
             company_id=company_id,
@@ -141,11 +107,7 @@ def generate_journal(
         transaction.tokens_consumed,
         transaction.category,
     )
-    # Unified double-entry. The wallet pays the gross cash-out (``tax.gross_amount`` —
-    # functional for inclusive/RCM, functional+tax for a tax-exclusive domestic supply);
-    # the expense is the residual after per-head input tax credit is capitalised and any
-    # reverse-charge output GST is booked as a payable. Balances by construction:
-    # expense = gross + Σpayable − Σreclaim.
+    # gross includes tax for a tax-exclusive domestic supply; expense is the residual.
     gross = tax.gross_amount
     total_payable = (
         sum((c.tax_amount for c in tax.components), _ZERO)
@@ -159,16 +121,12 @@ def generate_journal(
         line(accounts[expense_code], debit=expense_amount),
         line(accounts[WALLET_CODE], credit=gross),
     ]
-    # Per-head input tax credit: one Dr ITC[head] leg per component with a
-    # reclaimable amount. A blocked component carries reclaim 0, so no leg — the GST
-    # stays inside the expense. India intra-state books two legs (CGST + SGST).
+    # Blocked ITC has reclaim 0, so no leg: the GST stays inside the expense.
     for comp in tax.components:
         if comp.reclaim_amount > _ZERO:
             lines.append(
                 line(accounts[ITC_BY_HEAD[comp.head]], debit=comp.reclaim_amount)
             )
-    # Per-head GST payable (reverse charge only): one Cr GST-Payable[head] per
-    # component that self-assesses output tax.
     if tax.reverse_charge:
         for comp in tax.components:
             if comp.tax_amount > _ZERO:

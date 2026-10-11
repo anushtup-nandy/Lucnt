@@ -1,21 +1,7 @@
 """Prometheus instrumentation.
 
-Deliberately small. Three series answer the questions an on-call engineer
-actually asks about this system — is the money path up, is it slow, and what is
-it deciding — and nothing else is exported until something asks for it.
-
-**Label cardinality is the trap.** Every interesting path here ends in a UUID
-(`/agents/{agent_id}`, `/transactions/{transaction_id}`), so labelling by raw
-request path would mint a new time series per entity and eventually take the
-scrape target down. The middleware labels by *route template*, resolved from
-`scope["route"].path` after routing; anything that never matched a route is
-bucketed under `__unmatched__` rather than being allowed to name itself.
-
-**Multiprocess.** Under gunicorn each worker holds its own counters, so a scrape
-lands on one arbitrary worker and reports a fraction of the truth. Setting
-`PROMETHEUS_MULTIPROC_DIR` (the image does) switches `render()` to a registry
-that aggregates every live worker's shared-memory files; `gunicorn.conf.py`'s
-`child_exit` hook marks dead workers so their samples are reaped.
+Label by route template, never raw path (UUIDs explode cardinality).
+`PROMETHEUS_MULTIPROC_DIR` makes `render()` aggregate across gunicorn workers.
 """
 
 from __future__ import annotations
@@ -33,9 +19,7 @@ from prometheus_client import generate_latest as _generate_latest
 
 CONTENT_TYPE = CONTENT_TYPE_LATEST
 
-# Buckets chosen for a blocking, DB-bound API rather than prometheus' defaults:
-# the interesting question is how much of the hot `authorize()` path stays under
-# ~100 ms, and where the tail sits relative to the 30 s `statement_timeout`.
+# Tuned for the ~100 ms authorize() path up to the 30 s statement_timeout.
 _LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
 
 http_requests_total = Counter(
@@ -51,18 +35,15 @@ http_request_duration_seconds = Histogram(
     buckets=_LATENCY_BUCKETS,
 )
 
-# The one business metric worth exporting from day one: `authorize()` is where
-# LUCNT blocks spend, so a shift in the verdict mix is either a policy change or
-# an incident, and both need to be visible without querying the ledger.
+# A shift in the verdict mix is a policy change or an incident.
 authorize_verdicts_total = Counter(
     "lucnt_authorize_verdicts_total",
     "Authorization verdicts returned by the policy engine.",
     ("verdict",),
 )
 
-# The rate limiter fails open on a Redis outage — a defensible choice, but
-# a silent one until this counter existed. Any increase means brute-force
-# protection is OFF and must page (alert rule: infra/prometheus/alerts.yml).
+# Any increase means brute-force protection is OFF; must page
+# (infra/prometheus/alerts.yml).
 rate_limiter_fail_open_total = Counter(
     "lucnt_rate_limiter_fail_open_total",
     "Requests admitted without rate limiting because Redis was unreachable.",

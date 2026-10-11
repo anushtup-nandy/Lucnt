@@ -1,11 +1,4 @@
-"""Policy ORM model — one governance rule evaluated at `authorize` (Phase 3, M5).
-
-A policy is the unit the policy engine (`services/policy_engine.py`) evaluates
-*before* money moves, so it can block a spend rather than merely record it. Each
-rule carries a typed config in `config_json` (JSONB); the engine parses it into a
-discriminated Pydantic union per `rule_type`. Policies are layered company→agent
-(`scope_type`/`scope_id`).
-"""
+"""Policy ORM model: one governance rule evaluated at authorize (M5)."""
 
 from __future__ import annotations
 
@@ -32,11 +25,7 @@ class PolicyRuleType(enum.StrEnum):
 
 
 class PolicyScopeType(enum.StrEnum):
-    """Whether a policy applies company-wide or to a single agent.
-
-    `company` policies (`scope_id is None`) form the base layer; `agent`
-    policies (`scope_id == agents.id`) layer on top for that agent only.
-    """
+    """`company` policies (no scope_id) are the base; `agent` ones layer on top."""
 
     COMPANY = "company"
     AGENT = "agent"
@@ -47,8 +36,7 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "policies"
     __table_args__ = (
-        # Read on every authorize() (`routers/transactions.py:129-131`) — an
-        # unindexed sequential scan of the whole policy table per call.
+        # Read on every authorize().
         Index("ix_policies_company_id_active", "company_id", "active"),
     )
 
@@ -61,9 +49,7 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             values_callable=lambda e: [m.value for m in e],
         )
     )
-    # Rule-specific config, shape determined by `rule_type`. `Any` is justified:
-    # the value is genuinely heterogeneous JSON; it is parsed into a typed,
-    # discriminated Pydantic model at evaluation time (`services/policy_engine.py`).
+    # Shape set by `rule_type`; parsed into a typed Pydantic union at evaluation.
     config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     scope_type: Mapped[PolicyScopeType] = mapped_column(
         Enum(
@@ -73,14 +59,11 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         ),
         default=PolicyScopeType.COMPANY,
     )
-    # Null for a company-wide policy; the target `agents.id` for an agent-scoped
-    # one. Required for the layered company→agent scoping. No FK: an agent-scoped
-    # policy referencing a since-deleted agent should simply stop matching, not
-    # block deletion — the engine already filters by live agent id.
+    # Null = company-wide. No FK: a policy for a deleted agent just stops matching
+    # rather than blocking deletion.
     scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
     active: Mapped[bool] = mapped_column(default=True)
-    # The engine's explanation when this rule decides a verdict (stored on the
-    # authorization's `reason_text`); optional, falls back to a generated string.
+    # Verdict explanation; falls back to a generated string.
     description: Mapped[str | None] = mapped_column(Text, default=None)
     hit_count: Mapped[int] = mapped_column(default=0)
     block_count: Mapped[int] = mapped_column(default=0)

@@ -1,13 +1,6 @@
-"""Reconciliation (recovery) router — the recovery inbox (Phase 4, M7).
+"""Reconciliation router: the recovery inbox.
 
-Recovery *reads* the ledger and writes `reconciliation_exceptions`; it never
-mutates `transactions`, keeping the frozen `authorize→capture` spine untouched.
-`POST /recon/scan` runs the pure detectors (`services/detectors.py`) over the
-company's committed transactions and books an exception per hit, with a drafted
-recovery plan (`services/recovery_agent.py`) in `evidence_json`.
-`POST /recon/failed-delivery` is the agent-reported path (the SDK
-`mark_failed_delivery()` hook). Humans triage via `GET /recon` and close an
-exception with `POST /recon/{id}/resolve`.
+Reads the ledger and writes `reconciliation_exceptions`; never mutates `transactions`.
 """
 
 from __future__ import annotations
@@ -50,9 +43,6 @@ from lucnt_api.services.detectors import TxnView, recurring_identity, run_detect
 from lucnt_api.services.lookups import entity_or_404
 from lucnt_api.services.recovery_agent import plan_recovery
 
-# Router-level nav gate (P7.0): a human principal may only reach a domain
-# present in `perms.nav` — the same tuple the sidebar renders from, so a
-# hidden page and a reachable endpoint cannot drift apart. No-op for API keys.
 router = APIRouter(
     prefix="/recon",
     tags=["reconciliation"],
@@ -63,9 +53,7 @@ router = APIRouter(
 _ACTIVE_STATUSES = (ReconExceptionStatus.OPEN, ReconExceptionStatus.RECOVERING)
 _TERMINAL_STATUSES = (ReconExceptionStatus.RESOLVED, ReconExceptionStatus.DISMISSED)
 
-# Rows fetched per round trip when streaming the ledger in `scan`. Large
-# enough that the per-chunk round trip is amortised over a whole-ledger read,
-# small enough that no single fetch is itself the memory spike we are removing.
+# Rows per round trip when streaming the ledger in `scan`.
 _LEDGER_CHUNK_SIZE = 1_000
 
 
@@ -87,10 +75,9 @@ def _to_response(exc: ReconciliationException) -> ReconExceptionResponse:
 
 
 def _active_summary(db: Session, company: Company) -> tuple[dict[str, Decimal], int]:
-    """(per-currency $ at stake, open count) across active exceptions — the header.
+    """(per-currency $ at stake, open count) across active exceptions.
 
-    "$ at stake" is summed **per currency**, never across. A row with no
-    currency (predating the column) is bucketed under an empty-string key.
+    Never summed across currencies; a NULL currency buckets under "".
     """
     rows = db.execute(
         select(
@@ -128,12 +115,7 @@ def list_exceptions(
     entity: str | None = Query(default=None, description="Filter by entity code"),
     page: Page = Depends(paginate()),
 ) -> ReconListResponse:
-    """List reconciliation exceptions, grouped by currency, highest stake first.
-
-    Ordering is (currency, `$ at stake` desc): without an FX conversion, ranking
-    amounts *across* currencies is meaningless (₹5,000 is not > $100), so
-    the list groups by currency and ranks within each.
-    """
+    """List reconciliation exceptions, grouped by currency, highest stake first."""
     stmt = select(ReconciliationException).where(
         ReconciliationException.company_id == company.id
     )
@@ -142,9 +124,7 @@ def list_exceptions(
     if exception_type is not None:
         stmt = stmt.where(ReconciliationException.exception_type == exception_type)
     if entity is not None:
-        # An exception has no entity of its own; it inherits the entity of the
-        # transaction it was raised against. Joined rather than denormalised so
-        # the two can never disagree.
+        # Entity comes from the underlying transaction.
         entity_row = entity_or_404(db, company, entity)
         stmt = stmt.join(
             Transaction, Transaction.id == ReconciliationException.transaction_id
@@ -176,9 +156,7 @@ def list_exceptions(
 @router.post(
     "/scan",
     response_model=ScanResponse,
-    # Tight per-key bucket on top of the admin gate: the cost of a
-    # scan is proportional to ledger size, so valid credentials alone are
-    # enough to pin a worker.
+    # Cost scales with ledger size, so rate-limit beyond the admin gate.
     dependencies=[Depends(require_cheap_enough)],
 )
 def scan(
@@ -187,19 +165,11 @@ def scan(
 ) -> ScanResponse:
     """Run the detector suite over the company ledger; book new exceptions.
 
-    Idempotent on two axes:
-    - **(txn, type)** — an already-flagged transaction (any status) is not
-      re-flagged; the detected ledger fact is immutable (the unique constraint is
-      the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from
-      500-ing the whole pass).
-    - **recurring identity (`dedup_key`)** — a dismissed/resolved recurring charge
-      (a subscription, a repeated overcharge) is not re-raised on next month's new
-      transaction row.
+    Idempotent per (txn, type) and per recurring identity (`dedup_key`), so a
+    dismissed recurring charge is not re-raised next month.
     """
-    # Select only the six columns `TxnView` needs and stream them in
-    # bounded chunks, building the list and its index in a single pass. Loading
-    # ORM entities held three copies of the ledger resident at once (identity
-    # map, views, index) to produce a response of three scalars.
+    # Stream only the columns `TxnView` needs; ORM entities would hold the
+    # whole ledger in the identity map.
     views: list[TxnView] = []
     view_by_id: dict[uuid.UUID, TxnView] = {}
     ledger = db.execute(
@@ -297,11 +267,7 @@ def report_failed_delivery(
     company: Company = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> ReconExceptionResponse:
-    """Record an agent-reported failed delivery (the SDK `mark_failed_delivery`).
-
-    Idempotent: replaying for a transaction that already has an active
-    failed-delivery exception returns the existing one instead of duplicating.
-    """
+    """Record an agent-reported failed delivery; idempotent per transaction."""
     txn = db.execute(
         select(Transaction).where(
             Transaction.id == payload.transaction_id,
@@ -315,8 +281,7 @@ def report_failed_delivery(
     if existing is not None:
         return _to_response(existing)
 
-    # Schema enforces >= 0; the amount at stake also cannot exceed what was paid
-    # (an agent can't claim back more than the transaction).
+    # Cannot claim back more than was paid.
     if (
         payload.amount_at_stake is not None
         and payload.amount_at_stake > txn.paid_amount

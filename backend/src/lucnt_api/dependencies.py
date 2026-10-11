@@ -1,30 +1,7 @@
 """FastAPI dependencies: DB session, auth, scope/role gating, throttling.
 
-**One header, two principal types (P7.0).** `Authorization: Bearer <credential>`
-carries either an SDK API key (`lucnt_live_…` / `lucnt_test_…`) or a dashboard
-access JWT. `get_auth_context` discriminates on the prefix, so all 42 existing
-endpoints gained human auth without changing a single signature — the change
-lands here. `AuthContext` holds **exactly one** of `api_key` / `user`.
-
-Gates, layered on that one resolution:
-
-* ``get_current_company`` — any authenticated principal; read endpoints.
-* ``require_nav(key)`` — the human route gate. A user may only reach a domain
-  present in `perms.nav`. Same tuple the sidebar renders from, so a hidden page
-  and a denied endpoint can never drift apart. No-op for API keys.
-* ``require_write(flag)`` — a governance mutation. API key: live + admin scope,
-  exactly as before. User: the named `Perms` flag must be true.
-* ``require_live`` — a live API key; the money path (authorize/capture/reverse).
-  **Always 403 for a human principal**: a dashboard session must not be able to
-  move money, only to govern it.
-* ``require_admin`` — governance mutations with no finer-grained flag. API key:
-  live + admin. User: any role except `auditor`, which is read-only by
-  definition.
-* ``require_cheap_enough`` — the tight `expensive` bucket, layered *on top of*
-  another gate, never instead of one.
-
-Rate limiting keys on `api_key.id` or `user.id` — never on a secret, which must
-not reach Redis.
+The Bearer header carries either an API key or a dashboard JWT, discriminated
+by prefix. Rate limits key on principal ids, never secrets.
 """
 
 from __future__ import annotations
@@ -65,12 +42,10 @@ __all__ = [
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
-# Only rewrite last_used_at when the stored value is older than this, so the hot
-# api_keys row isn't UPDATE'd (and WAL-written, row-locked) on every request.
+# Avoids an UPDATE on the hot api_keys row per request.
 _LAST_USED_THROTTLE = timedelta(minutes=5)
 
-# The `Perms` booleans a route may demand. A `Literal` rather than a bare `str`
-# so a typo is a mypy error, not a permission that is silently never satisfied.
+# `Literal` so a typo is a mypy error, not a never-satisfied permission.
 WriteFlag = Literal["can_write_budgets", "can_write_policies", "can_approve"]
 
 
@@ -78,8 +53,7 @@ WriteFlag = Literal["can_write_budgets", "can_write_policies", "can_approve"]
 class AuthContext:
     """The authenticated principal. Exactly one of `api_key` / `user` is set.
 
-    `perms` is populated for human principals only; `None` means "an API key,
-    which is governed by mode/scope rather than by role".
+    `perms` is set for humans only; API keys are governed by mode/scope.
     """
 
     company: Company
@@ -106,11 +80,10 @@ def _company_or_500(db: Session, company_id: object) -> Company:
 
 
 def _resolve_api_key(request: Request, token: str, db: Session) -> AuthContext:
-    """The SDK path, unchanged from Phase 1 apart from being factored out."""
+    """The SDK path: resolve an API key."""
     limiter = get_limiter()
     ip = client_ip(request)
-    # Checked *before* the lookup: the cost of a brute-force guess is this DB
-    # round trip, so limiting after it would still pay for every attempt.
+    # Before the lookup, so a brute-force guess costs no DB round trip.
     limiter.guard_auth_attempt(ip)
 
     key_hash = hash_api_key(token)
@@ -119,11 +92,8 @@ def _resolve_api_key(request: Request, token: str, db: Session) -> AuthContext:
         limiter.record_auth_failure(ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key")
 
-    # Only now that the principal is known can the per-key bucket be charged —
-    # keyed by the key's id, never the secret, which must not reach Redis.
     limiter.check(Bucket.DEFAULT, str(api_key.id))
 
-    # Throttled bookkeeping: avoid a commit on the hot key row per request.
     now = datetime.now(UTC)
     if api_key.last_used_at is None or now - api_key.last_used_at > _LAST_USED_THROTTLE:
         api_key.last_used_at = now
@@ -142,15 +112,13 @@ def _resolve_user(request: Request, token: str, db: Session) -> AuthContext:
         claims = decode_token(token, "access")
     except InvalidTokenError:
         limiter.record_auth_failure(ip)
-        # 401, deliberately: the SPA's interceptor treats 401 as "try one silent
-        # refresh", which is exactly right for an expired access token.
+        # 401 triggers the SPA's silent refresh.
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Invalid or expired session"
         ) from None
 
     user = db.get(User, claims.user_id)
-    # `company_id` is checked against the token's claim as well as the row: a
-    # user moved between companies must not keep a token that names the old one.
+    # A user moved between companies must not keep the old company's token.
     if user is None or not user.is_active or user.company_id != claims.company_id:
         limiter.record_auth_failure(ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired session")
@@ -171,10 +139,8 @@ def get_auth_context(
     """Resolve the `Authorization: Bearer <credential>` header to a principal.
 
     Raises:
-        HTTPException: 401 if the header is missing, or the credential is
-            unknown, inactive or expired. The SDK's `Transport` maps 401/403 to
-            `AuthError`. 429 if this IP has exhausted its failed-attempt budget,
-            or the resolved principal has exhausted its request budget.
+        HTTPException: 401 for a missing/unknown/inactive/expired credential;
+            429 when the IP or principal exhausts its rate budget.
     """
     if credentials is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing credentials")
@@ -192,12 +158,7 @@ def get_current_company(
 
 
 def require_live(ctx: AuthContext = Depends(get_auth_context)) -> Company:
-    """A live API key — the money path. Test keys cannot write the live ledger.
-
-    A human principal is refused outright. `authorize`/`capture` are what an
-    agent calls at the moment of spend; a dashboard session posting one would be
-    money moving with no agent behind it, which is the opposite of the product.
-    """
+    """A live API key — the money path. Humans and test keys are refused."""
     if ctx.user is not None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -212,13 +173,9 @@ def require_live(ctx: AuthContext = Depends(get_auth_context)) -> Company:
 
 
 def require_cheap_enough(ctx: AuthContext = Depends(get_auth_context)) -> Company:
-    """The tight `expensive` bucket, for endpoints that walk the ledger.
+    """The tight `expensive` bucket for ledger-walking endpoints.
 
-    Layered *on top of* the per-principal default bucket rather than replacing
-    it, and lives here rather than in `rate_limit.py` so it can key on the
-    resolved principal id — keying on the raw bearer token would write
-    credential material into Redis. Apply to `/recon/scan` and
-    `/intelligence/recompute`, whose cost is proportional to ledger size.
+    Layered on another gate, never instead of one; keys on the principal id.
     """
     identity = (
         f"user:{ctx.user.id}" if ctx.user is not None else str(ctx.api_key.id)  # type: ignore[union-attr]
@@ -228,7 +185,7 @@ def require_cheap_enough(ctx: AuthContext = Depends(get_auth_context)) -> Compan
 
 
 def _require_key_admin(ctx: AuthContext) -> None:
-    """The API-key half of every governance gate, unchanged."""
+    """The API-key half of every governance gate: live + admin scope."""
     if ctx.api_key is None or ctx.api_key.mode != ApiKeyMode.LIVE:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -244,10 +201,7 @@ def _require_key_admin(ctx: AuthContext) -> None:
 def require_admin(ctx: AuthContext = Depends(get_auth_context)) -> Company:
     """Governance mutation with no finer-grained flag.
 
-    API key: live + admin scope. User: anything but `auditor`, whose whole
-    definition is read-only — "every write path 403s for `auditor`
-    server-side" is enforced here and in `require_write`, so no write path can
-    miss it.
+    API key: live + admin scope. User: anything but the read-only `auditor`.
     """
     if ctx.user is not None:
         if ctx.user.role == UserRole.AUDITOR:
@@ -262,9 +216,7 @@ def require_admin(ctx: AuthContext = Depends(get_auth_context)) -> Company:
 def require_write(flag: WriteFlag) -> Callable[..., Company]:
     """Build a dependency demanding one named `Perms` write flag.
 
-    API-key principals are gated exactly as `require_admin` gates them — the
-    flags describe *human* roles, and an admin key has always been able to do
-    all of this. Human principals must hold the flag.
+    API keys are gated as in `require_admin`; humans must hold the flag.
 
     Args:
         flag: The `Perms` attribute that must be true, e.g. `can_write_budgets`.
@@ -290,20 +242,13 @@ def require_write(flag: WriteFlag) -> Callable[..., Company]:
 def require_nav(key: str) -> Callable[..., AuthContext]:
     """Build a dependency gating a whole domain on nav membership.
 
-    This is the server-side twin of the sidebar: `perms.nav` is what the
-    frontend renders *and* what this checks, so a role that cannot see a page
-    also cannot call its endpoints. Hiding a nav item without denying the
-    endpoint is a security hole.
-
-    No-op for API-key principals: the SDK's access is governed by key mode and
-    scope, and narrowing it here would break existing integrations.
+    Server-side twin of the sidebar's `perms.nav`. No-op for API keys.
 
     Args:
         key: A `NavKey`, e.g. `"books"`.
 
     Returns:
-        A dependency callable yielding the `AuthContext`, so a route can gate
-        and read the principal in one dependency.
+        A dependency yielding the `AuthContext`.
     """
 
     def dependency(ctx: AuthContext = Depends(get_auth_context)) -> AuthContext:

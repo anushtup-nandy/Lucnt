@@ -1,14 +1,6 @@
-"""Recovery agent (Phase 4, M7) — maps an exception to a drafted recovery action.
+"""Recovery agent: maps a reconciliation exception to a drafted recovery action.
 
-Pure and draft-only (design decision): given an exception type and the
-transaction facts, it returns a `RecoveryPlan` (method + a drafted message + a
-human-escalation flag). The router stores the plan in the exception's
-`evidence_json` so the recovery inbox shows the recommended action immediately.
-
-Actually *sending* the drafted message (vendor email / portal submission) is a
-Phase 6 concern (webhooks / notifications); keeping this module side-effect-free
-mirrors the pure `policy_engine` / `tax_engine` services and keeps it fully
-unit-testable.
+Pure and draft-only; nothing is sent from here.
 """
 
 from __future__ import annotations
@@ -18,7 +10,6 @@ from decimal import Decimal
 
 from lucnt_api.models.reconciliation_exception import ReconExceptionType
 
-# Recovery methods (business constants).
 METHOD_VENDOR_EMAIL = "vendor_email"
 METHOD_REFUND_REQUEST = "refund_request"
 METHOD_CANCEL_SUBSCRIPTION = "cancel_subscription"
@@ -48,18 +39,7 @@ def plan_recovery(
     amount_at_stake: Decimal,
     currency: str,
 ) -> RecoveryPlan:
-    """Draft the recovery action for an exception.
-
-    Args:
-        exception_type: Which anomaly this is.
-        vendor: The vendor to recover from.
-        amount_at_stake: The recoverable amount (in `currency`).
-        currency: ISO currency code of `amount_at_stake`.
-
-    Returns:
-        A `RecoveryPlan` — the method, a drafted human-readable message, and
-        whether it needs human escalation.
-    """
+    """Draft the recovery action for an exception."""
     stake = f"{amount_at_stake} {currency}"
     if exception_type == ReconExceptionType.DUPLICATE:
         return RecoveryPlan(

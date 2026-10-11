@@ -13,11 +13,7 @@ from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 
 
 class UserRole(enum.StrEnum):
-    """Presets-now RBAC role, resolved through a single `resolve_perms(user)` seam.
-
-    Design decision: presets now, full table-backed permissions later, without a
-    schema rewrite.
-    """
+    """RBAC preset role; resolve via `resolve_perms(user)`, never ad-hoc checks."""
 
     ENGINEER = "engineer"
     CFO = "cfo"

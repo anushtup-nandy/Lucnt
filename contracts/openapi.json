@@ -226,7 +226,7 @@
         "type": "object"
       },
       "ApiKeySummary": {
-        "description": "An API key as the Developers page may see it: **never the secret**.\n\nOnly the hash is stored, so the plaintext is unrecoverable by construction \u2014\nthis schema simply makes that explicit. `key_prefix` is the first 12\ncharacters (`lucnt_live_8`), which identifies a key without revealing it.",
+        "description": "An API key without its secret; `key_prefix` (12 chars) identifies it.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -552,7 +552,7 @@
         "type": "object"
       },
       "AuthorizationSummary": {
-        "description": "One policy verdict, as `GET /authorizations` returns it (D5).\n\nCarries the agent's name and glyph inline: the dashboard renders a glyph per\nrow, and a lookup per row is the N+1 that `/transactions` already avoids by\nthe same means.",
+        "description": "One policy verdict from `GET /authorizations`; agent name/glyph inline.",
         "properties": {
           "agent_glyph": {
             "title": "Agent Glyph",
@@ -857,7 +857,7 @@
         "type": "object"
       },
       "BudgetsResponse": {
-        "description": "Response body for `GET /budgets` \u2014 per-agent + per-workflow rollups.\n\n`total` counts every agent matching the request's filters, not the length of\nthe returned `agents` page. `workflows` is unpaginated and rolls up\n*all* member agents, so a rollup stays correct regardless of the page.",
+        "description": "`GET /budgets` \u2014 per-agent page plus unpaginated workflow rollups.\n\n`total` counts all matching agents, not the page length.",
         "properties": {
           "agents": {
             "items": {
@@ -887,7 +887,7 @@
         "type": "object"
       },
       "CaptureRequest": {
-        "description": "Request body for `POST /transactions/capture`. Mirrors `sdk.ledger.capture()`.\n\nPhase 3.5 adds optional settlement overrides (`amount`/`model`/`tokens`):\nthe actual values known only after the spend (e.g. the true LLM cost from\n`meter()`). When omitted, the authorization's held values stand. This is the\nhold-vs-settle split \u2014 `authorize` holds an estimate, `capture` books truth\n\u2014 and the same fields serve the future card rail (auth $X, settle $Y).",
+        "description": "Request body for `POST /transactions/capture`. Mirrors `sdk.ledger.capture()`.\n\n`amount`/`model`/`tokens` override the held estimate with settled actuals.",
         "properties": {
           "amount": {
             "anyOf": [
@@ -1212,7 +1212,7 @@
         "type": "object"
       },
       "FailedDeliveryRequest": {
-        "description": "Request body for `POST /recon/failed-delivery` (the SDK `mark_failed_delivery`).\n\nAgent-reported: a spend whose downstream task failed. `amount_at_stake`\ndefaults to the transaction's full paid amount when not given.",
+        "description": "`POST /recon/failed-delivery`: a spend whose downstream task failed.\n\n`amount_at_stake` defaults to the transaction's paid amount.",
         "properties": {
           "amount_at_stake": {
             "anyOf": [
@@ -1250,7 +1250,7 @@
         "type": "object"
       },
       "FinancialMemoryResponse": {
-        "description": "Living financial memory for one agent \u2014 the SDK `query()` response.\n\nComputed live from the agent's ledger so an agent can self-regulate *before*\nit spends (M8). `headline` answers the free-text `q`, keyword-routed to the\nmost relevant dimension (budget / cost / on-track) \u2014 no LLM involved.",
+        "description": "SDK `query()` response, computed live from the agent's ledger.\n\n`headline` answers `q` by keyword routing (no LLM).",
         "properties": {
           "agent": {
             "title": "Agent",
@@ -1391,7 +1391,7 @@
         "type": "object"
       },
       "FundingRequest": {
-        "description": "`POST /books/funding` \u2014 a wallet funding / opening-balance top-up.\n\nBooks Dr Wallet / Cr Contributed Capital in the entity's functional currency,\nso a funded entity's balance sheet no longer shows negative cash & equity from\nday one. Admin-scoped and audited.",
+        "description": "`POST /books/funding` \u2014 Dr Wallet / Cr Contributed Capital top-up.\n\nAdmin-only and audited.",
         "properties": {
           "amount": {
             "anyOf": [
@@ -1440,7 +1440,7 @@
         "type": "object"
       },
       "GLAccount": {
-        "description": "One account's postings and running totals in the general ledger.\n\nAn account is sectioned per currency \u2014 the same account code posted to by\nentities in different currencies yields one section per currency.",
+        "description": "One account's general-ledger totals, sectioned per currency.",
         "properties": {
           "account_code": {
             "title": "Account Code",
@@ -1644,7 +1644,7 @@
         "type": "object"
       },
       "InsightType": {
-        "description": "The kind of recommendation an insight carries.\n\nAll three are honestly computable from ledger data alone:\n`BUDGET_RISK` \u2014 an agent's run-rate projects past its monthly budget.\n`ANOMALY` \u2014 an agent's recent spend is a statistical outlier vs its own\nfingerprint (`fingerprints.anomaly_score` at/above threshold).\n`COST_SPIKE` \u2014 a unit of output (task type / project) costs far more than\nthe company's typical unit.",
+        "description": "Recommendation kind, computable from ledger data alone.\n\n`BUDGET_RISK`: run-rate projects past monthly budget. `ANOMALY`: outlier vs the\nagent's fingerprint. `COST_SPIKE`: a unit of output costs far above typical.",
         "enum": [
           "budget_risk",
           "anomaly",
@@ -1681,7 +1681,7 @@
         "type": "object"
       },
       "JournalGroup": {
-        "description": "All postings for a single transaction (the journal explorer's unit).\n\nOne transaction posts to one entity, so a group is single-currency.",
+        "description": "All postings for one transaction; always single-currency.",
         "properties": {
           "currency": {
             "title": "Currency",
@@ -1732,7 +1732,7 @@
         "type": "object"
       },
       "JournalLine": {
-        "description": "One double-entry journal line returned with a captured transaction.\n\nMirrors `sdk.JournalLine`. Part of the frozen contract \u2014 keep in lockstep.",
+        "description": "A captured transaction's journal line. Mirrors `sdk.JournalLine`.",
         "properties": {
           "account_code": {
             "title": "Account Code",
@@ -1903,7 +1903,7 @@
         "type": "object"
       },
       "ManualJournalRequest": {
-        "description": "`POST /books/journal` \u2014 a balanced manual journal (accrual, adjustment).\n\nAdmin-scoped and audited. Booked in the entity's functional currency;\nthe lines must balance (\u03a3 debit == \u03a3 credit) and reference real CoA accounts.",
+        "description": "`POST /books/journal` \u2014 a balanced manual journal in functional currency.\n\nAdmin-only and audited; lines must balance and reference real CoA accounts.",
         "properties": {
           "entity": {
             "maxLength": 50,
@@ -2309,7 +2309,7 @@
         "type": "string"
       },
       "PolicyScopeType": {
-        "description": "Whether a policy applies company-wide or to a single agent.\n\n`company` policies (`scope_id is None`) form the base layer; `agent`\npolicies (`scope_id == agents.id`) layer on top for that agent only.",
+        "description": "`company` policies (no scope_id) are the base; `agent` ones layer on top.",
         "enum": [
           "company",
           "agent"
@@ -2318,7 +2318,7 @@
         "type": "string"
       },
       "PolicyUpdate": {
-        "description": "Request body for `PATCH /policies/{id}` \u2014 all fields optional.\n\n`rule_type` and scope are immutable (they define the policy's identity);\nchange them by deleting and recreating.",
+        "description": "`PATCH /policies/{id}`. `rule_type` and scope are immutable.",
         "properties": {
           "active": {
             "anyOf": [
@@ -2665,7 +2665,7 @@
         "type": "object"
       },
       "ReconExceptionStatus": {
-        "description": "Lifecycle of an exception: detected \u2192 in-recovery \u2192 terminal.\n\n`OPEN` is a freshly detected/reported exception; `RECOVERING` is one whose\nrecovery action is in flight; `RESOLVED` (money recovered) and `DISMISSED`\n(a false positive or accepted loss) are the terminal states.",
+        "description": "Lifecycle: open \u2192 recovering \u2192 resolved | dismissed (both terminal).",
         "enum": [
           "open",
           "recovering",
@@ -2676,7 +2676,7 @@
         "type": "string"
       },
       "ReconExceptionType": {
-        "description": "The kind of anomaly a reconciliation exception records.\n\n`DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the\nledger by `services/detectors.py`; `FAILED_DELIVERY` is agent-reported (the\nSDK `mark_failed_delivery()` hook) because it cannot be inferred from spend\ndata alone. `TAX_UNCLASSIFIED` is *capture-emitted*: a spend hit a vendor with\nno place-of-supply data, so tax was booked conservatively and the vendor needs\nenriching before the treatment can be finalised.",
+        "description": "Anomaly kind.\n\n`FAILED_DELIVERY` is agent-reported (not inferable from spend);\n`TAX_UNCLASSIFIED` is emitted at capture for a vendor lacking place-of-supply\ndata, so tax was booked conservatively. The rest are ledger-detected.",
         "enum": [
           "duplicate",
           "overcharge",
@@ -2688,7 +2688,7 @@
         "type": "string"
       },
       "ReconListResponse": {
-        "description": "Response for `GET /recon` \u2014 the inbox page plus a stable summary header.\n\n`total` is the filtered/paginated count; `total_at_stake` and `open_count`\nsummarize all *active* (open + recovering) exceptions for the company,\nindependent of the list filters \u2014 the \"$ at stake\" headline. `total_at_stake`\nis a **per-currency** map (currency -> sum), never a meaningless cross-currency\ntotal.",
+        "description": "`GET /recon` \u2014 inbox page plus a filter-independent summary.\n\n`total_at_stake` covers all active exceptions, keyed per currency.",
         "properties": {
           "items": {
             "items": {
@@ -2923,7 +2923,7 @@
         "type": "object"
       },
       "TaxInfo": {
-        "description": "The tax treatment returned with a captured transaction.\n\nMirrors `sdk.TaxInfo`. Part of the frozen contract \u2014 keep in lockstep.",
+        "description": "A captured transaction's tax treatment. Mirrors `sdk.TaxInfo`.",
         "properties": {
           "currency": {
             "title": "Currency",
@@ -3070,7 +3070,7 @@
         "type": "object"
       },
       "TaxSettlementResponse": {
-        "description": "The computed GST position + the settlement journal booked (if any).\n\nClears the accumulated per-head GST Payable against Input Tax Credit so the\nbalance sheet no longer shows an ever-growing liability + asset; the net is\nbooked as GST Payable to Government, and any excess ITC carries forward.",
+        "description": "GST position and settlement journal: per-head payable cleared against ITC.\n\nThe net is booked as GST Payable to Government; excess ITC carries forward.",
         "properties": {
           "credit_carried_forward": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -3138,7 +3138,7 @@
         "type": "object"
       },
       "TokenResponse": {
-        "description": "Response body for `POST /auth/login` and `POST /auth/refresh`.\n\nCarries the access token only. The refresh token is set as an httpOnly\ncookie and is deliberately never readable by JavaScript.",
+        "description": "Access token for login/refresh; the refresh token is an httpOnly cookie.",
         "properties": {
           "access_token": {
             "title": "Access Token",
@@ -3162,7 +3162,7 @@
         "type": "object"
       },
       "Transaction": {
-        "description": "Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`.\n\nPhase 2 adds `journal` (double-entry lines) and `tax` (jurisdiction\ntreatment), both produced synchronously on capture.",
+        "description": "Response body for `POST /transactions/capture`. Mirrors `sdk.Transaction`.",
         "properties": {
           "amount": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -3439,7 +3439,7 @@
         "type": "object"
       },
       "TransactionFull": {
-        "description": "`GET /transactions/{id}` \u2014 the detail row plus what only it can afford.\n\nThe tax treatment and the journal are a join each. On the *list* they would\nbe an N+1 per page; on a single row they are two queries, and the dashboard's\ntransaction detail is meaningless without them: the balanced double entry is\nthe product's central claim, and a page that asserts it without showing it is\na fa\u00e7ade.",
+        "description": "`GET /transactions/{id}` \u2014 detail plus tax and journal (N+1 on the list).",
         "properties": {
           "agent_id": {
             "format": "uuid",
@@ -4056,7 +4056,7 @@
         "type": "object"
       },
       "VendorUpdate": {
-        "description": "`PATCH /vendors/{id}` \u2014 enrich an (often auto-created) vendor (admin).\n\nEvery field is optional; only the ones provided are updated.",
+        "description": "`PATCH /vendors/{id}` (admin); only provided fields change.",
         "properties": {
           "country": {
             "anyOf": [
@@ -4147,7 +4147,7 @@
         "type": "object"
       },
       "Verdict": {
-        "description": "Response body for `POST /transactions/authorize`. Mirrors `sdk.Verdict`.\n\nPhase 3 adds `code`, a machine-readable reason (`ok`, `budget_exhausted`,\n`merchant_blocked`, `velocity_exceeded`, `amount_over_threshold`,\n`outside_hours`) the SDK maps to typed exceptions under `strict=True`. It is\nan open string set (each future rule adds a code), not a `Literal`, so a new\ncode never breaks an older SDK.",
+        "description": "Response body for `POST /transactions/authorize`. Mirrors `sdk.Verdict`.\n\n`code` is an open string (not a `Literal`) so a new code never breaks an\nolder SDK.",
         "properties": {
           "authorization_id": {
             "format": "uuid",
@@ -4200,7 +4200,7 @@
         "type": "string"
       },
       "VoidRequest": {
-        "description": "Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.\n\nReleases an approved-but-uncaptured hold so it stops reserving the agent's\nbudget. Used when the spend the hold was taken for did not happen \u2014\nthe vendor call failed after `authorize()` returned, say.",
+        "description": "Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.\n\nReleases an approved-but-uncaptured hold when the spend did not happen.",
         "properties": {
           "authorization_id": {
             "format": "uuid",
@@ -4227,7 +4227,7 @@
         "type": "object"
       },
       "VoidResult": {
-        "description": "Result of releasing a hold via `POST /transactions/void`.\n\n`already_released` makes the endpoint idempotent: a retried void (the SDK\ncalls it from an error path, so retries are expected) returns 200 describing\nthe original release rather than conflicting with it.",
+        "description": "Result of `POST /transactions/void`.\n\nIdempotent: a retried void returns 200 with `already_released` set.",
         "properties": {
           "already_released": {
             "default": false,
@@ -4417,7 +4417,7 @@
     },
     "/agents/{agent_id}": {
       "get": {
-        "description": "Full detail for a single agent.\n\nA scoped-out agent is a 404, not a 403: telling an `agent_owner` that a given\nid exists but belongs to someone else is itself a disclosure.",
+        "description": "Full detail for a single agent.\n\nA scoped-out agent is a 404, not a 403, so its existence is not disclosed.",
         "operationId": "get_agent_agents__agent_id__get",
         "parameters": [
           {
@@ -4528,7 +4528,7 @@
     },
     "/approvals": {
       "get": {
-        "description": "List holds awaiting approval (review + human_hold) for the current company.\n\nPaginated: the queue grows with how long holds go unattended, which is\nexactly the situation in which an unbounded response is least welcome.",
+        "description": "List holds awaiting approval (review + human_hold) for the current company.",
         "operationId": "list_approvals_approvals_get",
         "parameters": [
           {
@@ -4767,7 +4767,7 @@
     },
     "/auth/login": {
       "post": {
-        "description": "Exchange email + password for an access token and a refresh cookie.\n\nRaises:\n    HTTPException: 401 for any failure \u2014 unknown email, wrong password, or\n        a deactivated account. One message for all three, deliberately:\n        distinguishing them turns the endpoint into an account enumerator.\n        429 when the IP has exhausted its failed-attempt budget.",
+        "description": "Exchange email + password for an access token and a refresh cookie.\n\nRaises:\n    HTTPException: 401 with one message for every failure (no account\n        enumeration); 429 when the IP's failed-attempt budget is spent.",
         "operationId": "login_auth_login_post",
         "requestBody": {
           "content": {
@@ -4809,7 +4809,7 @@
     },
     "/auth/logout": {
       "post": {
-        "description": "Clear the refresh cookie.\n\nThis ends the session on this browser. It does **not** revoke a refresh\ntoken already copied out of the cookie \u2014 the token is stateless and P7.0 has\nno revocation table (see `security.py`). The 7-day ceiling is the mitigation.",
+        "description": "Clear the refresh cookie; a copied refresh token is not revoked (stateless).",
         "operationId": "logout_auth_logout_post",
         "responses": {
           "204": {
@@ -4824,7 +4824,7 @@
     },
     "/auth/me": {
       "get": {
-        "description": "The signed-in user, their company, and their resolved permissions.\n\nThe SPA's first call after login: `perms.nav` builds the sidebar and\n`perms.landing` decides where to land. Both are data, never hardcoded.\n\nRaises:\n    HTTPException: 400 when called with an API key, which has no user, no\n        role and therefore no nav. Not 403 \u2014 the credential is valid, it is\n        simply the wrong *kind* for this endpoint.",
+        "description": "The signed-in user, their company, and their resolved permissions.\n\nRaises:\n    HTTPException: 400 when called with an API key (valid but wrong kind).",
         "operationId": "me_auth_me_get",
         "responses": {
           "200": {
@@ -4851,7 +4851,7 @@
     },
     "/auth/refresh": {
       "post": {
-        "description": "Mint a new access token from the refresh cookie, rotating the cookie.\n\nThe refresh token is re-issued on every use so a stolen cookie's window is\nbounded by the next legitimate refresh rather than by the full 7 days.\n\nRaises:\n    HTTPException: 401 if the cookie is absent, invalid, expired, or names a\n        user who has since been deactivated.",
+        "description": "Mint a new access token from the refresh cookie, rotating the cookie.\n\nRaises:\n    HTTPException: 401 if the cookie is absent, invalid, expired, or names a\n        deactivated user.",
         "operationId": "refresh_auth_refresh_post",
         "parameters": [
           {
@@ -4901,7 +4901,7 @@
     },
     "/authorizations": {
       "get": {
-        "description": "List policy verdicts for the current company, newest first.\n\nJoined to `agents` so the response can carry the agent's name and glyph\nwithout the dashboard issuing a lookup per row, and so `agent_owner` scoping\nhappens in this one query rather than after the fact.",
+        "description": "List policy verdicts for the current company, newest first.",
         "operationId": "list_authorizations_authorizations_get",
         "parameters": [
           {
@@ -5207,7 +5207,7 @@
     },
     "/books/funding": {
       "post": {
-        "description": "Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.\n\nThe funding/opening-balance entry the ledger previously lacked \u2014 without it\nevery balance sheet showed negative cash & equity from day one (the wallet was\nonly ever credited by spend). Admin-scoped, audited, functional currency.",
+        "description": "Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.",
         "operationId": "create_funding_books_funding_post",
         "requestBody": {
           "content": {
@@ -5254,7 +5254,7 @@
     },
     "/books/gl": {
       "get": {
-        "description": "General ledger: every posted account/currency with its totals and balance.\n\nTwo shapes, because the line-level view is the only unbounded one:\n\n* **Listing** (no `account`) \u2014 totals per account/currency, computed by a\n  SQL `GROUP BY`. Costs one row per account, not one per journal line, so it\n  no longer loads a 500k-line ledger into memory to add up six numbers.\n  `entries` is empty here and `entry_count` reports how many lines exist.\n* **Detail** (`?account=CODE`) \u2014 the same totals plus that account's lines,\n  bounded by `limit`/`offset`. Journal lines run 2-5x transaction count, so\n  this is the one place the row-level cost has to be paid, and it is paid a\n  page at a time.",
+        "description": "General ledger: every posted account/currency with its totals and balance.\n\nWithout `account`, totals only (`entries` empty). With `?account=CODE`, that\naccount's lines are included, paginated.",
         "operationId": "get_general_ledger_books_gl_get",
         "parameters": [
           {
@@ -5391,7 +5391,7 @@
     },
     "/books/journal": {
       "post": {
-        "description": "Post a balanced manual journal \u2014 an accrual, prepaid, or correction.\n\nAdmin-scoped and audited. Booked in the entity's functional currency; the\nlines must reference real CoA accounts and balance.",
+        "description": "Post a balanced manual journal (accrual, prepaid, correction).",
         "operationId": "create_manual_journal_books_journal_post",
         "requestBody": {
           "content": {
@@ -5651,7 +5651,7 @@
     },
     "/books/tax-settlement": {
       "post": {
-        "description": "Book a return-cycle GST settlement, clearing Payable against ITC.\n\nNets the period's accumulated output GST (the per-head Payable accounts) against\ninput tax credit (the per-head ITC accounts), books the residual as GST Payable\nto Government, and carries forward any unutilised ITC \u2014 so the balance sheet no\nlonger shows an ever-growing liability + asset. Admin-scoped and audited.",
+        "description": "Book a return-cycle GST settlement, clearing Payable against ITC.\n\nThe residual is booked to GST Payable to Government; unutilised ITC carries\nforward.",
         "operationId": "settle_taxes_books_tax_settlement_post",
         "requestBody": {
           "content": {
@@ -5793,7 +5793,7 @@
     },
     "/budgets": {
       "get": {
-        "description": "Per-agent budget utilisation plus per-workflow rollups for the company.\n\nThe `agents` array is paginated and `total` counts all matching agents; the\n`workflows` rollups are configuration-shaped (bounded by how many workflows\na customer authors, not by ledger volume) and are always returned whole, so\na rollup never silently omits a member that fell off the page.\n\n`agent` narrows to a single slug \u2014 the SDK's `check_budget()` path, which\nwould otherwise download every agent's budget to read one row.\n\nAn `agent_owner` sees only their own agents, narrowed in the SQL, and gets\n**no workflow rollups at all**: a rollup sums across every member of a\nworkflow, so returning one to a scoped principal would report other owners'\nspend under a different name. An empty list is the honest answer.",
+        "description": "Per-agent budget utilisation plus per-workflow rollups for the company.\n\n`agents` is paginated; `workflows` is always whole. An `agent_owner` gets no\nworkflow rollups, since they would sum other owners' spend.",
         "operationId": "get_budgets_budgets_get",
         "parameters": [
           {
@@ -6013,7 +6013,7 @@
     },
     "/health/live": {
       "get": {
-        "description": "Liveness: is this process running? Never touches a dependency.\n\nA liveness probe that checks the database is a way to turn one database\nblip into every container being killed at once. `/health` is retained as\nan alias so existing probes keep working.",
+        "description": "Liveness: is this process running? Never touches a dependency.",
         "operationId": "health_live_health_live_get",
         "responses": {
           "200": {
@@ -6036,7 +6036,7 @@
     },
     "/health/ready": {
       "get": {
-        "description": "Readiness: can this process actually serve?\n\nThe old single `/health` returned a static dict, so a load balancer\nhappily kept routing to a backend whose Postgres was gone. This one takes\na connection out of the real pool, pings it, and checks the schema is at\nthe migration head.",
+        "description": "Readiness: database reachable and schema at the migration head.",
         "operationId": "health_ready_health_ready_get",
         "responses": {
           "200": {
@@ -6057,7 +6057,7 @@
     },
     "/insights": {
       "get": {
-        "description": "List the company's insights, newest first, with an unapplied headline count.\n\nDismissed insights are hidden by default (they are resolved); pass\n`include_dismissed=true` to see them.",
+        "description": "List the company's insights, newest first, with an unapplied headline count.",
         "operationId": "list_insights_insights_get",
         "parameters": [
           {
@@ -6277,7 +6277,7 @@
     },
     "/intelligence/query": {
       "get": {
-        "description": "An agent's living financial memory (M8), served without a ledger scan.\n\nTwo paths, because this is the per-spend SDK call and a full scan per call is\nO(n) per call and O(n^2) over an agent's lifetime:\n\n* **Fast path** \u2014 an agent that has been through `/recompute` has a stored\n  `Fingerprint`, so the statistics are read rather than recomputed, and the\n  projection and cost-per-output come from SQL aggregates. No record is\n  loaded into Python.\n* **Fallback** \u2014 no stored fingerprint (an agent that has never been\n  recomputed) computes live exactly as before. This is what keeps the\n  documented \"needs no prior recompute\" contract true.\n\n**Staleness is real and deliberate.** On the fast path the fingerprint\nstatistics \u2014 mean, stddev, median, top vendors, anomaly score \u2014 are as fresh\nas the last `/recompute`. `budget` is always live (a SQL sum over the ledger),\nso spend headroom, the figure an agent gates on, is never stale.",
+        "description": "An agent's financial memory: budget, projection, cost-per-output, fingerprint.\n\nFingerprint stats are as fresh as the last `/recompute`; `budget` is always live.",
         "operationId": "query_intelligence_query_get",
         "parameters": [
           {
@@ -6345,7 +6345,7 @@
     },
     "/intelligence/recompute": {
       "post": {
-        "description": "Recompute fingerprints/memories/insights over the whole company ledger.\n\nUpserts one fingerprint per agent and one memory per (agent, type); clears\nthe company's **un-applied** insights and regenerates them (applied insights\npersist as a record of the action a human took). Idempotent \u2014 a second call\nwith no new spend yields the same state.",
+        "description": "Recompute fingerprints, memories and insights over the company ledger.\n\nIdempotent; applied or dismissed insights are preserved.",
         "operationId": "recompute_intelligence_recompute_post",
         "responses": {
           "200": {
@@ -6372,7 +6372,7 @@
     },
     "/memory": {
       "get": {
-        "description": "List learned patterns for the company's agents, newest-learned first.\n\n`memories` carries no `entity_id` of its own \u2014 a memory belongs to an agent,\nand the agent belongs to an entity \u2014 so `entity=` filters through that join\nrather than through a denormalised column that would need a migration and\ncould then disagree with the agent's own entity.",
+        "description": "List learned patterns for the company's agents, newest-learned first.",
         "operationId": "list_memories_memory_get",
         "parameters": [
           {
@@ -6654,7 +6654,7 @@
     },
     "/pricing/feed": {
       "get": {
-        "description": "Today's effective vendor pricing, flattened for the SDK.\n\nThe response shape matches the SDK's packaged `pricing.json` exactly\n(`version` / `estimation` / `vendors`), with all money as strings and any\ndate-ranged rates already resolved \u2014 the client stays date-dumb.\n`Cache-Control` matches the SDK's default client-side TTL so intermediary\ncaches and the SDK agree on freshness.",
+        "description": "Today's effective vendor pricing, date ranges resolved, in the SDK's shape.\n\n`Cache-Control` matches the SDK's default client-side TTL.",
         "operationId": "get_pricing_feed_pricing_feed_get",
         "responses": {
           "200": {
@@ -6679,7 +6679,7 @@
     },
     "/recon": {
       "get": {
-        "description": "List reconciliation exceptions, grouped by currency, highest stake first.\n\nOrdering is (currency, `$ at stake` desc): without an FX conversion, ranking\namounts *across* currencies is meaningless (\u20b95,000 is not > $100), so\nthe list groups by currency and ranks within each.",
+        "description": "List reconciliation exceptions, grouped by currency, highest stake first.",
         "operationId": "list_exceptions_recon_get",
         "parameters": [
           {
@@ -6795,7 +6795,7 @@
     },
     "/recon/failed-delivery": {
       "post": {
-        "description": "Record an agent-reported failed delivery (the SDK `mark_failed_delivery`).\n\nIdempotent: replaying for a transaction that already has an active\nfailed-delivery exception returns the existing one instead of duplicating.",
+        "description": "Record an agent-reported failed delivery; idempotent per transaction.",
         "operationId": "report_failed_delivery_recon_failed_delivery_post",
         "requestBody": {
           "content": {
@@ -6842,7 +6842,7 @@
     },
     "/recon/scan": {
       "post": {
-        "description": "Run the detector suite over the company ledger; book new exceptions.\n\nIdempotent on two axes:\n- **(txn, type)** \u2014 an already-flagged transaction (any status) is not\n  re-flagged; the detected ledger fact is immutable (the unique constraint is\n  the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from\n  500-ing the whole pass).\n- **recurring identity (`dedup_key`)** \u2014 a dismissed/resolved recurring charge\n  (a subscription, a repeated overcharge) is not re-raised on next month's new\n  transaction row.",
+        "description": "Run the detector suite over the company ledger; book new exceptions.\n\nIdempotent per (txn, type) and per recurring identity (`dedup_key`), so a\ndismissed recurring charge is not re-raised next month.",
         "operationId": "scan_recon_scan_post",
         "responses": {
           "200": {
@@ -6977,7 +6977,7 @@
     },
     "/transactions": {
       "get": {
-        "description": "List committed transactions for the current company, filterable/paginated.\n\n`reversed=` exists as a server-side filter rather than a client-side one for\nthe reason D5 gives: filtering a paginated response in the browser reports\n\"3 of 3\" while the next page holds four more.",
+        "description": "List committed transactions for the current company, filterable and paginated.",
         "operationId": "list_transactions_transactions_get",
         "parameters": [
           {
@@ -7241,7 +7241,7 @@
     },
     "/transactions/void": {
       "post": {
-        "description": "Release an approved hold whose spend never happened.\n\nWithout this, a hold orphaned by a vendor error after `authorize()` \u2014 or by a\ncrash between authorize and capture \u2014 reserves the agent's budget forever\n(`services/spend_window.py::reserved_spend`), silently and permanently\nshrinking what the agent can spend. `meter()` calls this on its error path.\n\nIdempotent: voiding an already-voided hold returns 200 with\n`already_released=True`, describing the original release. The SDK invokes\nthis while already handling a failure, so a retry must not become a second\nerror to handle.\n\nA captured hold cannot be voided \u2014 the money moved and the ledger says so.\nReverse the transaction instead (`POST /transactions/{id}/reverse`).",
+        "description": "Release an approved hold whose spend never happened.\n\nIdempotent. A captured hold cannot be voided; reverse the transaction instead.",
         "operationId": "void_transactions_void_post",
         "requestBody": {
           "content": {
@@ -7288,7 +7288,7 @@
     },
     "/transactions/{transaction_id}": {
       "get": {
-        "description": "Full detail for one transaction: the row, its tax treatment, its journal.\n\nThe journal and the tax record are joins, so they are on the single-row\nendpoint and deliberately not on the list \u2014 there they would be an N+1 per\npage. Here they are two queries, and they are what makes the page worth\nopening: the balanced double entry is the product's central claim.",
+        "description": "Full detail for one transaction: the row, its tax treatment, its journal.",
         "operationId": "get_transaction_transactions__transaction_id__get",
         "parameters": [
           {
@@ -7337,7 +7337,7 @@
     },
     "/transactions/{transaction_id}/reverse": {
       "post": {
-        "description": "Reverse a committed transaction with a contra entry (refund/credit note).\n\nBooks a new reversal transaction (positive amount, contra journal) that\nnegates the original and frees the agent's budget; the original is flagged\nreversed. Admin-scoped and audited. Idempotent: reversing an already-reversed\ntransaction (or a reversal itself) is a 409.",
+        "description": "Reverse a committed transaction with a contra entry, freeing its budget.\n\nAdmin-only and audited. Reversing a reversal or a reversed row is a 409.",
         "operationId": "reverse_transaction_transactions__transaction_id__reverse_post",
         "parameters": [
           {
@@ -7386,7 +7386,7 @@
     },
     "/users": {
       "get": {
-        "description": "List the company's team members.\n\nName, email, role and active flag only \u2014 no password hash, no last-login\ntimestamp, nothing the Settings table does not render.",
+        "description": "List the company's team members (no password hash or last-login).",
         "operationId": "list_users_users_get",
         "parameters": [
           {
@@ -7508,7 +7508,7 @@
         ]
       },
       "post": {
-        "description": "Register a vendor with its place of supply (admin, audited).\n\nA 409 if a vendor with the same (normalized) name already exists \u2014 enrich that\none via `PATCH /vendors/{id}` instead.",
+        "description": "Register a vendor with its place of supply; 409 on a duplicate name.",
         "operationId": "create_vendor_vendors_post",
         "requestBody": {
           "content": {
@@ -7602,7 +7602,7 @@
         ]
       },
       "patch": {
-        "description": "Enrich a vendor's place of supply (admin, audited).\n\nOnly fields present in the request are updated (PATCH semantics), so a spend's\nauto-created row can be filled in without disturbing the rest.",
+        "description": "Enrich a vendor's place of supply; only fields present are updated.",
         "operationId": "update_vendor_vendors__vendor_id__patch",
         "parameters": [
           {
