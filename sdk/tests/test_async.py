@@ -1,14 +1,4 @@
-"""Unit tests for the async surface: AsyncTransport and the `_async` twins.
-
-Driven with `asyncio.run()` inside ordinary sync tests rather than a pytest
-async plugin. That keeps the SDK's dev dependencies to what the package already
-needs — a thin client library should not require a test-runner plugin to have
-its own async path exercised — and it makes the per-event-loop transport
-behaviour testable, since each `asyncio.run()` is a distinct loop.
-
-All backend interaction is mocked via `httpx.MockTransport`; none of this needs a
-live server.
-"""
+"""Async surface tests; plain `asyncio.run()`, so each test runs on a fresh loop."""
 
 from __future__ import annotations
 
@@ -36,9 +26,7 @@ from lucnt.models import BudgetStatus, Transaction, Verdict
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-# Captured at import, before the autouse `no_real_async_sleep` fixture replaces
-# it. One test restores this to exercise the real backoff — see
-# `test_async_backoff_yields_the_loop_instead_of_blocking_it`.
+# Real `_asleep`, captured before the autouse fixture patches it.
 _REAL_ASLEEP = client._asleep
 
 
@@ -57,11 +45,9 @@ def _reset_async_transport_cache() -> Iterator[None]:
 
 
 def _async_stub(monkeypatch: pytest.MonkeyPatch, handler: Handler) -> None:
-    """Route every async ledger call through a MockTransport-backed pool.
+    """Route async ledger calls through a MockTransport pool, built lazily in-loop.
 
-    Built lazily inside the running loop: an `httpx.AsyncClient` binds to the
-    loop that constructs it, so building it at patch time (outside
-    `asyncio.run`) would produce a pool bound to no loop at all.
+    An `httpx.AsyncClient` binds to the loop that constructs it.
     """
     pools: dict[asyncio.AbstractEventLoop, AsyncTransport] = {}
 
@@ -206,12 +192,7 @@ def test_async_exhausted_429_raises_typed_rate_limit_error(
 
 
 def test_async_unkeyed_post_is_not_retried(no_real_async_sleep: list[float]) -> None:
-    """The conservative eligibility rule holds on the async path too.
-
-    An unkeyed POST may have landed server-side before the connection dropped,
-    so repeating it is the double-book. Shared with the sync transport at module
-    level — this pins that the async loop actually consults it.
-    """
+    """Unkeyed POSTs are not retried on the async path either (double-book risk)."""
     attempts = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -248,18 +229,9 @@ def test_async_keyed_post_reuses_one_key_across_attempts(
 def test_async_backoff_yields_the_loop_instead_of_blocking_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The property the whole async path exists for: a backoff must not stall the loop.
+    """A backoff must yield the loop, not block it.
 
-    Every other test patches `_asleep` away, so none of them would notice
-    `time.sleep` in there — and a blocking backoff is exactly the bug the
-    async surface removes: one retrying request would freeze every unrelated
-    coroutine in the process for the backoff duration.
-
-    Measured by what a concurrent ticker achieves *while the request is
-    waiting*, not by the end state: under a blocking sleep the ticker still
-    finishes eventually, just not during the backoff. The delay comes from
-    `Retry-After` rather than jittered exponential backoff so it is an exact
-    20ms rather than a uniform draw that could round to nothing.
+    Measured by ticker progress during the wait; Retry-After makes the delay exact.
     """
     monkeypatch.setattr(client, "_asleep", _REAL_ASLEEP)
     attempts = 0
@@ -701,11 +673,9 @@ def test_concurrent_async_spends_each_get_their_own_key(
 def test_sync_calls_refuse_to_block_a_running_loop(
     sync_name: str, call: Callable[[], object]
 ) -> None:
-    """Every sync entry point refuses, and names its own async twin.
+    """Every sync entry point refuses inside a loop and names its async twin.
 
-    The failure being prevented is not the caller's latency: a synchronous
-    request from inside a loop stalls every other coroutine in the process for
-    up to the request timeout, which surfaces as unrelated timeouts elsewhere.
+    A sync call in a loop stalls every coroutine for up to the request timeout.
     """
 
     async def main() -> None:
@@ -759,19 +729,18 @@ def test_async_calls_outside_a_loop_explain_themselves() -> None:
 def test_async_transport_is_per_event_loop() -> None:
     """A pool built under one `asyncio.run` must not be reused by the next.
 
-    An httpx.AsyncClient's pool holds loop-bound objects, so a process-wide
-    singleton would hand the second `asyncio.run()` a pool attached to a closed
-    loop. Two runs, two pools.
+    AsyncClient pools are loop-bound; reuse would hit a closed loop.
     """
-    seen: list[int] = []
+    # Hold the objects, not their id()s: a collected object's id can be reused.
+    seen: list[object] = []
 
     async def main() -> None:
-        seen.append(id(ledger._get_async_transport()))
+        seen.append(ledger._get_async_transport())
 
     asyncio.run(main())
     asyncio.run(main())
     assert len(seen) == 2
-    assert seen[0] != seen[1]
+    assert seen[0] is not seen[1]
 
 
 def test_async_transport_is_reused_within_one_loop() -> None:
@@ -873,14 +842,9 @@ def _record_async_requests(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Reques
 def test_spend_and_spend_async_issue_byte_identical_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole reason `_Call` exists.
+    """Sync and async calls must produce identical wire traffic (key normalised).
 
-    An async twin that posted to a different path, omitted the idempotency
-    header, or serialized the body differently would double-book — and only for
-    async callers, so a sync-only test suite would never see it. This asserts
-    the two paths produce the same wire traffic for the same arguments, with the
-    idempotency key normalised away (it is a fresh uuid per logical spend by
-    design).
+    Async-only drift would double-book, invisible to a sync-only suite.
     """
     sync_seen = _record_requests(monkeypatch)
     ledger.spend(**_SPEND_ARGS, idempotency_key="op-1")  # type: ignore[arg-type]
@@ -916,12 +880,7 @@ def test_spend_and_spend_async_issue_byte_identical_requests(
     ],
 )
 def test_every_sync_function_has_an_async_twin(operation_name: str) -> None:
-    """A new ledger function must not ship sync-only.
-
-    Cheap structural guard: the twin naming convention is the contract async
-    callers rely on, so a missing one is a gap in the public surface rather than
-    an implementation detail.
-    """
+    """Every public ledger function must ship an `_async` twin."""
     import lucnt
 
     assert callable(getattr(lucnt, operation_name))
