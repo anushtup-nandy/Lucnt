@@ -10,7 +10,7 @@ slug/code); always issues one fresh API key.
 
 Prints the plaintext key exactly once -- only its hash is ever persisted.
 
-    conda run -n lucnt-backend python scripts/seed_dev.py
+    python scripts/seed_dev.py
 """
 
 from __future__ import annotations

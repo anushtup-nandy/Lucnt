@@ -107,6 +107,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env        # defaults already match infra/docker-compose.yml
 alembic upgrade head
+python scripts/seed_dev.py    # demo company, agents, logins; prints one API key
 uvicorn lucnt_api.main:app --reload --port 8000
 ```
 
@@ -126,6 +127,14 @@ cd sdk
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest                      # fully mocked — no backend or network needed
+```
+
+Point it at the backend — `http://localhost:8000` is the default, so locally only the key is
+needed:
+
+```bash
+export LUCNT_API_KEY=lucnt_live_...                # printed by seed_dev.py
+export LUCNT_BASE_URL=https://lucnt.example.com    # only when not on localhost
 ```
 
 `sdk/examples/example_agent.py` is the end-to-end acceptance driver and needs a live backend plus a
