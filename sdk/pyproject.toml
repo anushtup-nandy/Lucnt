@@ -30,11 +30,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://lucnt.dev"
-Documentation = "https://docs.lucnt.dev"
-Source = "https://github.com/lucnt/lucnt-python"
-Changelog = "https://github.com/lucnt/lucnt-python/blob/main/CHANGELOG.md"
-Issues = "https://github.com/lucnt/lucnt-python/issues"
+Homepage = "https://github.com/anushtup-nandy/lucnt"
+Documentation = "https://github.com/anushtup-nandy/lucnt/blob/main/sdk/README.md"
+Source = "https://github.com/anushtup-nandy/lucnt"
+Changelog = "https://github.com/anushtup-nandy/lucnt/blob/main/sdk/CHANGELOG.md"
+Issues = "https://github.com/anushtup-nandy/lucnt/issues"
 
 [project.optional-dependencies]
 dev = [
