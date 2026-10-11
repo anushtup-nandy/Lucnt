@@ -35,11 +35,11 @@ from lucnt_api.services.intelligence import (
 _UNATTRIBUTED = "(unattributed)"
 _COST_SPIKE_FACTOR = Decimal("3")
 _COST_SPIKE_MIN_UNITS = 3  # units needed in a currency to establish a baseline
-_COST_SPIKE_MIN_CHARGES = 2  # a one-off charge is not a sustained cost spike (T2-13)
+_COST_SPIKE_MIN_CHARGES = 2  # a one-off charge is not a sustained cost spike
 
 # Column-length guards. Titles/summaries interpolate agent names and project
 # labels (each up to 255 chars); an over-long composed string would raise a
-# DataError and roll back the *whole company's* recompute (PRODUCTION_PLAN T2-11).
+# DataError and roll back the *whole company's* recompute.
 _TITLE_MAX = 255
 _VALUE_TEXT_MAX = 100
 _ACTION_LABEL_MAX = 100
@@ -54,7 +54,7 @@ def _clamp(text: str, limit: int) -> str:
 def _dedup_key(
     insight_type: InsightType, agent_id: uuid.UUID | None, subject: str = ""
 ) -> str:
-    """Stable natural key `type:agent:subject` — the recompute upsert key (T2-10).
+    """Stable natural key `type:agent:subject` — the recompute upsert key.
 
     ``subject`` distinguishes per-unit insights (the cost_spike project); it is
     empty for the per-agent types. Must match the migration back-fill.
@@ -89,7 +89,7 @@ class DraftInsight:
     action_payload: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Clamp string-column fields to length (T2-11); `body` is TEXT, unbounded."""
+        """Clamp string-column fields to length; `body` is TEXT, unbounded."""
         object.__setattr__(self, "title", _clamp(self.title, _TITLE_MAX))
         if self.value_text is not None:
             object.__setattr__(
@@ -112,7 +112,7 @@ class DraftMemory:
     metrics_json: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Clamp `summary` to length (T2-11); `detail_text` is TEXT, unbounded."""
+        """Clamp `summary` to length; `detail_text` is TEXT, unbounded."""
         object.__setattr__(self, "summary", _clamp(self.summary, _SUMMARY_MAX))
 
 
@@ -210,7 +210,7 @@ def _cost_spike_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
         for unit in intel.cost_units:
             if unit.unit == _UNATTRIBUTED:
                 continue
-            if unit.count < _COST_SPIKE_MIN_CHARGES:  # one-off is not a spike (T2-13)
+            if unit.count < _COST_SPIKE_MIN_CHARGES:  # one-off is not a spike
                 continue
             by_currency[unit.currency].append((intel, unit))
 
@@ -220,7 +220,7 @@ def _cost_spike_insights(intels: Sequence[AgentIntel]) -> list[DraftInsight]:
             continue
         costs = [u.avg_cost for _, u in pairs]
         for idx, (intel, unit) in enumerate(pairs):
-            # Leave-one-out median (T2-13): the candidate is excluded from the
+            # Leave-one-out median: the candidate is excluded from the
             # baseline it is compared against, so it cannot inflate its own median.
             median_cost = _median(costs[:idx] + costs[idx + 1 :])
             if median_cost <= 0:
@@ -296,7 +296,7 @@ def _agent_memories(intel: AgentIntel) -> list[DraftMemory]:
             )
         )
     elif features.total_records > 0:
-        # Cold-start row (T2-12): the agent has spent but not enough same-currency
+        # Cold-start row: the agent has spent but not enough same-currency
         # history to profile yet. Emit a "still learning" SPEND_PATTERN memory so a
         # new agent has a row instead of a blank Memory page; it is upserted into
         # the real profile once the baseline fills in.

@@ -1,4 +1,4 @@
-"""API-key scope + mode gating (PRODUCTION_PLAN T0-12, T0-13, T0-16).
+"""API-key scope + mode gating.
 
 Separation of duties: a runtime agent key can spend but cannot raise its own
 budget or edit the policies governing it; a test-mode key cannot drive the live

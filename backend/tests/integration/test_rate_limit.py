@@ -1,4 +1,4 @@
-"""Rate limiting against a live Redis (T3-7).
+"""Rate limiting against a live Redis.
 
 The suite disables the limiter globally (see `conftest._rate_limiting_off`), so
 every test here re-enables it and uses a **uuid identity per test**, which makes
@@ -169,7 +169,7 @@ def test_unreachable_redis_admits_the_request() -> None:
         )
         broken = RateLimiter(dead)
         identity = _identity()
-        # F-7: the fail-open itself is a defensible choice; the silence is not.
+        # The fail-open itself is a defensible choice; the silence is not.
         # Every admitted-without-counting request must increment the metric an
         # alert can fire on.
         counter = metrics.rate_limiter_fail_open_total.labels(

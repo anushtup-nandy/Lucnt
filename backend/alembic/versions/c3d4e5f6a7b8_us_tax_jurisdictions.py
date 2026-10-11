@@ -4,11 +4,11 @@ Revision ID: c3d4e5f6a7b8
 Revises: b2c3d4e5f6a7
 Create Date: 2026-07-22 11:30:00.000000
 
-US sales/use tax was a hardcoded 0% stub (PRODUCTION_PLAN TE-2) — the default
+US sales/use tax was a hardcoded 0% stub — the default
 outcome for the primary GTM market. This gives `tax_rates` a per-state
 ``jurisdiction`` (``US-TX``…; NULL for the regime-level IN/SG rows), a
 ``rule_type`` (standard / use_tax / exempt / no_tax / disputed), and an
-``effective_to`` close-out (TE-6, lands here because TE-2 needs the column), plus
+``effective_to`` close-out (lands here because US tax needs the column), plus
 ``entities.us_state`` for the buyer's state. All 51 jurisdictions (50 states + DC)
 are seeded from Appendix A §1.5.5, B2B branch for split states. **Rates are the
 co-founder's research — confirm with a CPA before relying on them.**

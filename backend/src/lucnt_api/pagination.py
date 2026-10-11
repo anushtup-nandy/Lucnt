@@ -1,4 +1,4 @@
-"""One definition of the list-endpoint pagination contract (T3-3).
+"""One definition of the list-endpoint pagination contract.
 
 Before this module, `limit`/`offset` were declared inline in eight routers with
 the cap literal copy-pasted at each site (and two silently divergent values,

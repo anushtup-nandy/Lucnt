@@ -1,4 +1,4 @@
-"""Budget reservation, hold-aware velocity, and concurrency (T0-1, T0-5, T0-8).
+"""Budget reservation, hold-aware velocity, and concurrency.
 
 The moat guarantee — "block *before* money moves" — must hold under a hostile or
 buggy caller that authorizes many times before (or without) capturing, and under
@@ -103,7 +103,7 @@ def _authorize(client: TestClient, key: str, amount: str, vendor: str = "x") -> 
     ).json()
 
 
-# --- T0-1: approved holds reserve budget even before any capture ---
+# --- Approved holds reserve budget even before any capture ---
 
 
 def test_holds_reserve_budget_before_capture(
@@ -143,7 +143,7 @@ def test_committed_and_reserved_combine(
     assert _authorize(client, key, "40")["status"] == "approved"
 
 
-# --- T0-8: velocity counts uncaptured approved holds, not just committed ---
+# --- Velocity counts uncaptured approved holds, not just committed ---
 
 
 def test_velocity_counts_uncaptured_holds(
@@ -168,7 +168,7 @@ def test_velocity_counts_uncaptured_holds(
     assert third["code"] == "velocity_exceeded"
 
 
-# --- T0-1: the row lock serializes genuinely concurrent authorizes ---
+# --- The row lock serializes genuinely concurrent authorizes ---
 
 
 def test_concurrent_authorizes_cannot_bust_budget(resolved_engine: Engine) -> None:
@@ -178,13 +178,13 @@ def test_concurrent_authorizes_cannot_bust_budget(resolved_engine: Engine) -> No
 
     Bound to `resolved_engine` — the engine the suite is configured against — not
     to the module-level `SessionLocal`. `SessionLocal` follows `DATABASE_URL`,
-    which since T4-12 is *not* where the suite lives:
+    which is *not* where the suite lives:
 
       * in CI only `TEST_DATABASE_URL` is migrated, so `SessionLocal` hit an empty
         database and this test failed with `relation "companies" does not exist`;
       * on a developer machine `DATABASE_URL` is their own database, so the test
-        created and then `DELETE`d rows in it — exactly what T4-12 introduced
-        `TEST_DATABASE_URL` to stop.
+        created and then `DELETE`d rows in it — exactly what
+        `TEST_DATABASE_URL` exists to stop.
 
     The override below mirrors `get_db` (a fresh session per request, closed
     afterwards) rather than reusing the savepoint-based `db_session` fixture: one

@@ -5,7 +5,7 @@ approvals and reconciliation resolutions are mutated by signed-in humans, and a
 governance product that writes those rows with a NULL actor is not recording
 them at all.
 
-`frontend/PLAN.md` §10 scoped P7.0 as "no new tables, no migration". This is the
+P7.0 was scoped as "no new tables, no migration". This is the
 deliberate exception, and the smallest one available: one nullable column, no
 backfill, no FK. No backfill because historical rows genuinely had no human
 actor — every one of them was an API key, and `actor_api_key_id` already says so.

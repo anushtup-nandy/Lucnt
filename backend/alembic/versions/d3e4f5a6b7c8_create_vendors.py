@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create the company-scoped vendors registry (T1-3/T1-9)."""
+    """Create the company-scoped vendors registry."""
     op.create_table(
         "vendors",
         sa.Column("id", sa.Uuid(), nullable=False),

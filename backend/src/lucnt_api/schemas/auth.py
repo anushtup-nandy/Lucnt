@@ -1,4 +1,4 @@
-"""Pydantic schemas for the dashboard auth router (frontend/PLAN.md §10.1)."""
+"""Pydantic schemas for the dashboard auth router."""
 
 from __future__ import annotations
 

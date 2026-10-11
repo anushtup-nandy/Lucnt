@@ -1,4 +1,4 @@
-"""Integration tests for the India s.195 withholding gate (PRODUCTION_PLAN TE-3).
+"""Integration tests for the India s.195 withholding gate.
 
 An India entity paying a foreign (non-resident) vendor owes s.195 withholding
 beside GST. Missing the treaty documentation (TRC / Form 10F) above the 15CB

@@ -1,4 +1,4 @@
-"""SelfInvoice ORM model — the reverse-charge self-invoice record (Phase 2 / T1-7).
+"""SelfInvoice ORM model — the reverse-charge self-invoice record.
 
 Under GST reverse charge the buyer must issue a self-invoice for the imported
 service (CGST Rules r.46). Previously `tax_records.self_invoice_generated` was set
@@ -34,7 +34,7 @@ class SelfInvoice(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     invoice_number: Mapped[str] = mapped_column(String(64))
     supplier_name: Mapped[str] = mapped_column(String(255))  # the foreign vendor
     recipient_entity_code: Mapped[str] = mapped_column(String(50))  # the buyer (self)
-    # All amounts in the entity's functional currency (T1-4).
+    # All amounts in the entity's functional currency.
     taxable_value: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     currency: Mapped[str] = mapped_column(String(3))

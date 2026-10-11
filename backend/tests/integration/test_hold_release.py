@@ -1,6 +1,6 @@
-"""Orphaned-hold release: `void()` and the server-side TTL (T5-4).
+"""Orphaned-hold release: `void()` and the server-side TTL.
 
-An approved-but-uncaptured hold reserves the agent's budget (T0-1) — deliberately,
+An approved-but-uncaptured hold reserves the agent's budget — deliberately,
 so an agent cannot authorize N times before capturing. The cost of that
 fail-closed choice is that a hold nobody ever captures reserves budget *forever*:
 one vendor error after `authorize()` returns, or one crash between authorize and
@@ -288,7 +288,7 @@ def test_a_hold_with_no_expiry_keeps_reserving(
 def test_a_voided_hold_no_longer_counts_against_velocity(
     client: TestClient, db_session: Session
 ) -> None:
-    """Velocity counts uncaptured holds to catch a runaway (T0-8), but a hold the
+    """Velocity counts uncaptured holds to catch a runaway, but a hold the
     caller correctly cleaned up is not runaway activity."""
     key = _seed(db_session, budget="10000")
     auth_id = _authorize(client, key, "1")["authorization_id"]

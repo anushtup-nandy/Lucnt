@@ -1,11 +1,11 @@
-"""Money-integrity guards (PRODUCTION_PLAN T0-4, T0-7).
+"""Money-integrity guards.
 
 Two layers of defence against the "negative amount refunds an agent's budget"
 theft primitive and other non-positive money:
 
-* the Pydantic wire schema rejects zero/negative amounts with 422 (T0-4);
+* the Pydantic wire schema rejects zero/negative amounts with 422;
 * the DB CHECK constraints reject them for *any* writer that bypasses the
-  schema — a future card rail, a manual SQL, a backfill (T0-7).
+  schema — a future card rail, a manual SQL, a backfill.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def _headers(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
-# --- T0-4: schema rejects non-positive money at the wire (422) ---
+# --- Schema rejects non-positive money at the wire (422) ---
 
 
 @pytest.mark.parametrize("amount", ["0", "-5", "-0.0001"])
@@ -162,7 +162,7 @@ def test_capture_rejects_non_positive_settlement(
     assert response.status_code == 422
 
 
-# --- T0-3: settlement override is bounded by the authorized amount ---
+# --- Settlement override is bounded by the authorized amount ---
 
 
 def _authorize_ten(client: TestClient, key: str) -> str:
@@ -183,7 +183,7 @@ def _authorize_ten(client: TestClient, key: str) -> str:
 def test_capture_rejects_settlement_over_buffer(
     client: TestClient, db_session: Session
 ) -> None:
-    """Authorize $10, settle $13 (> 10 x 1.25 buffer) -> rejected (T0-3)."""
+    """Authorize $10, settle $13 (> 10 x 1.25 buffer) -> rejected."""
     _, _, _, key = _seed(db_session)
     auth_id = _authorize_ten(client, key)
     response = client.post(
@@ -197,7 +197,7 @@ def test_capture_rejects_settlement_over_buffer(
 def test_capture_allows_settlement_within_buffer(
     client: TestClient, db_session: Session
 ) -> None:
-    """Authorize $10, settle $12 (<= 10 x 1.25 buffer) -> allowed (T0-3)."""
+    """Authorize $10, settle $12 (<= 10 x 1.25 buffer) -> allowed."""
     _, _, _, key = _seed(db_session)
     auth_id = _authorize_ten(client, key)
     response = client.post(
@@ -209,7 +209,7 @@ def test_capture_allows_settlement_within_buffer(
     assert Decimal(response.json()["amount"]) == Decimal("12")
 
 
-# --- T0-7: DB CHECK constraints reject non-positive / two-sided rows ---
+# --- DB CHECK constraints reject non-positive / two-sided rows ---
 
 
 def test_db_rejects_negative_authorization_amount(db_session: Session) -> None:

@@ -4,7 +4,7 @@ A policy is the unit the policy engine (`services/policy_engine.py`) evaluates
 *before* money moves, so it can block a spend rather than merely record it. Each
 rule carries a typed config in `config_json` (JSONB); the engine parses it into a
 discriminated Pydantic union per `rule_type`. Policies are layered company→agent
-(`scope_type`/`scope_id`) per `CLAUDE.local.md` (M5).
+(`scope_type`/`scope_id`).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "policies"
     __table_args__ = (
         # Read on every authorize() (`routers/transactions.py:129-131`) — an
-        # unindexed sequential scan of the whole policy table per call (T3-1).
+        # unindexed sequential scan of the whole policy table per call.
         Index("ix_policies_company_id_active", "company_id", "active"),
     )
 
@@ -74,8 +74,7 @@ class Policy(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         default=PolicyScopeType.COMPANY,
     )
     # Null for a company-wide policy; the target `agents.id` for an agent-scoped
-    # one. Beyond root PLAN.md §3's sketch, but required for the layered
-    # company→agent scoping M5 mandates (CLAUDE.local.md). No FK: an agent-scoped
+    # one. Required for the layered company→agent scoping. No FK: an agent-scoped
     # policy referencing a since-deleted agent should simply stop matching, not
     # block deletion — the engine already filters by live agent id.
     scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)

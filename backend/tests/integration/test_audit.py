@@ -1,4 +1,4 @@
-"""Audit trail for governance mutations (PRODUCTION_PLAN T0-14).
+"""Audit trail for governance mutations.
 
 Every budget/policy/approval/recon mutation must leave an append-only record of
 who did what, before → after — non-negotiable for a financial-controls product.

@@ -44,8 +44,8 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         None,
     ),
     # `routers/recon.py`, `routers/intelligence.py`,
-    # `services/tax_reclass.py` -- company-wide ledger reads that T3-2 will
-    # narrow to a date window.
+    # `services/tax_reclass.py` -- company-wide ledger reads to be
+    # narrowed to a date window.
     (
         "ix_transactions_company_id_transaction_date",
         "transactions",
@@ -73,7 +73,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
         ["agent_id", "status", "created_at"],
         None,
     ),
-    # `routers/approvals.py` -- the review/human_hold queue (T0-11).
+    # `routers/approvals.py` -- the review/human_hold queue.
     (
         "ix_authorizations_company_id_status",
         "authorizations",
@@ -146,7 +146,7 @@ _INDEXES: tuple[tuple[str, str, list[str], str | None], ...] = (
 
 
 def upgrade() -> None:
-    """Index every column the hot query paths filter, join, or order on (T3-1).
+    """Index every column the hot query paths filter, join, or order on.
 
     Before this migration the schema had exactly one non-unique index
     (``ix_audit_logs_company_id``); everything else was a primary key or a
@@ -156,7 +156,7 @@ def upgrade() -> None:
     blocking path, per call. At ledger scale that is a p99 measured in seconds,
     not a future scale problem.
 
-    Built with ``CONCURRENTLY`` inside an autocommit block (T4-10 house style)
+    Built with ``CONCURRENTLY`` inside an autocommit block (house style)
     so an index backfill never takes a write lock that would stall
     ``capture()``. The trade-off is that a failed concurrent build leaves an
     ``INVALID`` index behind that must be dropped by hand before retrying --

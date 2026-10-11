@@ -1,7 +1,7 @@
 """Authorization ORM model — a pending hold from `POST /transactions/authorize`.
 
-Money has not moved yet when this row is created (PLAN.md §3). `status` mirrors
-the SDK's `Verdict.status` (`sdk/src/lucnt/models.py`) exactly.
+Money has not moved yet when this row is created. `status` mirrors the SDK's
+`Verdict.status` (`sdk/src/lucnt/models.py`) exactly.
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "authorizations"
     __table_args__ = (
-        # A hold amount is never zero/negative (T0-4) — enforced at the schema
+        # A hold amount is never zero/negative — enforced at the schema
         # too, but the DB is the last line of defence for any future writer.
         CheckConstraint("amount > 0", name="ck_authorizations_amount_positive"),
-        # The functional-currency snapshot (T1-2) is positive when present;
+        # The functional-currency snapshot is positive when present;
         # NULL is allowed (a controls-blocked hold never reserves budget).
         CheckConstraint(
             "local_amount IS NULL OR local_amount > 0",
@@ -54,7 +54,7 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             "exchange_rate IS NULL OR exchange_rate > 0",
             name="ck_authorizations_exchange_rate_positive",
         ),
-        # Idempotency (T0-6): at most one hold per (company, client key). Partial,
+        # Idempotency: at most one hold per (company, client key). Partial,
         # so the common no-key path is unconstrained (many NULLs allowed).
         Index(
             "uq_authorizations_company_idempotency_key",
@@ -63,7 +63,7 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
-        # Hot-path indexes (T3-1). `reserved_spend` filters (agent_id, status);
+        # Hot-path indexes. `reserved_spend` filters (agent_id, status);
         # `recent_activity_count` adds created_at — one composite serves both, so
         # authorize() stops sequentially scanning holds twice per call
         # (`services/spend_window.py:104,154`). The second index serves the
@@ -75,7 +75,7 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             "created_at",
         ),
         Index("ix_authorizations_company_id_status", "company_id", "status"),
-        # T5-4: `reserved_spend` now also filters released_at/expires_at, so the
+        # `reserved_spend` now also filters released_at/expires_at, so the
         # reservation scan stays index-only instead of falling back to a seq scan
         # on the two new predicates.
         Index(
@@ -91,10 +91,10 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"))
     entity_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id"))
     vendor: Mapped[str] = mapped_column(String(255))
-    # NUMERIC, never FLOAT (sdk/PLAN.md: Decimal not float).
+    # NUMERIC, never FLOAT (Decimal, not float).
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     currency: Mapped[str | None] = mapped_column(String(3), default=None)
-    # FX snapshot at authorize (T1-2): the hold's value in the entity's functional
+    # FX snapshot at authorize: the hold's value in the entity's functional
     # currency, so budget *reservation* is measured in one currency (never a raw
     # sum of mixed paid currencies). Nullable — a controls-blocked hold is never
     # approved and never reserves, so it carries no snapshot.
@@ -104,14 +104,14 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     reason: Mapped[str] = mapped_column(Text)
     intent: Mapped[str | None] = mapped_column(String(255), default=None)
     project: Mapped[str | None] = mapped_column(String(255), default=None)
-    # Caller-stated expense category (T1-19), carried to the transaction at
-    # capture; drives journal classification + blocked-ITC (T1-14).
+    # Caller-stated expense category, carried to the transaction at
+    # capture; drives journal classification + blocked-ITC.
     category: Mapped[str | None] = mapped_column(String(50), default=None)
-    # Tax slab + inclusive/exclusive (T1-10), carried to the transaction at capture.
+    # Tax slab + inclusive/exclusive, carried to the transaction at capture.
     tax_category: Mapped[str | None] = mapped_column(String(20), default=None)
     tax_inclusive: Mapped[bool] = mapped_column(default=True)
-    # Whether the supply is a service or goods (TE-4), carried to the transaction at
-    # capture. A cross-border *goods* supply routes to customs, not services RCM.
+    # Whether the supply is a service or goods, carried to the transaction at capture.
+    # A cross-border *goods* supply routes to customs, not services RCM.
     supply_type: Mapped[str] = mapped_column(String(10), default="service")
     model_used: Mapped[str | None] = mapped_column(String(100), default=None)
     tokens_consumed: Mapped[int | None] = mapped_column(default=None)
@@ -122,20 +122,20 @@ class Authorization(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
             values_callable=lambda e: [m.value for m in e],
         )
     )
-    # Plain UUID, no FK yet -- the `policies` table doesn't exist until Phase 3
-    # (root PLAN.md §4). The FK constraint lands with that migration.
+    # Plain UUID, no FK yet -- the `policies` table doesn't exist until Phase 3.
+    # The FK constraint lands with that migration.
     policy_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
     # The policy engine's own explanation for `status` (e.g. "exceeds monthly
     # budget"), distinct from `reason` (the caller-supplied justification).
     reason_text: Mapped[str | None] = mapped_column(Text, default=None)
     # Machine-readable verdict code (VerdictCode), persisted so an idempotent
-    # replay returns the exact original code (T0-6) — it cannot be re-derived.
+    # replay returns the exact original code — it cannot be re-derived.
     verdict_code: Mapped[str | None] = mapped_column(String(50), default=None)
     # Client-supplied idempotency key: a retried authorize with the same key
-    # returns this hold instead of minting a new one (T0-6).
+    # returns this hold instead of minting a new one.
     idempotency_key: Mapped[str | None] = mapped_column(String(255), default=None)
 
-    # --- T5-4: orphaned-hold release ----------------------------------------
+    # --- Orphaned-hold release ----------------------------------------------
     # An approved-but-uncaptured hold reserves budget forever (see
     # `services/spend_window.py::reserved_spend`), so a vendor error after
     # authorize — or a crash between authorize and capture — silently and

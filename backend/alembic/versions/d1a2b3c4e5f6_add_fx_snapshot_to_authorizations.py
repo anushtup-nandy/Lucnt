@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Snapshot the hold's functional-currency value on authorizations (T1-2).
+    """Snapshot the hold's functional-currency value on authorizations.
 
     Nullable — only holds that reach policy evaluation carry a snapshot, and only
     APPROVED holds reserve budget. Existing holds are backfilled at rate 1.0 so

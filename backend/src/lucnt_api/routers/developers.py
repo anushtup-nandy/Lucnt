@@ -1,4 +1,4 @@
-"""Developer reads: API keys and the audit event log (frontend/PLAN.md §10.2).
+"""Developer reads: API keys and the audit event log.
 
 Both are gated on the `developers` nav domain, so only roles that can see the
 page can call the endpoints behind it.

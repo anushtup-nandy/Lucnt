@@ -72,7 +72,7 @@ def list_insights(
 ) -> InsightsListResponse:
     """List the company's insights, newest first, with an unapplied headline count.
 
-    Dismissed insights are hidden by default (they are resolved — T2-10); pass
+    Dismissed insights are hidden by default (they are resolved); pass
     `include_dismissed=true` to see them.
     """
     stmt = select(Insight).where(Insight.company_id == company.id)
@@ -147,7 +147,7 @@ def dismiss_insight(
     company: Company = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> InsightResponse:
-    """Dismiss an insight so recompute stops regenerating it (idempotent — T2-10)."""
+    """Dismiss an insight so recompute stops regenerating it (idempotent)."""
     insight = db.execute(
         select(Insight).where(
             Insight.id == insight_id, Insight.company_id == company.id

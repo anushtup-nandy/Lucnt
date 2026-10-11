@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add recipient place-of-supply + the GST head tax rows book (T1-3/T1-9)."""
+    """Add recipient place-of-supply + the GST head tax rows book."""
     op.add_column("entities", sa.Column("country", sa.String(length=2), nullable=True))
     op.add_column(
         "entities", sa.Column("gst_state", sa.String(length=10), nullable=True)

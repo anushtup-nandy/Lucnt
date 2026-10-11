@@ -1,4 +1,4 @@
-"""Health split, startup readiness, request context and metrics (T4-4/T4-5/T4-12).
+"""Health split, startup readiness, request context and metrics.
 
 The readiness check is exercised directly here rather than through the app
 lifespan, because `conftest` disables the lifespan check for the suite (it would
@@ -29,7 +29,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
     app.dependency_overrides.pop(get_db, None)
 
 
-# --- Liveness / readiness (T4-5) -------------------------------------------
+# --- Liveness / readiness -------------------------------------------
 
 
 def test_liveness_never_touches_a_dependency(client: TestClient) -> None:
@@ -40,7 +40,7 @@ def test_liveness_never_touches_a_dependency(client: TestClient) -> None:
 
 
 def test_legacy_health_alias_still_works(client: TestClient) -> None:
-    """`docs/DEMO.md` and any existing probe curl `/health`; keep it answering."""
+    """Existing docs and probes curl `/health`; keep it answering."""
     assert client.get("/health").json() == {"status": "ok"}
 
 
@@ -61,7 +61,7 @@ def test_readiness_reports_ready_against_a_migrated_database(
 def test_readiness_is_503_when_the_database_is_unreachable(
     client: TestClient,
 ) -> None:
-    """The whole point of T4-5: an LB must stop routing to a broken backend."""
+    """The point of the health split: an LB must stop routing to a broken backend."""
     dead = create_engine(
         "postgresql://nobody:nobody@127.0.0.1:1/nonexistent",
         connect_args={"connect_timeout": 1},
@@ -105,7 +105,7 @@ def test_startup_check_passes_against_the_real_test_database(
     assert report.current_revision == report.expected_head
 
 
-# --- Request context + access logging (T4-4) --------------------------------
+# --- Request context + access logging --------------------------------
 
 
 def test_every_response_carries_a_request_id(client: TestClient) -> None:
@@ -129,7 +129,7 @@ def test_an_oversized_request_id_is_replaced_not_truncated(
     assert len(returned) == 32
 
 
-# --- Metrics (T4-4) ---------------------------------------------------------
+# --- Metrics ---------------------------------------------------------
 
 
 def test_metrics_label_by_route_template_not_by_path(client: TestClient) -> None:

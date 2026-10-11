@@ -1,4 +1,4 @@
-"""Integration tests for US per-state sales/use tax (PRODUCTION_PLAN TE-2).
+"""Integration tests for US per-state sales/use tax.
 
 A US entity's spend is taxed by the buyer's **state** (the `tax_rates` per-state
 rows seeded from Appendix A), not a blanket 0%: a taxable state self-accrues use
@@ -161,13 +161,13 @@ def test_taxable_state_tx_self_assesses_use_tax(
     assert _credit(db_session, tx_id, "2400") == Decimal("5.0000")
     row = _tax_rows(db_session, tx_id)[0]
     assert row.tax_head == "US_USE_TAX"
-    assert row.applied_rule_source == "seed:appendix-a"  # TE-6 audit trail
+    assert row.applied_rule_source == "seed:appendix-a"  # audit trail
     assert row.applied_rule_id is not None
     assert _exceptions(db_session, tx_id) == []  # confident → no flag
 
 
 def test_exempt_state_ca_books_no_tax(client: TestClient, db_session: Session) -> None:
-    """CA (exempt): zero tax, a plain Dr Expense / Cr Wallet pair, no flag (TE-2)."""
+    """CA (exempt): zero tax, a plain Dr Expense / Cr Wallet pair, no flag."""
     company, key = _make_us_company(db_session, us_state="CA")
     body = _spend(client, key, amount="100")
     tx_id = str(body["id"])
@@ -178,7 +178,7 @@ def test_exempt_state_ca_books_no_tax(client: TestClient, db_session: Session) -
 
 
 def test_split_state_ia_is_b2b_exempt(client: TestClient, db_session: Session) -> None:
-    """IA (split state) resolves to its B2B branch — exempt, zero tax (TE-2)."""
+    """IA (split state) resolves to its B2B branch — exempt, zero tax."""
     company, key = _make_us_company(db_session, us_state="IA")
     body = _spend(client, key, amount="100")
     assert Decimal(body["tax"]["tax_amount"]) == Decimal("0")
@@ -188,7 +188,7 @@ def test_split_state_ia_is_b2b_exempt(client: TestClient, db_session: Session) -
 def test_disputed_state_vt_routes_to_exception(
     client: TestClient, db_session: Session
 ) -> None:
-    """VT (disputed): never auto-classified — 0 tax + a tax-review recon flag (TE-2)."""
+    """VT (disputed): never auto-classified — 0 tax + a tax-review recon flag."""
     company, key = _make_us_company(db_session, us_state="VT")
     body = _spend(client, key, amount="100")
     tx_id = str(body["id"])
@@ -202,7 +202,7 @@ def test_disputed_state_vt_routes_to_exception(
 def test_unconfigured_state_routes_to_exception(
     client: TestClient, db_session: Session
 ) -> None:
-    """A US entity with no state is flagged, not silently zero-taxed (TE-2)."""
+    """A US entity with no state is flagged, not silently zero-taxed."""
     company, key = _make_us_company(db_session, us_state=None)
     body = _spend(client, key, amount="100")
     tx_id = str(body["id"])

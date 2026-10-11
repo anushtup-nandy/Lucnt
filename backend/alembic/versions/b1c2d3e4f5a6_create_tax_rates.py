@@ -24,7 +24,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# Effective-dated statutory rates (PRODUCTION_PLAN T1-12). Each row is the rate in
+# Effective-dated statutory rates. Each row is the rate in
 # force for a regime/category *from* ``effective_from``; the resolver picks the
 # latest one on/before the transaction date, so a rate change never back-applies.
 # Reference data lives in the migration (not `seed_dev.py`) so every environment —
@@ -32,7 +32,7 @@ depends_on: str | Sequence[str] | None = None
 #   IN-GST: 18% standard from the 2017-07-01 GST rollout.
 #   SG-GST: 5% (2004) → 7% (2007) → 8% (2023) → 9% (2024) — a genuine effective-
 #           dating case the compile-time constant got wrong.
-#   US-Sales-Tax: 0 — the MVP self-assesses no US tax (T1-15); the row exists so
+#   US-Sales-Tax: 0 — the MVP self-assesses no US tax; the row exists so
 #           the money-path resolver never fails closed on a US spend.
 # (regime, category, rate, effective_from)
 _SEED_RATES: tuple[tuple[str, str, str, date], ...] = (

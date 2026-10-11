@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Make the two lookup keys the ledger dedupes on actually unique.
 
-    **T3-5 — ``entities (company_id, code)``.** ``authorize()`` and every
+    **``entities (company_id, code)``.** ``authorize()`` and every
     ``/books/*`` statement resolve an entity by ``(company_id, code)`` with
     ``scalar_one_or_none()`` (`routers/transactions.py:120`,
     `routers/books.py:142,152`). A second entity sharing a code therefore makes
@@ -33,7 +33,7 @@ def upgrade() -> None:
     DELETE. Mirrors the existing ``uq_agents_company_slug`` invariant, and
     doubles as the index for that lookup.
 
-    **T3-6 — ``transactions (company_id, transaction_hash)``.**
+    **``transactions (company_id, transaction_hash)``.**
     ``transaction_hash`` is the card-rail dedup key (P6.5) but carries no
     uniqueness today, so a redelivered Stripe/Razorpay webhook would double-book
     the same spend: two transactions, two journals, two tax records, and budget
@@ -47,7 +47,8 @@ def upgrade() -> None:
     ``ALTER TABLE``, which takes an ACCESS EXCLUSIVE lock and builds its index
     non-concurrently — on a populated ledger that stalls ``capture()`` for the
     duration. A unique index enforces uniqueness identically and can be built
-    ``CONCURRENTLY`` (T4-10 house style). T3-6 has no choice regardless: a
+    ``CONCURRENTLY`` (house style). The transaction-hash index has no choice
+    regardless: a
     partial constraint cannot be expressed as a table constraint at all.
     """
     with op.get_context().autocommit_block():

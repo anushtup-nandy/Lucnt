@@ -1,4 +1,4 @@
-"""Database readiness: connectivity plus schema-at-head (T4-5/T4-12).
+"""Database readiness: connectivity plus schema-at-head.
 
 One function serves two callers with deliberately different reactions to the
 same failure:

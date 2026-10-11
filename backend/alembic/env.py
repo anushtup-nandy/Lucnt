@@ -13,7 +13,7 @@ from lucnt_api.database import Base
 
 config = context.config
 
-# T4-7: `alembic.ini` is read by configparser with interpolation ON, so a `%` in
+# `alembic.ini` is read by configparser with interpolation ON, so a `%` in
 # the password (perfectly legal, and what a generated secret will eventually
 # contain) makes every read of `sqlalchemy.url` raise `InterpolationSyntaxError`
 # — i.e. migrations break on exactly the deployment where the credential is
@@ -27,7 +27,7 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# T4-7: without these, Alembic's autogenerate diffs only table/column *existence*.
+# Without these, Alembic's autogenerate diffs only table/column *existence*.
 # A widened `String(120)`, a changed `Numeric` precision, or a new server default
 # produces an empty migration and silently ships a schema that disagrees with the
 # models — and `alembic check` (the CI drift gate) reports clean while it happens.

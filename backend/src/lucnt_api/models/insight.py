@@ -4,8 +4,8 @@ An `insights` row is a derived, actionable recommendation the intelligence layer
 produces from the ledger: an agent projected to overrun its budget, an anomalous
 spend, or an expensive unit of output ("your CFO, always on"). Insights are
 recomputed from the ledger (`POST /intelligence/recompute`), never written on the
-capture path, so the frozen `authorize→capture` spine stays lane-agnostic
-(`CLAUDE.local.md`) — like the Phase 4 recovery scan.
+capture path, so the frozen `authorize→capture` spine stays lane-agnostic —
+like the Phase 4 recovery scan.
 
 Recompute clears the company's **un-applied** insights and regenerates them (they
 are ephemeral, derived state); an *applied* insight persists as a record of the
@@ -47,7 +47,7 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "insights"
     __table_args__ = (
-        # The un-dismissed insight feed (T3-1) — `routers/insights.py:64-70`.
+        # The un-dismissed insight feed — `routers/insights.py:64-70`.
         Index("ix_insights_company_id_is_dismissed", "company_id", "is_dismissed"),
     )
 
@@ -64,7 +64,7 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         )
     )
     # Stable natural key (type:agent:subject) so recompute upserts an insight in
-    # place instead of delete+insert (stable ids; T2-10). Nullable for rows that
+    # place instead of delete+insert (stable ids). Nullable for rows that
     # predate the column.
     dedup_key: Mapped[str | None] = mapped_column(Text, default=None)
     title: Mapped[str] = mapped_column(String(255))
@@ -81,7 +81,7 @@ class Insight(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         DateTime(timezone=True), default=None
     )
     # A reviewed-but-not-applied insight can be dismissed; a dismissed insight is
-    # suppressed from regeneration so it does not nag forever (T2-10).
+    # suppressed from regeneration so it does not nag forever.
     is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     dismissed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

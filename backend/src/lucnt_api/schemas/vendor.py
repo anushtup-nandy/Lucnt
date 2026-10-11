@@ -1,4 +1,4 @@
-"""Pydantic schemas for the vendors router (PRODUCTION_PLAN T1-3/T1-9).
+"""Pydantic schemas for the vendors router.
 
 The vendors registry carries place of supply — a vendor's country/state/registration
 decide RCM and the CGST/SGST/IGST head split at capture. A finance admin enriches
@@ -28,7 +28,7 @@ def _normalise_country_code(value: str | None) -> str | None:
 
 
 def _normalise_country_list(value: list[str] | None) -> list[str] | None:
-    """Upper-case/validate each ISO-3166 alpha-2 code, de-duplicated (TE-1)."""
+    """Upper-case/validate each ISO-3166 alpha-2 code, de-duplicated."""
     if value is None:
         return None
     seen: dict[str, None] = {}
@@ -50,11 +50,11 @@ class VendorRead(BaseModel):
     country: str | None
     state: str | None
     gstin: str | None
-    # The countries the vendor is GST-registered in (TE-1); `is_registered` is a
+    # The countries the vendor is GST-registered in; `is_registered` is a
     # derived convenience (true iff registered anywhere).
     gst_registered_in: list[str]
     is_registered: bool
-    # Withholding-tax documentation (TE-3).
+    # Withholding-tax documentation.
     trc_on_file: bool
     trc_expiry: date | None
     form_10f_on_file: bool
@@ -78,11 +78,11 @@ class VendorCreate(BaseModel):
     country: str | None = Field(default=None, max_length=2)
     state: str | None = Field(default=None, max_length=10)
     gstin: str | None = Field(default=None, max_length=20)
-    # The countries the vendor is GST-registered in (TE-1). Empty ⇒ unregistered
+    # The countries the vendor is GST-registered in. Empty ⇒ unregistered
     # everywhere; an India entry makes an India supply forward charge, its absence
     # reverse charge.
     gst_registered_in: list[str] = Field(default_factory=list)
-    # Withholding-tax documentation (TE-3): whether a TRC / Form 10F is on file and
+    # Withholding-tax documentation: whether a TRC / Form 10F is on file and
     # the TRC's expiry, collected at onboarding to fix the s.195 withholding rate.
     trc_on_file: bool = False
     trc_expiry: date | None = None
@@ -118,10 +118,10 @@ class VendorUpdate(BaseModel):
     country: str | None = Field(default=None, max_length=2)
     state: str | None = Field(default=None, max_length=10)
     gstin: str | None = Field(default=None, max_length=20)
-    # Replaces the whole registration list when present (TE-1); pass ``[]`` to mark
+    # Replaces the whole registration list when present; pass ``[]`` to mark
     # a vendor unregistered everywhere.
     gst_registered_in: list[str] | None = None
-    # Withholding-tax documentation (TE-3); only fields present are updated.
+    # Withholding-tax documentation; only fields present are updated.
     trc_on_file: bool | None = None
     trc_expiry: date | None = None
     form_10f_on_file: bool | None = None

@@ -1,4 +1,4 @@
-"""Redis-backed fixed-window rate limiting (T3-7).
+"""Redis-backed fixed-window rate limiting.
 
 Three buckets, because the abuse they stop is not the same shape:
 
@@ -7,7 +7,7 @@ Three buckets, because the abuse they stop is not the same shape:
   placed after the lookup would still pay for every guess. Only *failures*
   increment it, so a busy legitimate client is never penalised.
 * ``expensive`` — the scan/recompute endpoints, which walk the ledger. Valid
-  credentials are enough to pin a worker today (T3-2), so these need a far
+  credentials are enough to pin a worker today, so these need a far
   tighter bucket than ordinary reads.
 * ``default`` — every other authenticated call, keyed by API key. Generous; it
   exists to stop row/telemetry inflation from a runaway agent loop, not to
@@ -15,8 +15,7 @@ Three buckets, because the abuse they stop is not the same shape:
 
 **Shared state, deliberately.** A per-process counter multiplies the effective
 limit by the worker count and resets on deploy. Redis keeps it correct for any
-topology, which matters because the deployment topology is not settled yet
-(T4-1).
+topology, which matters because the deployment topology is not settled yet.
 
 **Fail-open, deliberately.** A Redis outage must not take down the money path:
 rate limiting is a mitigation, not an authorization boundary, so an unreachable
@@ -142,7 +141,7 @@ class RateLimiter:
                 raw = self._client.get(key)
                 count = int(raw) if raw is not None else 0
         except redis.RedisError:
-            # Logged AND counted (F-7): a log line alone left the fail-open
+            # Logged AND counted: a log line alone left the fail-open
             # unalerted — the metric is what a monitoring rule can page on.
             metrics.rate_limiter_fail_open_total.labels(bucket=bucket.value).inc()
             logger.warning(

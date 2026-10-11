@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create self_invoices — the r.46 reverse-charge artifact of record (T1-7)."""
+    """Create self_invoices — the r.46 reverse-charge artifact of record."""
     op.create_table(
         "self_invoices",
         sa.Column("id", sa.Uuid(), nullable=False),

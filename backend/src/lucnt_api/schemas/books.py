@@ -1,17 +1,17 @@
-"""Pydantic response schemas for the Books router (backend/PLAN.md §4, Module 2/4).
+"""Pydantic response schemas for the Books router (Module 2/4).
 
 All figures are derived read-only from `journal_entries` joined to
 `transactions` (company scope) and `accounts` (category). Money is `Decimal`.
 Sign convention: an account's ``balance`` is ``debit - credit`` (positive = net
 debit); statements re-sign per the account's normal side.
 
-**Currency (PRODUCTION_PLAN T1-1).** Every figure is denominated in a single
+**Currency.** Every figure is denominated in a single
 functional currency and carries its ``currency``. A statement is inherently
 per-currency: a trial balance / balance sheet only balances *within* one
 currency, so the balance identities are reported per currency (``currencies``)
 and the top-level ``balanced`` holds only if *every* currency balances. A
 consolidated multi-currency total (FX-translated to a group reporting currency)
-is deferred (T1-6); the books never sum mixed currencies into one bogus total.
+is deferred; the books never sum mixed currencies into one bogus total.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class GLAccount(BaseModel):
     total_credit: Decimal
     balance: Decimal
     # How many journal lines this section totals. Always populated, so a client
-    # can tell that postings exist even when `entries` is empty (T3-2).
+    # can tell that postings exist even when `entries` is empty.
     entry_count: int = 0
     # Populated only for a single-account request (`?account=CODE`). The default
     # listing returns totals per account and leaves this empty rather than
@@ -206,7 +206,7 @@ class CashFlowResponse(BaseModel):
     currencies: list[CashFlowTotals]
 
 
-# --- Write endpoints: manual journals + funding (T1-18) ----------------------
+# --- Write endpoints: manual journals + funding ----------------------------
 
 
 class ManualJournalLineInput(BaseModel):
@@ -220,7 +220,7 @@ class ManualJournalLineInput(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one_side(self) -> ManualJournalLineInput:
-        """A line is one-sided: exactly one of debit/credit is non-zero (T0-7)."""
+        """A line is one-sided: exactly one of debit/credit is non-zero."""
         if (self.debit > 0) == (self.credit > 0):
             raise ValueError("each line must have exactly one of debit/credit non-zero")
         return self
@@ -229,7 +229,7 @@ class ManualJournalLineInput(BaseModel):
 class ManualJournalRequest(BaseModel):
     """`POST /books/journal` — a balanced manual journal (accrual, adjustment).
 
-    Admin-scoped and audited (T1-18). Booked in the entity's functional currency;
+    Admin-scoped and audited. Booked in the entity's functional currency;
     the lines must balance (Σ debit == Σ credit) and reference real CoA accounts.
     """
 
@@ -244,7 +244,7 @@ class ManualJournalRequest(BaseModel):
 
 
 class FundingRequest(BaseModel):
-    """`POST /books/funding` — a wallet funding / opening-balance top-up (T1-18).
+    """`POST /books/funding` — a wallet funding / opening-balance top-up.
 
     Books Dr Wallet / Cr Contributed Capital in the entity's functional currency,
     so a funded entity's balance sheet no longer shows negative cash & equity from
@@ -273,7 +273,7 @@ class PostedJournalResponse(BaseModel):
     lines: list[JournalLineRead]
 
 
-# --- Return-cycle GST settlement (T1-11) -------------------------------------
+# --- Return-cycle GST settlement -------------------------------------------
 
 
 class TaxSettlementRequest(BaseModel):
@@ -302,8 +302,8 @@ class TaxSettlementResponse(BaseModel):
     """The computed GST position + the settlement journal booked (if any).
 
     Clears the accumulated per-head GST Payable against Input Tax Credit so the
-    balance sheet no longer shows an ever-growing liability + asset (T1-11); the
-    net is booked as GST Payable to Government, and any excess ITC carries forward.
+    balance sheet no longer shows an ever-growing liability + asset; the net is
+    booked as GST Payable to Government, and any excess ITC carries forward.
     """
 
     model_config = ConfigDict(frozen=True)

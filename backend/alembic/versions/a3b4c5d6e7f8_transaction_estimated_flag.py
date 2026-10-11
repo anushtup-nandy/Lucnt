@@ -1,6 +1,6 @@
-"""mark estimate-booked captures on the ledger (F-8)
+"""mark estimate-booked captures on the ledger
 
-T5-1's degradation path captures a hold *as authorized* when actual usage
+The degradation path captures a hold *as authorized* when actual usage
 cannot be read after the vendor was paid — correct priority (never lose a
 spend), but the booked amount is an estimate and the ledger presented it as
 settled truth, visible only in an ERROR log. `estimated` makes that state a

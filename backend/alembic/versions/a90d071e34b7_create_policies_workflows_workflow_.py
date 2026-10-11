@@ -71,8 +71,7 @@ def downgrade() -> None:
     op.drop_table('workflows')
     op.drop_table('policies')
     # Postgres does not drop an ENUM type when its table is dropped; do it
-    # explicitly so a re-upgrade doesn't fail with "type already exists"
-    # (recurring gap — see logs/log_04070726.md session 8).
+    # explicitly so a re-upgrade doesn't fail with "type already exists".
     bind = op.get_bind()
     for enum_name in ('policy_rule_type', 'policy_scope_type', 'workflow_status'):
         sa.Enum(name=enum_name).drop(bind, checkfirst=True)

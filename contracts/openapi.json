@@ -857,7 +857,7 @@
         "type": "object"
       },
       "BudgetsResponse": {
-        "description": "Response body for `GET /budgets` \u2014 per-agent + per-workflow rollups.\n\n`total` counts every agent matching the request's filters, not the length of\nthe returned `agents` page (T3-3). `workflows` is unpaginated and rolls up\n*all* member agents, so a rollup stays correct regardless of the page.",
+        "description": "Response body for `GET /budgets` \u2014 per-agent + per-workflow rollups.\n\n`total` counts every agent matching the request's filters, not the length of\nthe returned `agents` page. `workflows` is unpaginated and rolls up\n*all* member agents, so a rollup stays correct regardless of the page.",
         "properties": {
           "agents": {
             "items": {
@@ -1391,7 +1391,7 @@
         "type": "object"
       },
       "FundingRequest": {
-        "description": "`POST /books/funding` \u2014 a wallet funding / opening-balance top-up (T1-18).\n\nBooks Dr Wallet / Cr Contributed Capital in the entity's functional currency,\nso a funded entity's balance sheet no longer shows negative cash & equity from\nday one. Admin-scoped and audited.",
+        "description": "`POST /books/funding` \u2014 a wallet funding / opening-balance top-up.\n\nBooks Dr Wallet / Cr Contributed Capital in the entity's functional currency,\nso a funded entity's balance sheet no longer shows negative cash & equity from\nday one. Admin-scoped and audited.",
         "properties": {
           "amount": {
             "anyOf": [
@@ -1903,7 +1903,7 @@
         "type": "object"
       },
       "ManualJournalRequest": {
-        "description": "`POST /books/journal` \u2014 a balanced manual journal (accrual, adjustment).\n\nAdmin-scoped and audited (T1-18). Booked in the entity's functional currency;\nthe lines must balance (\u03a3 debit == \u03a3 credit) and reference real CoA accounts.",
+        "description": "`POST /books/journal` \u2014 a balanced manual journal (accrual, adjustment).\n\nAdmin-scoped and audited. Booked in the entity's functional currency;\nthe lines must balance (\u03a3 debit == \u03a3 credit) and reference real CoA accounts.",
         "properties": {
           "entity": {
             "maxLength": 50,
@@ -2676,7 +2676,7 @@
         "type": "string"
       },
       "ReconExceptionType": {
-        "description": "The kind of anomaly a reconciliation exception records.\n\n`DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the\nledger by `services/detectors.py`; `FAILED_DELIVERY` is agent-reported (the\nSDK `mark_failed_delivery()` hook) because it cannot be inferred from spend\ndata alone. `TAX_UNCLASSIFIED` is *capture-emitted* (TE-1b): a spend hit a\nvendor with no place-of-supply data, so tax was booked conservatively and the\nvendor needs enriching before the treatment can be finalised.",
+        "description": "The kind of anomaly a reconciliation exception records.\n\n`DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the\nledger by `services/detectors.py`; `FAILED_DELIVERY` is agent-reported (the\nSDK `mark_failed_delivery()` hook) because it cannot be inferred from spend\ndata alone. `TAX_UNCLASSIFIED` is *capture-emitted*: a spend hit a vendor with\nno place-of-supply data, so tax was booked conservatively and the vendor needs\nenriching before the treatment can be finalised.",
         "enum": [
           "duplicate",
           "overcharge",
@@ -2688,7 +2688,7 @@
         "type": "string"
       },
       "ReconListResponse": {
-        "description": "Response for `GET /recon` \u2014 the inbox page plus a stable summary header.\n\n`total` is the filtered/paginated count; `total_at_stake` and `open_count`\nsummarize all *active* (open + recovering) exceptions for the company,\nindependent of the list filters \u2014 the \"$ at stake\" headline. `total_at_stake`\nis a **per-currency** map (currency -> sum), never a meaningless cross-currency\ntotal (PRODUCTION_PLAN T2-2).",
+        "description": "Response for `GET /recon` \u2014 the inbox page plus a stable summary header.\n\n`total` is the filtered/paginated count; `total_at_stake` and `open_count`\nsummarize all *active* (open + recovering) exceptions for the company,\nindependent of the list filters \u2014 the \"$ at stake\" headline. `total_at_stake`\nis a **per-currency** map (currency -> sum), never a meaningless cross-currency\ntotal.",
         "properties": {
           "items": {
             "items": {
@@ -3070,7 +3070,7 @@
         "type": "object"
       },
       "TaxSettlementResponse": {
-        "description": "The computed GST position + the settlement journal booked (if any).\n\nClears the accumulated per-head GST Payable against Input Tax Credit so the\nbalance sheet no longer shows an ever-growing liability + asset (T1-11); the\nnet is booked as GST Payable to Government, and any excess ITC carries forward.",
+        "description": "The computed GST position + the settlement journal booked (if any).\n\nClears the accumulated per-head GST Payable against Input Tax Credit so the\nbalance sheet no longer shows an ever-growing liability + asset; the net is\nbooked as GST Payable to Government, and any excess ITC carries forward.",
         "properties": {
           "credit_carried_forward": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -3439,7 +3439,7 @@
         "type": "object"
       },
       "TransactionFull": {
-        "description": "`GET /transactions/{id}` \u2014 the detail row plus what only it can afford.\n\nThe tax treatment and the journal are a join each. On the *list* they would\nbe an N+1 per page; on a single row they are two queries, and the dashboard's\ntransaction detail is meaningless without them: the balanced double entry is\nthe product's central claim, and a page that asserts it without showing it is\nthe fa\u00e7ade `docs/production/plan2.md` F-3 says not to build.",
+        "description": "`GET /transactions/{id}` \u2014 the detail row plus what only it can afford.\n\nThe tax treatment and the journal are a join each. On the *list* they would\nbe an N+1 per page; on a single row they are two queries, and the dashboard's\ntransaction detail is meaningless without them: the balanced double entry is\nthe product's central claim, and a page that asserts it without showing it is\na fa\u00e7ade.",
         "properties": {
           "agent_id": {
             "format": "uuid",
@@ -4200,7 +4200,7 @@
         "type": "string"
       },
       "VoidRequest": {
-        "description": "Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.\n\nReleases an approved-but-uncaptured hold so it stops reserving the agent's\nbudget (T5-4). Used when the spend the hold was taken for did not happen \u2014\nthe vendor call failed after `authorize()` returned, say.",
+        "description": "Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.\n\nReleases an approved-but-uncaptured hold so it stops reserving the agent's\nbudget. Used when the spend the hold was taken for did not happen \u2014\nthe vendor call failed after `authorize()` returned, say.",
         "properties": {
           "authorization_id": {
             "format": "uuid",
@@ -4528,7 +4528,7 @@
     },
     "/approvals": {
       "get": {
-        "description": "List holds awaiting approval (review + human_hold) for the current company.\n\nPaginated (T3-3): the queue grows with how long holds go unattended, which is\nexactly the situation in which an unbounded response is least welcome.",
+        "description": "List holds awaiting approval (review + human_hold) for the current company.\n\nPaginated: the queue grows with how long holds go unattended, which is\nexactly the situation in which an unbounded response is least welcome.",
         "operationId": "list_approvals_approvals_get",
         "parameters": [
           {
@@ -5207,7 +5207,7 @@
     },
     "/books/funding": {
       "post": {
-        "description": "Fund an entity's wallet: Dr Wallet / Cr Contributed Capital (T1-18).\n\nThe funding/opening-balance entry the ledger previously lacked \u2014 without it\nevery balance sheet showed negative cash & equity from day one (the wallet was\nonly ever credited by spend). Admin-scoped, audited, functional currency.",
+        "description": "Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.\n\nThe funding/opening-balance entry the ledger previously lacked \u2014 without it\nevery balance sheet showed negative cash & equity from day one (the wallet was\nonly ever credited by spend). Admin-scoped, audited, functional currency.",
         "operationId": "create_funding_books_funding_post",
         "requestBody": {
           "content": {
@@ -5254,7 +5254,7 @@
     },
     "/books/gl": {
       "get": {
-        "description": "General ledger: every posted account/currency with its totals and balance.\n\nTwo shapes, because the line-level view is the only unbounded one (T3-2):\n\n* **Listing** (no `account`) \u2014 totals per account/currency, computed by a\n  SQL `GROUP BY`. Costs one row per account, not one per journal line, so it\n  no longer loads a 500k-line ledger into memory to add up six numbers.\n  `entries` is empty here and `entry_count` reports how many lines exist.\n* **Detail** (`?account=CODE`) \u2014 the same totals plus that account's lines,\n  bounded by `limit`/`offset`. Journal lines run 2-5x transaction count, so\n  this is the one place the row-level cost has to be paid, and it is paid a\n  page at a time.",
+        "description": "General ledger: every posted account/currency with its totals and balance.\n\nTwo shapes, because the line-level view is the only unbounded one:\n\n* **Listing** (no `account`) \u2014 totals per account/currency, computed by a\n  SQL `GROUP BY`. Costs one row per account, not one per journal line, so it\n  no longer loads a 500k-line ledger into memory to add up six numbers.\n  `entries` is empty here and `entry_count` reports how many lines exist.\n* **Detail** (`?account=CODE`) \u2014 the same totals plus that account's lines,\n  bounded by `limit`/`offset`. Journal lines run 2-5x transaction count, so\n  this is the one place the row-level cost has to be paid, and it is paid a\n  page at a time.",
         "operationId": "get_general_ledger_books_gl_get",
         "parameters": [
           {
@@ -5391,7 +5391,7 @@
     },
     "/books/journal": {
       "post": {
-        "description": "Post a balanced manual journal \u2014 an accrual, prepaid, or correction (T1-18).\n\nAdmin-scoped and audited. Booked in the entity's functional currency; the\nlines must reference real CoA accounts and balance.",
+        "description": "Post a balanced manual journal \u2014 an accrual, prepaid, or correction.\n\nAdmin-scoped and audited. Booked in the entity's functional currency; the\nlines must reference real CoA accounts and balance.",
         "operationId": "create_manual_journal_books_journal_post",
         "requestBody": {
           "content": {
@@ -5651,7 +5651,7 @@
     },
     "/books/tax-settlement": {
       "post": {
-        "description": "Book a return-cycle GST settlement, clearing Payable against ITC (T1-11).\n\nNets the period's accumulated output GST (the per-head Payable accounts) against\ninput tax credit (the per-head ITC accounts), books the residual as GST Payable\nto Government, and carries forward any unutilised ITC \u2014 so the balance sheet no\nlonger shows an ever-growing liability + asset. Admin-scoped and audited.",
+        "description": "Book a return-cycle GST settlement, clearing Payable against ITC.\n\nNets the period's accumulated output GST (the per-head Payable accounts) against\ninput tax credit (the per-head ITC accounts), books the residual as GST Payable\nto Government, and carries forward any unutilised ITC \u2014 so the balance sheet no\nlonger shows an ever-growing liability + asset. Admin-scoped and audited.",
         "operationId": "settle_taxes_books_tax_settlement_post",
         "requestBody": {
           "content": {
@@ -6013,7 +6013,7 @@
     },
     "/health/live": {
       "get": {
-        "description": "Liveness: is this process running? Never touches a dependency.\n\nA liveness probe that checks the database is a way to turn one database\nblip into every container being killed at once. `/health` is retained as\nan alias so existing probes and `docs/DEMO.md` keep working.",
+        "description": "Liveness: is this process running? Never touches a dependency.\n\nA liveness probe that checks the database is a way to turn one database\nblip into every container being killed at once. `/health` is retained as\nan alias so existing probes keep working.",
         "operationId": "health_live_health_live_get",
         "responses": {
           "200": {
@@ -6036,7 +6036,7 @@
     },
     "/health/ready": {
       "get": {
-        "description": "Readiness: can this process actually serve? (T4-5).\n\nThe old single `/health` returned a static dict, so a load balancer\nhappily kept routing to a backend whose Postgres was gone. This one takes\na connection out of the real pool, pings it, and checks the schema is at\nthe migration head.",
+        "description": "Readiness: can this process actually serve?\n\nThe old single `/health` returned a static dict, so a load balancer\nhappily kept routing to a backend whose Postgres was gone. This one takes\na connection out of the real pool, pings it, and checks the schema is at\nthe migration head.",
         "operationId": "health_ready_health_ready_get",
         "responses": {
           "200": {
@@ -6057,7 +6057,7 @@
     },
     "/insights": {
       "get": {
-        "description": "List the company's insights, newest first, with an unapplied headline count.\n\nDismissed insights are hidden by default (they are resolved \u2014 T2-10); pass\n`include_dismissed=true` to see them.",
+        "description": "List the company's insights, newest first, with an unapplied headline count.\n\nDismissed insights are hidden by default (they are resolved); pass\n`include_dismissed=true` to see them.",
         "operationId": "list_insights_insights_get",
         "parameters": [
           {
@@ -6228,7 +6228,7 @@
     },
     "/insights/{insight_id}/dismiss": {
       "post": {
-        "description": "Dismiss an insight so recompute stops regenerating it (idempotent \u2014 T2-10).",
+        "description": "Dismiss an insight so recompute stops regenerating it (idempotent).",
         "operationId": "dismiss_insight_insights__insight_id__dismiss_post",
         "parameters": [
           {
@@ -6277,7 +6277,7 @@
     },
     "/intelligence/query": {
       "get": {
-        "description": "An agent's living financial memory (M8), served without a ledger scan.\n\nTwo paths, because this is the per-spend SDK call and a full scan per call is\nO(n) per call and O(n^2) over an agent's lifetime (T3-2):\n\n* **Fast path** \u2014 an agent that has been through `/recompute` has a stored\n  `Fingerprint`, so the statistics are read rather than recomputed, and the\n  projection and cost-per-output come from SQL aggregates. No record is\n  loaded into Python.\n* **Fallback** \u2014 no stored fingerprint (an agent that has never been\n  recomputed) computes live exactly as before. This is what keeps the\n  documented \"needs no prior recompute\" contract true.\n\n**Staleness is real and deliberate.** On the fast path the fingerprint\nstatistics \u2014 mean, stddev, median, top vendors, anomaly score \u2014 are as fresh\nas the last `/recompute`. `budget` is always live (a SQL sum over the ledger),\nso spend headroom, the figure an agent gates on, is never stale.",
+        "description": "An agent's living financial memory (M8), served without a ledger scan.\n\nTwo paths, because this is the per-spend SDK call and a full scan per call is\nO(n) per call and O(n^2) over an agent's lifetime:\n\n* **Fast path** \u2014 an agent that has been through `/recompute` has a stored\n  `Fingerprint`, so the statistics are read rather than recomputed, and the\n  projection and cost-per-output come from SQL aggregates. No record is\n  loaded into Python.\n* **Fallback** \u2014 no stored fingerprint (an agent that has never been\n  recomputed) computes live exactly as before. This is what keeps the\n  documented \"needs no prior recompute\" contract true.\n\n**Staleness is real and deliberate.** On the fast path the fingerprint\nstatistics \u2014 mean, stddev, median, top vendors, anomaly score \u2014 are as fresh\nas the last `/recompute`. `budget` is always live (a SQL sum over the ledger),\nso spend headroom, the figure an agent gates on, is never stale.",
         "operationId": "query_intelligence_query_get",
         "parameters": [
           {
@@ -6679,7 +6679,7 @@
     },
     "/recon": {
       "get": {
-        "description": "List reconciliation exceptions, grouped by currency, highest stake first.\n\nOrdering is (currency, `$ at stake` desc): without an FX conversion, ranking\namounts *across* currencies is meaningless (\u20b95,000 is not > $100 \u2014 T2-2), so\nthe list groups by currency and ranks within each.",
+        "description": "List reconciliation exceptions, grouped by currency, highest stake first.\n\nOrdering is (currency, `$ at stake` desc): without an FX conversion, ranking\namounts *across* currencies is meaningless (\u20b95,000 is not > $100), so\nthe list groups by currency and ranks within each.",
         "operationId": "list_exceptions_recon_get",
         "parameters": [
           {
@@ -6842,7 +6842,7 @@
     },
     "/recon/scan": {
       "post": {
-        "description": "Run the detector suite over the company ledger; book new exceptions.\n\nIdempotent on two axes:\n- **(txn, type)** \u2014 an already-flagged transaction (any status) is not\n  re-flagged; the detected ledger fact is immutable (the unique constraint is\n  the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from\n  500-ing the whole pass \u2014 T2-15).\n- **recurring identity (`dedup_key`)** \u2014 a dismissed/resolved recurring charge\n  (a subscription, a repeated overcharge) is not re-raised on next month's new\n  transaction row (T2-7).",
+        "description": "Run the detector suite over the company ledger; book new exceptions.\n\nIdempotent on two axes:\n- **(txn, type)** \u2014 an already-flagged transaction (any status) is not\n  re-flagged; the detected ledger fact is immutable (the unique constraint is\n  the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from\n  500-ing the whole pass).\n- **recurring identity (`dedup_key`)** \u2014 a dismissed/resolved recurring charge\n  (a subscription, a repeated overcharge) is not re-raised on next month's new\n  transaction row.",
         "operationId": "scan_recon_scan_post",
         "responses": {
           "200": {
@@ -7035,7 +7035,7 @@
             }
           },
           {
-            "description": "Filter to estimate-booked (true) or settled (false) rows (F-8)",
+            "description": "Filter to estimate-booked (true) or settled (false) rows",
             "in": "query",
             "name": "estimated",
             "required": false,
@@ -7048,7 +7048,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter to estimate-booked (true) or settled (false) rows (F-8)",
+              "description": "Filter to estimate-booked (true) or settled (false) rows",
               "title": "Estimated"
             }
           },
@@ -7241,7 +7241,7 @@
     },
     "/transactions/void": {
       "post": {
-        "description": "Release an approved hold whose spend never happened (T5-4).\n\nWithout this, a hold orphaned by a vendor error after `authorize()` \u2014 or by a\ncrash between authorize and capture \u2014 reserves the agent's budget forever\n(`services/spend_window.py::reserved_spend`), silently and permanently\nshrinking what the agent can spend. `meter()` calls this on its error path.\n\nIdempotent: voiding an already-voided hold returns 200 with\n`already_released=True`, describing the original release. The SDK invokes\nthis while already handling a failure, so a retry must not become a second\nerror to handle.\n\nA captured hold cannot be voided \u2014 the money moved and the ledger says so.\nReverse the transaction instead (`POST /transactions/{id}/reverse`).",
+        "description": "Release an approved hold whose spend never happened.\n\nWithout this, a hold orphaned by a vendor error after `authorize()` \u2014 or by a\ncrash between authorize and capture \u2014 reserves the agent's budget forever\n(`services/spend_window.py::reserved_spend`), silently and permanently\nshrinking what the agent can spend. `meter()` calls this on its error path.\n\nIdempotent: voiding an already-voided hold returns 200 with\n`already_released=True`, describing the original release. The SDK invokes\nthis while already handling a failure, so a retry must not become a second\nerror to handle.\n\nA captured hold cannot be voided \u2014 the money moved and the ledger says so.\nReverse the transaction instead (`POST /transactions/{id}/reverse`).",
         "operationId": "void_transactions_void_post",
         "requestBody": {
           "content": {
@@ -7337,7 +7337,7 @@
     },
     "/transactions/{transaction_id}/reverse": {
       "post": {
-        "description": "Reverse a committed transaction with a contra entry (T1-16 refund/credit note).\n\nBooks a new reversal transaction (positive amount, contra journal) that\nnegates the original and frees the agent's budget; the original is flagged\nreversed. Admin-scoped and audited. Idempotent: reversing an already-reversed\ntransaction (or a reversal itself) is a 409.",
+        "description": "Reverse a committed transaction with a contra entry (refund/credit note).\n\nBooks a new reversal transaction (positive amount, contra journal) that\nnegates the original and frees the agent's budget; the original is flagged\nreversed. Admin-scoped and audited. Idempotent: reversing an already-reversed\ntransaction (or a reversal itself) is a 409.",
         "operationId": "reverse_transaction_transactions__transaction_id__reverse_post",
         "parameters": [
           {

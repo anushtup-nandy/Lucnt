@@ -1,4 +1,4 @@
-"""insights: dedup_key + dismissed state (Tier 2 T2-10)
+"""insights: dedup_key + dismissed state
 
 Revision ID: c9d0e1f2a3b4
 Revises: b8c9d0e1f2a3
@@ -6,7 +6,7 @@ Create Date: 2026-07-23 22:55:00.000000
 
 Recompute used to delete every un-applied insight and re-insert fresh rows, which
 churned ids (racing a human's "apply" → 404) and regenerated a reviewed insight
-forever (PRODUCTION_PLAN T2-10). This adds:
+forever. This adds:
 
 - `dedup_key` — a stable natural key (type:agent:subject) so recompute upserts an
   insight *in place* (preserving id / is_applied) instead of delete+insert.

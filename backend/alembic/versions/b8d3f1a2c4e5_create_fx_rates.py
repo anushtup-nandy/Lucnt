@@ -28,7 +28,7 @@ depends_on: str | Sequence[str] | None = None
 # transaction dated in the pilot window resolves a rate; the resolver fails
 # closed only for a currency not seeded here. Reference data lives in the
 # migration (not `seed_dev.py`) so every environment -- tests, staging, prod --
-# has it. Refresh/extend via a rate feed later (PLAN.md §11, P8).
+# has it. Refresh/extend via a rate feed later.
 _BASELINE_RATES: tuple[tuple[str, str], ...] = (
     ("USD", "1.0"),  # anchor
     ("INR", "0.0117"),  # ~85.5 INR / USD

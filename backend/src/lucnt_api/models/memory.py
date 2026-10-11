@@ -4,7 +4,7 @@ A `memories` row is one durable, human-readable pattern the intelligence layer
 has learned about an agent: its dominant vendor, its typical spend range, its
 cost-per-output profile. Memories are recomputed from the ledger
 (`POST /intelligence/recompute`), never written on the capture path, so the
-frozen `authorize→capture` spine stays lane-agnostic (`CLAUDE.local.md`).
+frozen `authorize→capture` spine stays lane-agnostic.
 
 At most one memory of each `memory_type` exists per agent
 (`uq_memories_agent_type`); recompute upserts it, so `created_at` records when
@@ -55,7 +55,7 @@ class Memory(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # One memory of each type per agent — recompute upserts in place so a
         # learned pattern is a single evolving record, not a growing log.
         UniqueConstraint("agent_id", "memory_type", name="uq_memories_agent_type"),
-        # GET /memory scopes by company (T3-1); agent_id lookups already ride
+        # GET /memory scopes by company; agent_id lookups already ride
         # uq_memories_agent_type's leading column.
         Index("ix_memories_company_id", "company_id"),
     )

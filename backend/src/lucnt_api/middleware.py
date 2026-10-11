@@ -1,4 +1,4 @@
-"""Request-scoped logging context, access logging and metrics (T4-4).
+"""Request-scoped logging context, access logging and metrics.
 
 Written as raw ASGI rather than `BaseHTTPMiddleware` on purpose. The latter runs
 the downstream app in a separate anyio task and re-raises exceptions across that

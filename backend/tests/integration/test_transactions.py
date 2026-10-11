@@ -67,7 +67,7 @@ def _make_entity(
         currency=currency,
         accounting_std="SFRS",
         tax_regime=f"{code.upper()}-GST",
-        country=code.upper(),  # place of supply of the recipient (TE-1)
+        country=code.upper(),  # place of supply of the recipient
         timezone="Asia/Singapore",
     )
     db_session.add(entity)
@@ -83,7 +83,7 @@ def _make_vendor(
     country: str,
     gst_registered_in: list[str] | None = None,
 ) -> Vendor:
-    """Pre-enrich a vendor so a spend classifies by place of supply (TE-1)."""
+    """Pre-enrich a vendor so a spend classifies by place of supply."""
     vendor = Vendor(
         company_id=company.id,
         name=name,
@@ -314,7 +314,7 @@ def test_capture_books_reverse_charge_journal_and_tax(
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="sg", currency="SGD")
     _make_agent(db_session, company, entity)
-    # A foreign vendor not registered in SG -> imported reverse charge (TE-1).
+    # A foreign vendor not registered in SG -> imported reverse charge.
     _make_vendor(db_session, company, "openai", country="US")
     # Seed a clean test FX rate so USD->SGD = 2.0 (round numbers): one SGD is
     # worth 0.5 USD. Effective 2026-01-02 to beat the 2026-01-01 baseline.
@@ -353,7 +353,7 @@ def test_capture_books_reverse_charge_journal_and_tax(
     assert tax["reverse_charge"] is True
     assert tax["self_invoice_generated"] is True
     assert Decimal(tax["rate"]) == Decimal("0.09")
-    # USD 100 -> SGD 200 at the seeded 2.0 rate; 9% RCM on top = 18.00 SGD (T1-4).
+    # USD 100 -> SGD 200 at the seeded 2.0 rate; 9% RCM on top = 18.00 SGD.
     assert Decimal(tax["tax_amount"]) == Decimal("18.00")
 
     journal = body["journal"]
@@ -372,7 +372,7 @@ def test_capture_books_reverse_charge_journal_and_tax(
         .all()
     )
     assert len(persisted_lines) == 4
-    # Every line is stamped with the functional (entity) currency (T1-1).
+    # Every line is stamped with the functional (entity) currency.
     assert all(line.currency == "SGD" for line in persisted_lines)
     tax_rows = (
         db_session.execute(select(TaxRecord).where(TaxRecord.transaction_id == tx_id))
@@ -389,7 +389,7 @@ def test_capture_books_domestic_gst(client: TestClient, db_session: Session) -> 
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="in", currency="INR")
     _make_agent(db_session, company, entity)
-    # A domestic vendor registered in IN -> forward-charge GST (TE-1).
+    # A domestic vendor registered in IN -> forward-charge GST.
     _make_vendor(
         db_session, company, "local_saas", country="IN", gst_registered_in=["IN"]
     )
@@ -428,7 +428,7 @@ def test_capture_books_domestic_gst(client: TestClient, db_session: Session) -> 
 def test_cross_currency_spend_valued_in_functional_currency_for_budget(
     client: TestClient, db_session: Session
 ) -> None:
-    """T1-2: a USD spend by an INR entity is valued in INR against the budget.
+    """A USD spend by an INR entity is valued in INR against the budget.
 
     Under the pre-Tier-1 bug the raw USD figure was compared to an INR budget, so
     a USD 50 spend looked trivially small against a 4000 budget and was approved.
@@ -467,7 +467,7 @@ def test_cross_currency_spend_valued_in_functional_currency_for_budget(
 
 
 def test_authorize_requires_currency(client: TestClient, db_session: Session) -> None:
-    """T1-5: currency is mandatory — an omitted currency is a 422, never a silent
+    """Currency is mandatory — an omitted currency is a 422, never a silent
     default that could mislabel a foreign spend as domestic."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
@@ -531,7 +531,7 @@ def test_capture_double_capture_is_idempotent(
     client: TestClient, db_session: Session
 ) -> None:
     """A retried capture returns the original transaction, not a 409 or a second
-    booking — the T0-6 "already captured, fetch & return" guarantee."""
+    booking — the "already captured, fetch & return" guarantee."""
     company, key = _make_company_with_key(db_session)
     agent = _make_agent(db_session, company, _make_entity(db_session, company))
 
@@ -613,11 +613,11 @@ def test_capture_rejects_non_sdk_source(
 def test_reverse_charge_generates_self_invoice(
     client: TestClient, db_session: Session
 ) -> None:
-    """T1-7: an RCM capture produces a real self-invoice record (flag is truthful)."""
+    """An RCM capture produces a real self-invoice record (flag is truthful)."""
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="sg", currency="SGD")
     _make_agent(db_session, company, entity)
-    _make_vendor(db_session, company, "openai", country="US")  # foreign -> RCM (TE-1)
+    _make_vendor(db_session, company, "openai", country="US")  # foreign -> RCM
     db_session.add(
         FxRate(
             currency="SGD",
@@ -664,7 +664,7 @@ def test_reverse_charge_generates_self_invoice(
 def test_domestic_spend_has_no_self_invoice(
     client: TestClient, db_session: Session
 ) -> None:
-    """A domestic (non-RCM) capture produces no self-invoice (T1-7)."""
+    """A domestic (non-RCM) capture produces no self-invoice."""
     company, key = _make_company_with_key(db_session)
     entity = _make_entity(db_session, company, code="in", currency="INR")
     _make_agent(db_session, company, entity)
@@ -701,7 +701,7 @@ def test_domestic_spend_has_no_self_invoice(
 def test_reverse_books_contra_and_frees_budget(
     client: TestClient, db_session: Session
 ) -> None:
-    """T1-16: a reversal books a contra journal, flags the original, frees budget."""
+    """A reversal books a contra journal, flags the original, frees budget."""
     company, key = _make_company_with_key(db_session)
     agent = _make_agent(db_session, company, _make_entity(db_session, company))
     verdict = client.post(
@@ -817,9 +817,9 @@ def _authorize_ok(client: TestClient, key: str, amount: str = "100") -> str:
 def test_capture_estimated_flag_round_trips(
     client: TestClient, db_session: Session
 ) -> None:
-    """F-8: a capture booked from an estimate is queryable, not just logged.
+    """A capture booked from an estimate is queryable, not just logged.
 
-    T5-1's degradation path captures the hold as authorized when actual usage
+    The degradation path captures the hold as authorized when actual usage
     cannot be read; before this flag the ledger presented that estimate as
     settled truth with only an ERROR log to say otherwise.
     """
@@ -880,7 +880,7 @@ def test_capture_defaults_to_settled_not_estimated(
 def test_capture_persists_and_returns_invoice_url(
     client: TestClient, db_session: Session
 ) -> None:
-    """F-12: `invoice_url` was accepted, validated, and silently dropped —
+    """`invoice_url` was accepted, validated, and silently dropped —
     a caller who passed evidence could never read it back."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))

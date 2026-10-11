@@ -1,4 +1,4 @@
-"""Integration tests for place-of-supply tax + the vendor registry (T1-3/T1-9).
+"""Integration tests for place-of-supply tax + the vendor registry.
 
 An India entity's spend is taxed by *place of supply* (the vendor registry), not
 currency: an intra-state domestic supply splits into CGST + SGST, an import/inter-
@@ -219,7 +219,7 @@ def test_vendor_crud_create_enrich_and_conflicts(
     assert patched.json()["gst_registered_in"] == []
     assert patched.json()["country"] == "IN"  # untouched by the partial update
 
-    # A runtime key cannot mutate the registry (T0-12).
+    # A runtime key cannot mutate the registry.
     runtime = _make_key(db_session, company, scope=ApiKeyScope.RUNTIME)
     forbidden = client.post(
         "/vendors", json={"name": "Other"}, headers=_headers(runtime)
@@ -228,7 +228,7 @@ def test_vendor_crud_create_enrich_and_conflicts(
 
 
 def test_vendor_withholding_docs_crud(client: TestClient, db_session: Session) -> None:
-    """TRC / Form 10F onboarding fields round-trip through create + patch (TE-3)."""
+    """TRC / Form 10F onboarding fields round-trip through create + patch."""
     company, _, key = _make_in_company(db_session)
     created = client.post(
         "/vendors",
@@ -287,7 +287,7 @@ def test_intra_state_domestic_splits_cgst_sgst(
 def test_tax_record_stamps_applied_rule(
     client: TestClient, db_session: Session
 ) -> None:
-    """Each tax record links to the tax_rates row that produced it (TE-6)."""
+    """Each tax record links to the tax_rates row that produced it."""
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
@@ -314,7 +314,7 @@ def test_tax_record_stamps_applied_rule(
 def test_import_books_igst_reverse_charge(
     client: TestClient, db_session: Session
 ) -> None:
-    """A foreign vendor -> IGST reverse charge, booked to the IGST accounts (T1-9)."""
+    """A foreign vendor -> IGST reverse charge, booked to the IGST accounts."""
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
@@ -336,7 +336,7 @@ def test_import_books_igst_reverse_charge(
 def test_oidar_vendor_registered_in_india_is_forward_charge(
     client: TestClient, db_session: Session
 ) -> None:
-    """A foreign vendor GST-registered in India books forward-charge IGST (TE-1).
+    """A foreign vendor GST-registered in India books forward-charge IGST.
 
     Registration in the buyer's country, not home country, decides: an ITC IGST
     leg (1430) is booked, but *no* payable (2230) and no self-invoice — the OIDAR
@@ -364,7 +364,7 @@ def test_oidar_vendor_registered_in_india_is_forward_charge(
 def test_imported_goods_route_to_customs_not_rcm(
     client: TestClient, db_session: Session
 ) -> None:
-    """A cross-border goods spend routes to customs + a review flag, not RCM (TE-4)."""
+    """A cross-border goods spend routes to customs + a review flag, not RCM."""
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
@@ -390,7 +390,7 @@ def test_imported_goods_route_to_customs_not_rcm(
 
 
 def test_domestic_goods_use_normal_gst(client: TestClient, db_session: Session) -> None:
-    """Domestic goods (same country) are taxed as normal GST, not customs (TE-4)."""
+    """Domestic goods (same country) are taxed as normal GST, not customs."""
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
@@ -412,7 +412,7 @@ def test_domestic_goods_use_normal_gst(client: TestClient, db_session: Session) 
 def test_case_a_foreign_vendor_billing_inr_is_rcm(
     client: TestClient, db_session: Session
 ) -> None:
-    """TE-1 Case A: a foreign vendor billing in INR is still imported RCM (money path).
+    """Case A: a foreign vendor billing in INR is still imported RCM (money path).
 
     The exact P0 the currency heuristic got wrong — INR billing said "domestic",
     silently dropping the RCM liability. Place of supply (US vendor, not registered
@@ -438,7 +438,7 @@ def test_case_a_foreign_vendor_billing_inr_is_rcm(
 def test_unenriched_vendor_is_unclassified_and_flagged(
     client: TestClient, db_session: Session
 ) -> None:
-    """An unenriched vendor is booked conservatively and flagged for review (TE-1b).
+    """An unenriched vendor is booked conservatively and flagged for review.
 
     No ITC leg, no self-invoice, the whole amount expensed, tax_type UNCLASSIFIED —
     and a `tax_unclassified` recon exception opened, never a silent currency guess.
@@ -479,7 +479,7 @@ def _exceptions_for(db: Session, tx_id: str) -> list[ReconciliationException]:
 def test_enrichment_reflags_divergent_history_without_rewriting(
     client: TestClient, db_session: Session
 ) -> None:
-    """Correcting a vendor flags its mis-booked past spends; history stays put (TE-1c).
+    """Correcting a vendor flags its mis-booked past spends; history stays put.
 
     A spend is booked domestic GST against a vendor recorded as India-registered.
     The vendor is later corrected to a foreign, unregistered supplier (it always
@@ -525,7 +525,7 @@ def test_enrichment_reflags_divergent_history_without_rewriting(
 def test_enrichment_does_not_duplicate_an_existing_flag(
     client: TestClient, db_session: Session
 ) -> None:
-    """Enriching an unclassified vendor keeps its one flag — no duplicate (TE-1c)."""
+    """Enriching an unclassified vendor keeps its one flag — no duplicate."""
     company, _, key = _make_in_company(db_session)
     body = _spend(client, key, vendor="Mystery", amount="118", currency="INR")
     tx_id = str(body["id"])
@@ -571,7 +571,7 @@ def test_tax_exclusive_books_gst_on_top(
 
 
 def test_rate_slab_taxes_at_that_rate(client: TestClient, db_session: Session) -> None:
-    """A `tax_category` slab books at that GST rate, not the 18% default (T1-10)."""
+    """A `tax_category` slab books at that GST rate, not the 18% default."""
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
@@ -620,7 +620,7 @@ def test_unknown_slab_fails_closed(client: TestClient, db_session: Session) -> N
 def test_reversal_negates_each_head_component(
     client: TestClient, db_session: Session
 ) -> None:
-    """Reversing a split supply writes a negated contra row per head (T1-9)."""
+    """Reversing a split supply writes a negated contra row per head."""
     company, _, key = _make_in_company(db_session)
     client.post(
         "/vendors",
@@ -647,7 +647,7 @@ def test_reversal_negates_each_head_component(
     assert contra["SGST"].tax_amount == Decimal("-9.0000")
 
 
-# --- Return-cycle GST settlement (T1-11) -------------------------------------
+# --- Return-cycle GST settlement -------------------------------------
 
 
 def _leg(lines: list[dict[str, object]], code: str, side: str) -> Decimal:
@@ -660,7 +660,7 @@ def _leg(lines: list[dict[str, object]], code: str, side: str) -> Decimal:
 def test_tax_settlement_nets_output_against_itc(
     client: TestClient, db_session: Session
 ) -> None:
-    """Settlement clears per-head Payable against ITC, net to Government (T1-11)."""
+    """Settlement clears per-head Payable against ITC, net to Government."""
     company, _, key = _make_in_company(db_session)
     for name in ("OpenAI", "Expedia"):
         client.post(

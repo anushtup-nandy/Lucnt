@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add api_keys.scope (runtime|admin) for separation of duties (T0-12).
+    """Add api_keys.scope (runtime|admin) for separation of duties.
 
     Existing keys default to `admin` (server_default) so they keep full power;
     agent runtime keys are provisioned `runtime` explicitly.

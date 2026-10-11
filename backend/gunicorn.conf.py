@@ -1,8 +1,8 @@
-"""Gunicorn configuration for the deployable image (T4-1).
+"""Gunicorn configuration for the deployable image.
 
 This file is where the deployment topology stops being implicit. Until now
-"deployment" was a laptop running `uvicorn`, so the T3-4 pool sizing and the
-T3-7 rate limiter both rested on an unstated assumption about how many processes
+"deployment" was a laptop running `uvicorn`, so the pool sizing and the rate
+limiter both rested on an unstated assumption about how many processes
 exist. Both assumptions are settled here.
 
 **The connection arithmetic (why `workers` defaults to 2).** Every worker builds
@@ -10,7 +10,7 @@ its own SQLAlchemy engine, so the real ceiling is
 
     workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW)  ≤  postgres max_connections − reserve
 
-With the T3-4 defaults (10 + 10) and Postgres' default `max_connections` of 100,
+With the pool defaults (10 + 10) and Postgres' default `max_connections` of 100,
 two workers need 40 connections and leave room for migrations, psql and a second
 container during a rolling deploy. The commonly copied `2 × CPU + 1` would ask
 for 180 on a 4-core box and exhaust the server instead. Raise `WEB_CONCURRENCY`
@@ -78,7 +78,7 @@ loglevel = os.environ.get("LOG_LEVEL", "info").lower()
 
 
 def on_starting(server: Any) -> None:
-    """Clear the Prometheus multiprocess directory before workers start (T4-4).
+    """Clear the Prometheus multiprocess directory before workers start.
 
     `prometheus_client` accumulates one shared-memory file per worker PID. Files
     left by a previous container generation would otherwise be aggregated into

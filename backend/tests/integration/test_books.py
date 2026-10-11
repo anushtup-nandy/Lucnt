@@ -58,7 +58,7 @@ def _make_entity(db_session: Session, company: Company) -> Entity:
         currency="SGD",
         accounting_std="SFRS",
         tax_regime="SG-GST",
-        country="SG",  # place of supply of the recipient (TE-1)
+        country="SG",  # place of supply of the recipient
         timezone="Asia/Singapore",
     )
     db_session.add(entity)
@@ -74,7 +74,7 @@ def _make_vendor(
     country: str,
     gst_registered_in: list[str] | None = None,
 ) -> None:
-    """Pre-enrich a vendor so a spend classifies by place of supply (TE-1)."""
+    """Pre-enrich a vendor so a spend classifies by place of supply."""
     db_session.add(
         Vendor(
             company_id=company.id,
@@ -151,7 +151,7 @@ def books_client(client: TestClient, db_session: Session) -> tuple[TestClient, s
     """A company with two captured spends: an imported RCM and a domestic GST one."""
     company, key = _make_company_with_key(db_session)
     _make_agent(db_session, company, _make_entity(db_session, company))
-    # Place of supply (TE-1): openai is a foreign vendor not registered in SG ->
+    # Place of supply: openai is a foreign vendor not registered in SG ->
     # imported reverse charge; localcorp is domestic SG-registered -> forward GST.
     _make_vendor(db_session, company, "openai", country="US")
     _make_vendor(
@@ -264,7 +264,7 @@ def test_books_entity_filter(books_client: tuple[TestClient, str]) -> None:
 def test_books_date_filter_scopes_period(
     books_client: tuple[TestClient, str],
 ) -> None:
-    """T1-17: a statement can be scoped to a period, not inception-to-date."""
+    """A statement can be scoped to a period, not inception-to-date."""
     client, key = books_client
     # A future window contains none of the (now-dated) spends.
     future = client.get("/books/pl?date_from=2099-01-01", headers=_headers(key)).json()
@@ -280,7 +280,7 @@ def test_books_date_filter_scopes_period(
 def test_company_level_statements_are_per_currency(
     client: TestClient, db_session: Session
 ) -> None:
-    """T1-1: a company spanning currencies gets per-currency totals, never a single
+    """A company spanning currencies gets per-currency totals, never a single
     mixed 'balanced' total. Each currency balances independently."""
     company, key = _make_company_with_key(db_session)
     sg = _make_entity(db_session, company)  # SGD, SG-GST
@@ -291,7 +291,7 @@ def test_company_level_statements_are_per_currency(
         full_name="LUCNT US Inc",
         currency="USD",
         accounting_std="US-GAAP",
-        tax_regime="US-Sales-Tax",  # no self-assessed tax (T1-15)
+        tax_regime="US-Sales-Tax",  # no self-assessed tax
         timezone="America/Los_Angeles",
     )
     db_session.add(us)
@@ -343,7 +343,7 @@ def test_company_level_statements_are_per_currency(
     assert "total_debit" not in tb  # no bogus cross-currency scalar total
 
 
-# --- General ledger bounds (T3-2) -------------------------------------------
+# --- General ledger bounds -------------------------------------------
 
 
 def test_general_ledger_listing_omits_entries_but_reports_the_count(
@@ -352,8 +352,8 @@ def test_general_ledger_listing_omits_entries_but_reports_the_count(
     """The listing must not serialise every journal line.
 
     Journal lines run 2-5x transaction count, so returning them all was the one
-    unbounded *response* among the T3-2 endpoints. `entry_count` is what keeps an
-    empty `entries` from reading as "this account has no postings".
+    unbounded *response* among the bounded books endpoints. `entry_count` is what
+    keeps an empty `entries` from reading as "this account has no postings".
     """
     client, key = books_client
     gl = client.get("/books/gl", headers=_headers(key)).json()

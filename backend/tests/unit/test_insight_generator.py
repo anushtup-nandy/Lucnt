@@ -62,8 +62,8 @@ def _features(
 
 
 def _cost_unit(unit: str, avg: str, *, count: int = 2) -> CostUnit:
-    # count defaults to 2: a cost spike needs a repeated charge, not a one-off
-    # (T2-13). total_spent is avg * count to stay internally consistent.
+    # count defaults to 2: a cost spike needs a repeated charge, not a one-off.
+    # total_spent is avg * count to stay internally consistent.
     return CostUnit(
         unit=unit,
         dimension="project",
@@ -187,7 +187,7 @@ def test_derive_memories_full_agent() -> None:
 
 def test_derive_memories_cold_start_row_when_learning() -> None:
     # Has spend but no baseline yet -> a single "still learning" cold-start row so a
-    # new agent is not blank on the Memory page (T2-12).
+    # new agent is not blank on the Memory page.
     bare = FingerprintFeatures(
         enough_data=False,
         home_currency="USD",

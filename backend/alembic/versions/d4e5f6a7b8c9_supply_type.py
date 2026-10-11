@@ -1,4 +1,4 @@
-"""supply_type (service|goods) on authorizations + transactions (TE-4)
+"""supply_type (service|goods) on authorizations + transactions
 
 Revision ID: d4e5f6a7b8c9
 Revises: c3d4e5f6a7b8
@@ -6,7 +6,7 @@ Create Date: 2026-07-22 12:30:00.000000
 
 Import of goods (customs duty + IGST at the border) is a different mechanism from
 import of services (reverse charge). Nothing guarded a goods transaction from
-silently routing through the services RCM path (PRODUCTION_PLAN TE-4). A
+silently routing through the services RCM path. A
 ``supply_type`` on the spine (default ``"service"`` — agent spend is ~all
 services) lets the engine send a cross-border *goods* spend to a distinct customs
 path instead.

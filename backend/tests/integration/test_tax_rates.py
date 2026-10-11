@@ -1,4 +1,4 @@
-"""Tax-rate resolver tests against the migration-seeded tax_rates (T1-12).
+"""Tax-rate resolver tests against the migration-seeded tax_rates.
 
 Integration, not pure-unit: the resolver reads `tax_rates`, whose statutory rows
 (IN/SG/US) are seeded by migration `b1c2d3e4f5a6`, so they exist in the migrated
@@ -30,7 +30,7 @@ def test_us_rate_is_zero_not_missing(db_session: Session) -> None:
 
 
 def test_effective_to_closes_a_rate(db_session: Session) -> None:
-    """A closed rate (effective_to set) is not applied on/after its close date (TE-6).
+    """A closed rate (effective_to set) is not applied on/after its close date.
 
     Append-only discipline: a rate change closes the old row and inserts a new one;
     the resolver picks the one whose effective window contains the supply date.
@@ -66,7 +66,7 @@ def test_effective_to_closes_a_rate(db_session: Session) -> None:
 
 
 def test_singapore_gst_effective_dating(db_session: Session) -> None:
-    """SG GST 7%→8%→9% is picked by transaction date, never back-applied (T1-12)."""
+    """SG GST 7%→8%→9% is picked by transaction date, never back-applied."""
     assert resolve_rate(
         db_session, regime="SG-GST", on_date=date(2020, 6, 1)
     ) == Decimal("0.07")
@@ -98,7 +98,7 @@ def test_unknown_category_fails_closed(db_session: Session) -> None:
 
 
 def test_india_gst_slabs_resolve(db_session: Session) -> None:
-    """The India GST slabs seeded for T1-10 resolve to their statutory rates."""
+    """The India GST slabs seeded by migration resolve to their statutory rates."""
     assert resolve_rate(
         db_session, regime="IN-GST", category="gst_5", on_date=date(2026, 6, 1)
     ) == Decimal("0.05")

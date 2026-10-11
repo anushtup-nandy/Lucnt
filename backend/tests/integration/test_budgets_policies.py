@@ -107,7 +107,7 @@ def _spend(
     """Book a committed transaction this month so the derived budget window sees it.
 
     Budget spend is derived from the current-month ledger (`local_amount`), not the
-    stored `spent_ytd` counter (PRODUCTION_PLAN T2-3), so budget tests must seed real
+    stored `spent_ytd` counter, so budget tests must seed real
     transactions rather than set the counter.
     """
     db.add(
@@ -225,7 +225,7 @@ def test_workflow_rollup_sums_member_spend(
 def test_budget_spend_resets_at_month_boundary(
     client: TestClient, db_session: Session
 ) -> None:
-    """Prior-month spend does not count against the current-month budget (T2-3).
+    """Prior-month spend does not count against the current-month budget.
 
     The old `spent_ytd` counter never reset, so a $100/mo agent on a $1000 budget
     read "exhausted" by month 11. The derived window must exclude last month.
@@ -391,7 +391,7 @@ def test_created_policy_blocks_authorize_end_to_end(
     assert verdict["code"] == "merchant_blocked"
 
 
-# ------------------------------ F-10: reserved/available ---------------------
+# ------------------------------ Reserved/available ---------------------
 
 
 def _authorize(client: TestClient, key: str, amount: str) -> dict[str, object]:
@@ -414,7 +414,7 @@ def _authorize(client: TestClient, key: str, amount: str) -> dict[str, object]:
 def test_budget_reports_reserved_holds_and_available(
     client: TestClient, db_session: Session
 ) -> None:
-    """F-10: `check_budget()` must see what the authorize gate sees.
+    """`check_budget()` must see what the authorize gate sees.
 
     The gate subtracts outstanding holds; `remaining` never did. An agent
     self-regulating on the read saw headroom the gate would refuse — so the

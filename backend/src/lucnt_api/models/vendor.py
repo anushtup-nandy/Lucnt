@@ -1,15 +1,15 @@
-"""Vendor ORM model — the place-of-supply registry (PRODUCTION_PLAN T1-3/T1-9).
+"""Vendor ORM model — the place-of-supply registry.
 
 A company-scoped record of who an agent spends with. Its purpose is **place of
 supply**: the vendor's ``country``/``state``/``gst_registered_in`` decide whether a
 spend is an import (reverse charge → IGST) or a domestic supply, and for India
 whether domestic GST splits into CGST+SGST (intra-state) or IGST (inter-state).
-Deciding this from *currency* was wrong in both directions (T1-3); the registry
-is the correct signal.
+Deciding this from *currency* was wrong in both directions; the registry is the
+correct signal.
 
 Registration is tracked as ``gst_registered_in`` — the list of countries a vendor
 is GST-registered in — because the legal reverse-charge test is "is the vendor
-registered *in the buyer's country*", not registered anywhere (TE-1). A foreign
+registered *in the buyer's country*", not registered anywhere. A foreign
 vendor OIDAR-registered in India charges forward IGST (domestic treatment); a
 domestic vendor not registered in India is reverse charge under CGST s.9(4).
 
@@ -55,14 +55,14 @@ class Vendor(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     state: Mapped[str | None] = mapped_column(String(10), default=None)  # e.g. IN state
     gstin: Mapped[str | None] = mapped_column(String(20), default=None)
     # The countries this vendor is GST-registered in (ISO-3166 alpha-2). The legal
-    # reverse-charge test is registration *in the buyer's country* (TE-1), so this
+    # reverse-charge test is registration *in the buyer's country*, so this
     # is a list, not a bool: a foreign vendor OIDAR-registered in India charges
     # forward IGST, and a domestic vendor absent from this list is reverse charge
     # under CGST s.9(4). Empty for an auto-created/unenriched vendor.
     gst_registered_in: Mapped[list[str]] = mapped_column(
         ARRAY(String(2)), default=list, server_default="{}"
     )
-    # Withholding-tax documentation (TE-3) for India s.195 remittances to a foreign
+    # Withholding-tax documentation for India s.195 remittances to a foreign
     # vendor. A Tax Residency Certificate + Form 10F on file (and unexpired) let the
     # payer apply the lower DTAA treaty rate; absent them the higher domestic rate
     # applies. Collected at vendor onboarding so the rate is known before remittance.

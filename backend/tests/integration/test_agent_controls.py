@@ -1,4 +1,4 @@
-"""Agent / entity state controls at authorize (PRODUCTION_PLAN T0-9, T0-10).
+"""Agent / entity state controls at authorize.
 
 "Pause this agent" must actually stop spend — a paused/disabled/non-live agent,
 or an inactive entity, is blocked before the policy engine runs.

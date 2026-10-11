@@ -1,4 +1,4 @@
-"""FastAPI application entry point (backend/PLAN.md §1)."""
+"""FastAPI application entry point."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ logger = get_logger(__name__)
 
 
 def _init_sentry() -> None:
-    """Initialise Sentry when a DSN is configured; a no-op otherwise (T4-4)."""
+    """Initialise Sentry when a DSN is configured; a no-op otherwise."""
     if not settings.sentry_dsn:
         return
     try:
@@ -65,7 +65,7 @@ def _init_sentry() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Reconcile the worker-thread pool with the DB connection pool (T3-4).
+    """Reconcile the worker-thread pool with the DB connection pool.
 
     Every route here is a sync `def`, so FastAPI runs it on AnyIO's worker
     thread pool — 40 threads by default. Against a 20-connection pool that
@@ -76,7 +76,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     queue up to the ASGI layer, where waiting costs no thread and no
     connection.
 
-    Startup readiness (T4-12) runs here too, so a process that cannot reach its
+    Startup readiness runs here too, so a process that cannot reach its
     database — or that is running ahead of its migrations — fails now, loudly,
     instead of on the first request that touches a missing column.
     """
@@ -84,7 +84,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     anyio.to_thread.current_default_thread_limiter().total_tokens = (
         per_worker_connections
     )
-    # T4-1 gates the T3-4 pool sizing: the ceiling that matters is
+    # The deployment topology gates the pool sizing: the ceiling that matters is
     # workers × (pool_size + max_overflow) against Postgres `max_connections`
     # (100 by default). Logging the arithmetic makes an over-provisioned deploy
     # visible in a container's first log line rather than as connection
@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
     configure_logging()
     _init_sentry()
 
-    # T0-16: the interactive docs expose the entire financial API surface; serve
+    # The interactive docs expose the entire financial API surface; serve
     # them only in development, never on a deployed environment.
     docs_enabled = settings.environment == "development"
     app = FastAPI(
@@ -154,7 +154,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
-        """Log the traceback, return a body that leaks nothing (T4-4).
+        """Log the traceback, return a body that leaks nothing.
 
         Without this, an unhandled error reached the ASGI server as a bare
         traceback on stderr with no request id attached — the failures hardest
@@ -181,7 +181,7 @@ def create_app() -> FastAPI:
 
         A liveness probe that checks the database is a way to turn one database
         blip into every container being killed at once. `/health` is retained as
-        an alias so existing probes and `docs/DEMO.md` keep working.
+        an alias so existing probes keep working.
         """
         return {"status": "ok"}
 
@@ -189,7 +189,7 @@ def create_app() -> FastAPI:
     def health_ready(
         response: Response, db: Session = Depends(get_db)
     ) -> dict[str, Any]:
-        """Readiness: can this process actually serve? (T4-5).
+        """Readiness: can this process actually serve?
 
         The old single `/health` returned a static dict, so a load balancer
         happily kept routing to a backend whose Postgres was gone. This one takes
@@ -210,7 +210,7 @@ def create_app() -> FastAPI:
 
         @app.get("/metrics", include_in_schema=False)
         def prometheus_metrics() -> Response:
-            """Prometheus scrape endpoint (T4-4).
+            """Prometheus scrape endpoint.
 
             Unauthenticated by design and therefore denied at the edge — see the
             `location /metrics` block in `infra/nginx/nginx.conf`. It exposes

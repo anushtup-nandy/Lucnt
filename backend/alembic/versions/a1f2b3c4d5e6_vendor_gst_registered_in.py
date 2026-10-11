@@ -1,11 +1,11 @@
-"""vendors.gst_registered_in — registration-in-buyer-country as the RCM key (TE-1a)
+"""vendors.gst_registered_in — registration-in-buyer-country as the RCM key
 
 Revision ID: a1f2b3c4d5e6
 Revises: f5a6b7c8d9e0
 Create Date: 2026-07-22 09:30:00.000000
 
 The reverse-charge decision must key off *where the vendor is GST-registered*, not
-its home country and never its invoice currency (PRODUCTION_PLAN TE-1). The legal
+its home country and never its invoice currency. The legal
 test for India RCM is "is the vendor GST-registered in the buyer's country": a
 foreign vendor OIDAR-registered in India charges forward IGST (domestic
 treatment), while a domestic vendor not registered in India is reverse charge
@@ -44,7 +44,7 @@ def upgrade() -> None:
     )
     # A vendor previously flagged registered (charging forward GST) in its own
     # country becomes registered-in-[country]. Rows with no country cannot be
-    # placed and stay empty (they will route to the recon queue in TE-1b).
+    # placed and stay empty (they will route to the recon queue).
     op.execute(
         sa.text(
             "UPDATE vendors SET gst_registered_in = ARRAY[country] "

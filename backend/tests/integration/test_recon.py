@@ -3,7 +3,7 @@
 Transaction rows are inserted directly so the tests control `transaction_date`
 (the duplicate/subscription detectors are time-sensitive). The per-file
 company/agent/entity helpers mirror the other integration files (a conftest
-consolidation is a deferred cleanup — see logs/log_05070726.md).
+consolidation is a deferred cleanup).
 """
 
 from __future__ import annotations
@@ -286,14 +286,14 @@ def test_inbox_summary_and_ordering(client: TestClient, db_session: Session) -> 
 
     inbox = client.get("/recon", headers=_auth_headers(key)).json()
     assert inbox["open_count"] == 2
-    # Per-currency (T2-2): both are USD here, so one bucket summing 90 + 5.
+    # Per-currency: both are USD here, so one bucket summing 90 + 5.
     assert Decimal(inbox["total_at_stake"]["USD"]) == Decimal("95")
     # highest $ at stake first (within the currency)
     assert inbox["items"][0]["exception_type"] == "overcharge"
 
 
 def test_inbox_summary_is_per_currency(client: TestClient, db_session: Session) -> None:
-    """T2-2: '$ at stake' is bucketed per currency, never summed across them."""
+    """'$ at stake' is bucketed per currency, never summed across them."""
     company, key, agent, entity = _setup(db_session)
     # A USD duplicate ($5) and a JPY duplicate (¥1500) — different currencies.
     for currency, amount in [("USD", "5"), ("JPY", "1500")]:
@@ -318,7 +318,7 @@ def test_inbox_summary_is_per_currency(client: TestClient, db_session: Session) 
 def test_dismissed_subscription_not_reflagged_next_month(
     client: TestClient, db_session: Session
 ) -> None:
-    """T2-7: a dismissed recurring charge stays dismissed on a new month's txn.
+    """A dismissed recurring charge stays dismissed on a new month's txn.
 
     The dedup_key (recurring identity) suppresses re-flagging even though the
     latest transaction row — the one the subscription detector points at — differs.
@@ -403,7 +403,7 @@ def test_failed_delivery_is_idempotent(client: TestClient, db_session: Session) 
 def test_failed_delivery_rejects_stake_over_paid_amount(
     client: TestClient, db_session: Session
 ) -> None:
-    """T2-14: amount_at_stake cannot exceed the transaction's paid amount."""
+    """amount_at_stake cannot exceed the transaction's paid amount."""
     company, key, agent, entity = _setup(db_session)
     txn = _make_transaction(
         db_session, company, agent, entity, vendor="dataco", amount="50", when=_NOW
@@ -423,7 +423,7 @@ def test_failed_delivery_rejects_stake_over_paid_amount(
 def test_failed_delivery_rejects_negative_stake(
     client: TestClient, db_session: Session
 ) -> None:
-    """T2-14: a negative amount_at_stake is rejected at the schema (422)."""
+    """A negative amount_at_stake is rejected at the schema (422)."""
     company, key, agent, entity = _setup(db_session)
     txn = _make_transaction(
         db_session, company, agent, entity, vendor="dataco", amount="50", when=_NOW

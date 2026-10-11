@@ -1,4 +1,4 @@
-"""Unit tests for the pure India s.195 withholding engine (TE-3, no DB).
+"""Unit tests for the pure India s.195 withholding engine (no DB).
 
 Rates + threshold are injected (they live in config, provisional pending CA
 review); these tests state them explicitly.
@@ -99,7 +99,7 @@ def test_missing_docs_below_threshold_does_not_block() -> None:
 
 
 def test_valid_docs_above_threshold_not_blocked() -> None:
-    """Valid docs → no block even above the 15CB threshold (TE-3)."""
+    """Valid docs → no block even above the 15CB threshold."""
     t = _wh(
         functional_amount=Decimal("600000"),
         trc_on_file=True,

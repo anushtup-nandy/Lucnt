@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Upper bound on a settable monthly budget (T0-15): a sane business ceiling so a
+# Upper bound on a settable monthly budget: a sane business ceiling so a
 # fat-fingered or malicious PATCH can't set an effectively-infinite cap that lets
 # every spend through. Generous (100M per currency unit); raise if a real entity
 # needs more.
@@ -31,7 +31,7 @@ class AgentBudget(BaseModel):
     spent: Decimal
     spent_today: Decimal
     remaining: Decimal
-    # F-10: what the authorize gate will actually grant. `remaining` ignores
+    # What the authorize gate will actually grant. `remaining` ignores
     # outstanding holds; the gate does not — `reserved` is the live-hold total
     # measured with the gate's own predicate, and `available` (= remaining −
     # reserved, may go negative like `remaining`) is the number an agent should
@@ -61,7 +61,7 @@ class BudgetsResponse(BaseModel):
     """Response body for `GET /budgets` — per-agent + per-workflow rollups.
 
     `total` counts every agent matching the request's filters, not the length of
-    the returned `agents` page (T3-3). `workflows` is unpaginated and rolls up
+    the returned `agents` page. `workflows` is unpaginated and rolls up
     *all* member agents, so a rollup stays correct regardless of the page.
     """
 

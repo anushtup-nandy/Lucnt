@@ -80,9 +80,8 @@ def downgrade() -> None:
     op.drop_table('insights')
     op.drop_table('fingerprints')
     # Postgres does not drop an ENUM type when its table is dropped; do it
-    # explicitly so a re-upgrade doesn't fail with "type already exists"
-    # (recurring gap — see logs/log_04070726.md session 8). `fingerprints` has
-    # no enum column.
+    # explicitly so a re-upgrade doesn't fail with "type already exists".
+    # `fingerprints` has no enum column.
     bind = op.get_bind()
     for enum_name in ('insight_type', 'memory_type'):
         sa.Enum(name=enum_name).drop(bind, checkfirst=True)

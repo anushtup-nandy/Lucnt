@@ -1,4 +1,4 @@
-"""List-endpoint bounds and the batched spend aggregate (T3-3).
+"""List-endpoint bounds and the batched spend aggregate.
 
 `GET /budgets` and `GET /approvals` previously returned every matching row, and
 `/budgets` cost two spend queries *per agent* plus one lazy-load per workflow.
@@ -114,7 +114,7 @@ def _spend(
     when: datetime | None = None,
     reverses: uuid.UUID | None = None,
 ) -> Transaction:
-    """Book a committed transaction; budget spend derives from the ledger (T2-3)."""
+    """Book a committed transaction; budget spend derives from the ledger."""
     txn = Transaction(
         company_id=company.id,
         agent_id=agent.id,
@@ -292,7 +292,7 @@ def test_batched_spend_matches_per_agent_form(db_session: Session) -> None:
 
 
 def test_batched_spend_subtracts_reversals(db_session: Session) -> None:
-    """A refund frees budget (T1-16) — the signed sum is duplicated in the
+    """A refund frees budget — the signed sum is duplicated in the
     batched query, so it needs its own coverage."""
     company, _ = _company(db_session)
     entity = _entity(db_session, company)

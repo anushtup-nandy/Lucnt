@@ -1,4 +1,4 @@
-"""Workspace reads: legal entities and team members (frontend/PLAN.md §10.2).
+"""Workspace reads: legal entities and team members.
 
 Two small collections behind the Settings page, plus `GET /entities`, which the
 workspace switcher in the top bar needs on every page. Both are

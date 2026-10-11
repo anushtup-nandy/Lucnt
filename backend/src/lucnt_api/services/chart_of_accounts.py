@@ -19,11 +19,11 @@ from sqlalchemy.orm import Session
 from lucnt_api.models import Account, AccountCategory
 
 # Account codes referenced by the journal generator. Named so callers never
-# hard-code a magic string (CLAUDE.md §2.3: no magic numbers).
+# hard-code a magic string.
 WALLET_CODE = "1010"
 INPUT_TAX_CREDIT_CODE = "1400"
 GST_PAYABLE_CODE = "2200"
-# GST heads split by place of supply (T1-9). India intra-state books CGST+SGST,
+# GST heads split by place of supply. India intra-state books CGST+SGST,
 # inter-state/import books IGST; each head has its own ITC (asset) and payable
 # (liability) account so GSTR-3B can be produced. The unsplit "GST" head keeps the
 # legacy 1400/2200 accounts (SG, US, and the currency-fallback path).
@@ -33,10 +33,10 @@ IGST_ITC_CODE = "1430"
 CGST_PAYABLE_CODE = "2210"
 SGST_PAYABLE_CODE = "2220"
 IGST_PAYABLE_CODE = "2230"
-# The net GST owed to the government after a return-cycle settlement (T1-11): the
+# The net GST owed to the government after a return-cycle settlement: the
 # period's output GST less utilised input tax credit, cleared by a cash payment.
 GST_SETTLEMENT_PAYABLE_CODE = "2300"
-# US self-assessed use tax owed to a state (TE-2): a no-nexus B2B buyer accrues use
+# US self-assessed use tax owed to a state: a no-nexus B2B buyer accrues use
 # tax on a taxable-state purchase the vendor didn't charge. Never reclaimable (US
 # sales/use tax is a cost, not a VAT input credit), so it has a payable but no ITC.
 US_USE_TAX_PAYABLE_CODE = "2400"
@@ -53,11 +53,11 @@ GST_PAYABLE_BY_HEAD: dict[str, str] = {
     "CGST": CGST_PAYABLE_CODE,
     "SGST": SGST_PAYABLE_CODE,
     "IGST": IGST_PAYABLE_CODE,
-    # US self-assessed use tax (TE-2): a payable head with no ITC counterpart.
+    # US self-assessed use tax: a payable head with no ITC counterpart.
     "US_USE_TAX": US_USE_TAX_PAYABLE_CODE,
 }
-# Equity accounts. Contributed Capital receives wallet-funding entries (T1-18);
-# Retained Earnings is a real account (T1-17) that the balance sheet's
+# Equity accounts. Contributed Capital receives wallet-funding entries;
+# Retained Earnings is a real account that the balance sheet's
 # undistributed-P&L line references instead of a fabricated code.
 CONTRIBUTED_CAPITAL_CODE = "3000"
 RETAINED_EARNINGS_CODE = "3900"
@@ -67,7 +67,7 @@ EXPENSE_TRAVEL_CODE = "6030"
 EXPENSE_MARKETING_CODE = "6040"
 EXPENSE_GENERAL_CODE = "6090"
 
-# Caller-facing expense categories (T1-19) → account code. A caller may state the
+# Caller-facing expense categories → account code. A caller may state the
 # category explicitly (a fact about the purchase); otherwise the journal generator
 # infers it from vendor/model signals. An unknown category falls back to inference.
 CATEGORY_TO_ACCOUNT: dict[str, str] = {
@@ -137,7 +137,7 @@ def ensure_default_accounts(db: Session, company_id: uuid.UUID) -> dict[str, Acc
     capture). Flushes so newly created accounts have ids, but does not commit;
     the caller owns the transaction.
 
-    **Concurrency (T1-20).** Two first-ever captures can race to insert the same
+    **Concurrency.** Two first-ever captures can race to insert the same
     account code. Each insert runs in its own SAVEPOINT: if a concurrent capture
     won the `uq_accounts_company_code` unique constraint, the `IntegrityError`
     rolls back only that savepoint (not the whole capture transaction) and the

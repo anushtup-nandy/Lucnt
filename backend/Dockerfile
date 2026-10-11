@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# LUCNT backend — deployable image (T4-1).
+# LUCNT backend — deployable image.
 #
 # Before this existed there was no deployable artifact at all: "deployment" meant
 # a laptop running `uvicorn` against a compose Postgres with the password
@@ -9,11 +9,11 @@
 # production, and it declares its own health.
 #
 # PYTHON VERSION: pinned to 3.12 to match `requires-python`, the CI backend job
-# and the regenerated lockfile — bumped from 3.10 in one commit (F-23), exactly
+# and the regenerated lockfile — bumped from 3.10 in one commit, exactly
 # as the previous version of this comment demanded. The SDK keeps a 3.10 floor
 # (it is a customer-facing library); only this application moved.
 #
-# DIGEST PINNING (F-25): the digest below is the manifest-list digest, valid
+# DIGEST PINNING: the digest below is the manifest-list digest, valid
 # across architectures. Re-pin deliberately on upgrades with:
 #
 #     docker buildx imagetools inspect python:<tag>
@@ -49,7 +49,7 @@ WORKDIR /build
 COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock
 
-# T4-8: swap the binary psycopg2 wheel for a source build. `psycopg2-binary`
+# Swap the binary psycopg2 wheel for a source build. `psycopg2-binary`
 # statically bundles its own libssl/libcrypto, which `apt-get upgrade` cannot
 # patch — an OpenSSL CVE would then require upstream to cut a new wheel before
 # this image could be fixed. Building against the base image's libpq means a

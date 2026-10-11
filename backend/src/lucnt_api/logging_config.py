@@ -1,4 +1,4 @@
-"""Structured logging (T4-4).
+"""Structured logging.
 
 `structlog` was declared in `pyproject.toml` from the first commit and never
 imported: until now the backend emitted **no logs at all** beyond the one

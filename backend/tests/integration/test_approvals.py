@@ -1,4 +1,4 @@
-"""Approval queue (PRODUCTION_PLAN T0-11).
+"""Approval queue.
 
 review / human_hold verdicts used to be dead ends. Now they surface in a queue an
 approver can approve (budget re-checked) or reject; an approved hold is capturable.
@@ -161,7 +161,8 @@ def test_reject_blocks_capture(client: TestClient, db_session: Session) -> None:
 
 def test_approve_rechecks_budget(client: TestClient, db_session: Session) -> None:
     """Two $80 review holds on a $100 budget: the first approves, the second is
-    refused because approving it would bust the budget (T0-1 preserved at approve)."""
+    refused because approving it would bust the budget (reservation preserved at
+    approve)."""
     key = _seed(db_session, budget="100")
     first = _authorize_for_review(client, key, amount="80")
     second = _authorize_for_review(client, key, amount="80")

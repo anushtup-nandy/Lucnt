@@ -1,17 +1,17 @@
-"""Scale, uniqueness and pool guards (PRODUCTION_PLAN T3-1, T3-4, T3-5, T3-6).
+"""Scale, uniqueness and pool guards.
 
 Three classes of guard, none of which any prior test covered:
 
-* **T3-5/T3-6 — uniqueness at the DB.** A duplicate entity code makes every
+* **Uniqueness at the DB.** A duplicate entity code makes every
   ``authorize()`` for that entity raise ``MultipleResultsFound`` (a 500 that
   takes the spend path down); a duplicate ``transaction_hash`` lets a redelivered
   card webhook double-book a spend. Both must be rejected by the schema itself,
   for *any* writer, and both must stay scoped per-company.
-* **T3-1 — the hot-path indexes exist.** Asserted against ``pg_indexes`` so a
+* **The hot-path indexes exist.** Asserted against ``pg_indexes`` so a
   future migration (or a stale model ``__table_args__``) cannot silently drop the
   indexes that keep ``authorize()`` off a sequential scan. ``alembic check``
   catches model/DB drift; this catches the DB losing them outright.
-* **T3-4 — the pool is configured.** A bare ``create_engine()`` has no liveness
+* **The pool is configured.** A bare ``create_engine()`` has no liveness
   check and no server-side statement cap.
 """
 
@@ -93,7 +93,7 @@ def _agent(db_session: Session, company: Company, entity: Entity) -> Agent:
     return agent
 
 
-# --- T3-5: entities (company_id, code) is unique ---
+# --- Entities (company_id, code) is unique ---
 
 
 def test_db_rejects_duplicate_entity_code_in_one_company(db_session: Session) -> None:
@@ -112,7 +112,7 @@ def test_same_entity_code_allowed_across_companies(db_session: Session) -> None:
     assert first.company_id != second.company_id
 
 
-# --- T3-6: transactions (company_id, transaction_hash) is unique when set ---
+# --- Transactions (company_id, transaction_hash) is unique when set ---
 
 
 def test_db_rejects_duplicate_transaction_hash(db_session: Session) -> None:
@@ -146,7 +146,7 @@ def test_same_transaction_hash_allowed_across_companies(db_session: Session) -> 
     assert hashes[0] != hashes[1]
 
 
-# --- T3-1: the hot-path indexes are present in the live schema ---
+# --- The hot-path indexes are present in the live schema ---
 
 
 # The subset whose absence is a latency bug on the blocking money path, not just
@@ -182,7 +182,7 @@ def test_no_invalid_indexes(db_session: Session) -> None:
     assert invalid == 0
 
 
-# --- T3-4: the engine pool is explicitly configured ---
+# --- The engine pool is explicitly configured ---
 
 
 def test_engine_has_pre_ping_and_statement_timeout() -> None:

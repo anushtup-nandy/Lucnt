@@ -1,11 +1,10 @@
 """Authorizations router — the verdict list behind the Transactions chips (D5).
 
 `Transaction.status` has exactly one member, `completed`, so a captures-only
-list cannot show a blocked spend — the single best moment in `docs/DEMO.md`.
-Blocked, flagged and held spends are `authorizations` rows (`VerdictStatus`),
-which had no list endpoint until now.
+list cannot show a blocked spend. Blocked, flagged and held spends are
+`authorizations` rows (`VerdictStatus`), which had no list endpoint until now.
 
-**One chip, one endpoint, one status value** (`frontend/PLAN.md` §4). `status`
+**One chip, one endpoint, one status value**. `status`
 takes a single value rather than a comma list precisely so pagination stays
 correct: a client-side union over paginated pages silently reports "3 of 3"
 while page 2 holds four more.

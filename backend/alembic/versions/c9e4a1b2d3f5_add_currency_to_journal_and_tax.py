@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Stamp the functional (entity) currency on journal + tax rows (T1-1/T1-4).
+    """Stamp the functional (entity) currency on journal + tax rows.
 
     Added nullable, backfilled from each row's transaction's entity currency,
     then set NOT NULL — the safe pattern for a NOT NULL column on a populated

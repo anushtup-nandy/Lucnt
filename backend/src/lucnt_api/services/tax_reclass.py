@@ -1,4 +1,4 @@
-"""Backfill re-flagging when a vendor's place of supply changes (PRODUCTION_PLAN TE-1c).
+"""Backfill re-flagging when a vendor's place of supply changes.
 
 When a finance admin enriches or corrects a vendor's place of supply, spends
 already booked against that vendor may have been taxed under a treatment that no
@@ -10,11 +10,11 @@ same "tax needs review" bucket a capture-time gap uses) so a human decides wheth
 to post a correcting adjustment.
 
 Scope (MVP): compares the *regime* (`tax_type` — domestic GST vs reverse charge vs
-unclassified), the coarse legal fact that TE-1 is about. Finer divergences (the
+unclassified), the coarse legal fact at stake. Finer divergences (the
 CGST/SGST vs IGST head split, reclaimability) are out of scope here. The scan is
 bounded to the one enriched vendor's own transactions; it runs synchronously inside
 the admin's PATCH (acceptable for an admin action — a background job is a later
-optimisation, and there is no index on the vendor-name expression yet, T3-1).
+optimisation, and there is no index on the vendor-name expression yet).
 """
 
 from __future__ import annotations

@@ -24,7 +24,7 @@
           "rates": [
             { "input": "2.00", "output": "10.00", "until": "2026-08-31" }
           ],
-          "note": "Introductory rate through 2026-08-31, resolved server-side (F-2)."
+          "note": "Introductory rate through 2026-08-31, resolved server-side."
         },
         "claude-sonnet-4-6": { "input": "3.00", "output": "15.00" },
         "claude-sonnet-4-5": { "input": "3.00", "output": "15.00" },

@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add the caller-stated expense category (T1-19), nullable on both tables."""
+    """Add the caller-stated expense category, nullable on both tables."""
     op.add_column(
         "authorizations", sa.Column("category", sa.String(length=50), nullable=True)
     )

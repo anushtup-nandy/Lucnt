@@ -1,4 +1,4 @@
-"""Integration tests for manual journals + funding + the unmapped bucket (T1-18/T1-21).
+"""Integration tests for manual journals + funding + the unmapped bucket.
 
 Exercises the write path the ledger previously lacked: a funding/opening-balance
 entry (so the balance sheet isn't negative from day one), a balanced manual
@@ -110,7 +110,7 @@ def funded(
 def test_funding_makes_wallet_positive_and_balances(
     funded: tuple[TestClient, str, Company, Entity],
 ) -> None:
-    """Dr Wallet / Cr Contributed Capital — positive cash & equity, balanced (T1-18)."""
+    """Dr Wallet / Cr Contributed Capital — positive cash & equity, balanced."""
     client, key, _, _ = funded
     resp = client.post(
         "/books/funding",
@@ -199,7 +199,7 @@ def test_manual_journal_rejects_unknown_account(
 def test_manual_journal_line_must_be_one_sided(
     funded: tuple[TestClient, str, Company, Entity],
 ) -> None:
-    """A line with both debit and credit non-zero is rejected by validation (T0-7)."""
+    """A line with both debit and credit non-zero is rejected by validation."""
     client, key, _, _ = funded
     resp = client.post(
         "/books/journal",
@@ -217,7 +217,7 @@ def test_manual_journal_line_must_be_one_sided(
 
 
 def test_write_endpoints_require_admin(client: TestClient, db_session: Session) -> None:
-    """A runtime-scoped key cannot post manual journals or funding (T0-12)."""
+    """A runtime-scoped key cannot post manual journals or funding."""
     company = _make_company(db_session)
     _make_entity(db_session, company)
     runtime = _make_key(db_session, company, scope=ApiKeyScope.RUNTIME)
@@ -243,7 +243,7 @@ def test_unmapped_account_is_loud_not_dropped(
     funded: tuple[TestClient, str, Company, Entity],
     db_session: Session,
 ) -> None:
-    """A posting to a code with no CoA account lands in an `unmapped` bucket (T1-21)."""
+    """A posting to a code with no CoA account lands in an `unmapped` bucket."""
     client, key, company, entity = funded
     # Provision the CoA (so 1010 maps) via a funding call.
     client.post(
@@ -312,7 +312,7 @@ def test_funding_writes_an_audit_row(
 def test_opening_balances_via_manual_journal(
     funded: tuple[TestClient, str, Company, Entity],
 ) -> None:
-    """Take-on/opening balances via a manual journal: BS balances, +equity (T1-6)."""
+    """Take-on/opening balances via a manual journal: BS balances, +equity."""
     client, key, _, _ = funded
     resp = client.post(
         "/books/journal",
@@ -338,7 +338,7 @@ def test_opening_balances_via_manual_journal(
 def test_manual_journal_periodises_by_posting_date(
     funded: tuple[TestClient, str, Company, Entity],
 ) -> None:
-    """A manual journal's posting_date scopes it into the right period (T1-17)."""
+    """A manual journal's posting_date scopes it into the right period."""
     client, key, _, _ = funded
     client.post(
         "/books/journal",

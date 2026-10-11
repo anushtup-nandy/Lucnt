@@ -1,4 +1,4 @@
-"""Dashboard auth: login, refresh, logout, me (frontend/PLAN.md §10.1).
+"""Dashboard auth: login, refresh, logout, me.
 
 Hand-rolled JWT with the `resolve_perms()` seam kept (D1). WorkOS/Clerk is a GA
 decision, not a demo dependency — and it would still require this seam.
@@ -13,7 +13,7 @@ decision, not a demo dependency — and it would still require this seam.
   set outside development, where the dashboard is served over plain HTTP.
 
 Login is rate-limited on the caller's IP through the existing auth-failure
-bucket — the same one that guards API-key brute force (T3-7) — because a login
+bucket — the same one that guards API-key brute force — because a login
 endpoint is the cheapest password-guessing oracle in the product.
 """
 

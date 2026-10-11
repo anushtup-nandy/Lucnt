@@ -51,13 +51,13 @@ class Workflow(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "workflows"
     __table_args__ = (
-        # Workflow budget rollups scope by company (T3-1) — `routers/budgets.py`.
+        # Workflow budget rollups scope by company — `routers/budgets.py`.
         Index("ix_workflows_company_id", "company_id"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(255))
-    # NUMERIC, never FLOAT (sdk/PLAN.md: Decimal not float).
+    # NUMERIC, never FLOAT (Decimal, not float).
     budget: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
     start_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

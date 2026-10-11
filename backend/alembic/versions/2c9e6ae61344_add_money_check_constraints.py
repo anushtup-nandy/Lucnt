@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add DB-level money integrity CHECKs (PRODUCTION_PLAN T0-7).
+    """Add DB-level money integrity CHECKs.
 
     The last line of defence for the ledger: even a writer that bypasses the
     Pydantic schema (a future card rail, a backfill, a manual SQL) cannot post a

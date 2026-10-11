@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Support refunds/reversals as a linked contra transaction (T1-16).
+    """Support refunds/reversals as a linked contra transaction.
 
     A reversal is a real transaction (positive amount, contra journal) pointing at
     the original via ``reverses_transaction_id``; the original is flagged

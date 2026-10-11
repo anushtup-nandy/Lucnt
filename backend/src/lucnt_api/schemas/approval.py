@@ -1,4 +1,4 @@
-"""Schemas for the approval queue (M6 approver persona, PRODUCTION_PLAN T0-11)."""
+"""Schemas for the approval queue (M6 approver persona)."""
 
 from __future__ import annotations
 

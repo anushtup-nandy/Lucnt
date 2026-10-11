@@ -1,4 +1,4 @@
-"""Request-input bounds (T3-8).
+"""Request-input bounds.
 
 The failure these prevent is specific: a schema looser than the column it feeds
 lets oversized input pass validation and blow up in Postgres as a 500 `DataError`.
@@ -105,14 +105,14 @@ def test_spend_request_rejects_empty_required_text(field: str) -> None:
 
 
 def test_spend_request_still_normalises_currency() -> None:
-    """Regression guard: adding bounds must not disturb the T1-5 currency rules."""
+    """Regression guard: adding bounds must not disturb the currency rules."""
     assert SpendRequest(**_spend(currency="sgd")).currency == "SGD"
     with pytest.raises(ValidationError):
         SpendRequest(**_spend(currency="SGDD"))
 
 
 def test_capture_request_bounds_invoice_url() -> None:
-    """Bounded at URL_MAX, mirroring the column it lands in since F-12."""
+    """Bounded at URL_MAX, mirroring the column it lands in."""
     with pytest.raises(ValidationError):
         CaptureRequest(
             authorization_id="0" * 8 + "-0000-0000-0000-" + "0" * 12,  # type: ignore[arg-type]

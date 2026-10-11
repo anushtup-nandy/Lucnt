@@ -1,4 +1,4 @@
-"""vendors: TRC / Form 10F withholding-doc fields (TE-3 onboarding)
+"""vendors: TRC / Form 10F withholding-doc fields (onboarding)
 
 Revision ID: f6a7b8c9d0e1
 Revises: e5f6a7b8c9d0
@@ -6,7 +6,7 @@ Create Date: 2026-07-22 14:30:00.000000
 
 India s.195 withholding on a remittance to a foreign vendor is charged at the DTAA
 treaty rate only when a Tax Residency Certificate + Form 10F are on file (and
-unexpired); otherwise the higher domestic rate applies (PRODUCTION_PLAN TE-3).
+unexpired); otherwise the higher domestic rate applies.
 Collecting these at vendor onboarding (build-order item 3, sequenced before the
 withholding engine) means the rate is known before the remittance — collecting
 after the fact is far more friction.

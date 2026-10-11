@@ -1,4 +1,4 @@
-"""Self-invoice generator (Module 3 / PRODUCTION_PLAN T1-7).
+"""Self-invoice generator (Module 3).
 
 Builds the reverse-charge self-invoice record for an RCM transaction. Pure: it
 returns an unsaved `SelfInvoice`; the caller adds it to the session. Called only

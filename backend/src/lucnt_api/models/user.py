@@ -1,4 +1,4 @@
-"""User ORM model, including the role enum used for RBAC (see CLAUDE.local.md)."""
+"""User ORM model, including the role enum used for RBAC."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from lucnt_api.database import Base, CreatedAtMixin, UUIDPrimaryKeyMixin
 class UserRole(enum.StrEnum):
     """Presets-now RBAC role, resolved through a single `resolve_perms(user)` seam.
 
-    See `CLAUDE.local.md` "Design decision on RBAC": presets now, full
-    table-backed permissions later, without a schema rewrite.
+    Design decision: presets now, full table-backed permissions later, without a
+    schema rewrite.
     """
 
     ENGINEER = "engineer"

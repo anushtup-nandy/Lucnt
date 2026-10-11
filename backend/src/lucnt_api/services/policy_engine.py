@@ -1,4 +1,4 @@
-"""Policy engine (backend/PLAN.md §5, Module 5) — the verdict at `authorize`.
+"""Policy engine (Module 5) — the verdict at `authorize`.
 
 This is what makes LUCNT "infrastructure, not a passive ledger": it runs
 *before* money moves and can **block** a spend. Given the layered policies for a
@@ -6,7 +6,7 @@ company/agent and a `SpendContext`, it returns a `Decision`
 (status ∈ {approved, blocked, review, human_hold} + a machine-readable `code` +
 reason) using **most-restrictive-wins**.
 
-Layering follows `CLAUDE.local.md` (M5): a company-wide monthly budget invariant
+Layering (M5): a company-wide monthly budget invariant
 is *always* enforced (never fail-open on budget), then every active policy —
 company-scoped first, agent-scoped on top — contributes a candidate verdict.
 
@@ -62,7 +62,7 @@ class BudgetCapConfig(BaseModel):
 class MerchantListConfig(BaseModel):
     """Allow- or block-list of vendors (matched case-insensitively).
 
-    The list is bounded (T3-8) on two grounds: it is hand-authored configuration,
+    The list is bounded on two grounds: it is hand-authored configuration,
     and `evaluate()` scans it linearly on every `authorize()` — so an unbounded
     list is latency on the blocking money path, not just an oversized payload.
     Each entry mirrors the `vendor` column it is compared against.

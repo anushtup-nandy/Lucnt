@@ -1,3 +1,3 @@
-"""Pydantic request/response schemas, one module per domain (backend/PLAN.md §1)."""
+"""Pydantic request/response schemas, one module per domain."""
 
 from __future__ import annotations

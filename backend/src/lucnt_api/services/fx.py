@@ -5,10 +5,10 @@ the USD value of one unit of a currency on/after a date. The rate for any pair
 is cross-computed via USD and taken at the latest ``effective_from <=`` the
 transaction date.
 
-**Fail-closed by design** (PRODUCTION_PLAN T1-1 / T1-5): an unknown currency
-raises `FxRateUnavailable` rather than silently booking at ``1.0``. A wrong rate
-corrupts the ledger, the tax computation, and the budget invariant invisibly, so
-a missing rate must stop the spend, not guess.
+**Fail-closed by design**: an unknown currency raises `FxRateUnavailable` rather
+than silently booking at ``1.0``. A wrong rate corrupts the ledger, the tax
+computation, and the budget invariant invisibly, so a missing rate must stop the
+spend, not guess.
 
 All money math is `Decimal`.
 """

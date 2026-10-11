@@ -59,11 +59,11 @@ def test_duplicate_within_window_flags_the_later_charge() -> None:
     assert hit.exception_type == ReconExceptionType.DUPLICATE
     assert hit.amount_at_stake == Decimal("10")
     assert hit.evidence["original_transaction_id"] == str(first.id)
-    assert hit.evidence["window_minutes"] == 5  # int, not a float ratio (T2-16)
+    assert hit.evidence["window_minutes"] == 5  # int, not a float ratio
 
 
 def test_duplicate_outside_window_is_not_flagged() -> None:
-    """Identical charges more than 5 min apart are not duplicates (T2-5)."""
+    """Identical charges more than 5 min apart are not duplicates."""
     hits = detect_duplicates(
         [_txn(when=_BASE), _txn(when=_BASE + timedelta(minutes=6))]
     )
@@ -71,7 +71,7 @@ def test_duplicate_outside_window_is_not_flagged() -> None:
 
 
 def test_duplicate_at_exact_window_boundary_not_flagged() -> None:
-    """A gap of *exactly* the window is a cadence, not a double-charge (T2-5).
+    """A gap of *exactly* the window is a cadence, not a double-charge.
 
     Guards the regression where clockwork billing at a fixed period (== window)
     was flagged as a duplicate every cycle.
@@ -128,7 +128,7 @@ def test_overcharge_needs_minimum_samples() -> None:
 
 
 def test_overcharge_requires_baseline_excluding_candidate() -> None:
-    """Leave-one-out (T2-13): a 3-charge group has only a 2-charge baseline per
+    """Leave-one-out: a 3-charge group has only a 2-charge baseline per
     candidate — below min_samples — so the outlier is not flagged; the naive
     median-of-all would have flagged it."""
     txns = [_txn(amount="10"), _txn(amount="10"), _txn(amount="100")]
@@ -136,7 +136,7 @@ def test_overcharge_requires_baseline_excluding_candidate() -> None:
 
 
 def test_overcharge_does_not_mix_currencies() -> None:
-    """T2-1: a lone foreign-currency charge is not judged against a USD baseline.
+    """A lone foreign-currency charge is not judged against a USD baseline.
 
     A ¥1500 charge among three $10 charges lives in its own (agent, vendor, JPY)
     group of one — no baseline — so it is never flagged as a ~$1489 overcharge.
@@ -195,7 +195,7 @@ def test_unused_subscription_ignores_non_monthly_cadence() -> None:
 
 
 def test_unused_subscription_requires_consecutive_monthly_run() -> None:
-    """T2-16: scattered monthly gaps among irregular ones are not a subscription.
+    """Scattered monthly gaps among irregular ones are not a subscription.
 
     Days 0, 30, 35, 65 → gaps [30, 5, 30]: two monthly gaps but no consecutive run
     of two, so nothing is flagged.
@@ -205,7 +205,7 @@ def test_unused_subscription_requires_consecutive_monthly_run() -> None:
 
 
 def test_unused_subscription_rounds_gaps_not_truncates() -> None:
-    """T2-16: a 24.6-day gap rounds to 25 (in the monthly window), not 24 (out).
+    """A 24.6-day gap rounds to 25 (in the monthly window), not 24 (out).
 
     Truncating `.days` would silently miss a genuine ~monthly subscription.
     """

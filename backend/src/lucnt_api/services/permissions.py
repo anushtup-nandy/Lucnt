@@ -1,13 +1,13 @@
-"""The one RBAC seam: `resolve_perms(user) -> Perms` (frontend/PLAN.md §10.3).
+"""The one RBAC seam: `resolve_perms(user) -> Perms`.
 
-`CLAUDE.local.md` "presets now, custom later": `users.role` is a typed enum today
+"Presets now, custom later": `users.role` is a typed enum today
 and permissions resolve through this single function, so swapping in
 table-backed RBAC later is a change to one module rather than to every router.
 
 **No scattered `if role == ...` checks anywhere else.** If you find yourself
 writing one, the answer belongs in `_ROLE_TABLE` below.
 
-Two mechanics are non-negotiable (`CLAUDE.local.md` §Step 4):
+Two mechanics are non-negotiable:
 
 1. **Nav is data.** The frontend renders `perms.nav`; it never hardcodes a
    sidebar. The same tuple is the server-side route gate (`require_nav`), so the
@@ -15,8 +15,8 @@ Two mechanics are non-negotiable (`CLAUDE.local.md` §Step 4):
    drift apart.
 2. **Scope is enforced in the query.** `perms.agent_scope == "owned"` filters
    `agents.owner_user_id` in SQL (`scope_agents`). Hiding a nav item without
-   scoping the query is a security hole, not a UI decision — F-5 closes on the
-   cross-owner leak test, not on a hidden link.
+   scoping the query is a security hole, not a UI decision — the guarantee is the
+   cross-owner leak test, not a hidden link.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class Perms:
 
 # role -> (nav keys in display order, landing path, agent scope, write flags)
 #
-# Personas per `CLAUDE.local.md` §Step 4. `cfo` is the mockup's only persona
+# Personas. `cfo` is the mockup's only persona
 # ("Arvind Sharma, Finance, admin") and therefore the only one that sees all 12.
 _ROLE_TABLE: dict[UserRole, dict[str, Any]] = {
     UserRole.ENGINEER: {

@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add authorization idempotency (PRODUCTION_PLAN T0-6).
+    """Add authorization idempotency.
 
     A client-supplied ``idempotency_key`` lets a retried ``authorize`` (e.g. a
     timed-out ``spend()``) return the original hold instead of minting a fresh

@@ -4,7 +4,7 @@ Spend is derived from the ledger for the **current month** in the entity's local
 timezone and functional currency (`services/spend_window.py`), so the rollups reset
 at the period boundary and match the invariant `authorize()` enforces — never the
 never-reset `agents.spent_ytd` counter, which mis-reads inception-to-date spend
-against a *monthly* budget (PRODUCTION_PLAN T2-3). Workflow spend sums its member
+against a *monthly* budget. Workflow spend sums its member
 agents' current-month spend.
 """
 
@@ -81,7 +81,7 @@ def _agent_budget(
 ) -> AgentBudget:
     """Build the budget view for a single agent from its current-month spend.
 
-    `reserved`/`available` mirror the authorize gate's arithmetic (F-10): the
+    `reserved`/`available` mirror the authorize gate's arithmetic: the
     gate subtracts live holds from headroom, so the read reports them too —
     otherwise an agent self-regulating on this read sees room the gate refuses.
     """
@@ -148,7 +148,7 @@ def get_budgets(
             select(Workflow)
             .where(Workflow.company_id == company.id)
             # Eager-load members: the rollup below reads `workflow.agents` for
-            # every workflow, which lazy-loading turns into a query per row (T3-3).
+            # every workflow, which lazy-loading turns into a query per row.
             .options(selectinload(Workflow.agents))
             .order_by(Workflow.name)
         )
@@ -162,11 +162,11 @@ def get_budgets(
     )
 
     # Current-month committed spend for the whole company in one aggregate per
-    # entity, entity-local period + functional currency (T2-3). Batched because
-    # the per-agent form cost two queries each (T3-3), and because the workflow
+    # entity, entity-local period + functional currency. Batched because
+    # the per-agent form cost two queries each, and because the workflow
     # rollups below need members that the current page may not contain.
     month_spend = company_period_committed_spend(db, company.id, entities)
-    # Live holds per agent, measured with the gate's own predicate (F-10).
+    # Live holds per agent, measured with the gate's own predicate.
     reserved = company_reserved_spend(db, company.id)
 
     workflow_rollups: list[WorkflowBudget] = []

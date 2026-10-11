@@ -13,7 +13,7 @@ from uuid6 import uuid7
 
 from lucnt_api.config import settings
 
-# Explicitly configured pool + timeouts (T3-4). Every value is sourced from
+# Explicitly configured pool + timeouts. Every value is sourced from
 # Settings, never hardcoded here — see `config.py` for the sizing rationale.
 #
 # `pool_pre_ping` costs one cheap round-trip per checkout and removes the entire
@@ -42,13 +42,13 @@ class Base(DeclarativeBase):
 
 
 class UUIDPrimaryKeyMixin:
-    """UUIDv7 primary key — sortable by creation time (backend/PLAN.md §3)."""
+    """UUIDv7 primary key — sortable by creation time."""
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
 
 
 class CreatedAtMixin:
-    """`created_at` audit column, present on every table (backend/PLAN.md §3)."""
+    """`created_at` audit column, present on every table."""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

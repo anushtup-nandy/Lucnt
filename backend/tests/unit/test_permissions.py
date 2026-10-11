@@ -1,7 +1,6 @@
 """`resolve_perms` per role — the whole persona model rests on this one function.
 
-`frontend/PLAN.md` §13 lists it first in "where the tests go", because every
-nav item, every landing page and every write gate is derived from it. A wrong
+Every nav item, every landing page and every write gate is derived from it. A wrong
 row in `_ROLE_TABLE` is a page a role should not see, or a write it should not
 be able to make.
 """
@@ -48,7 +47,7 @@ def test_the_cfo_sees_everything() -> None:
 
 
 def test_the_auditor_can_write_nothing() -> None:
-    """`frontend/PLAN.md` §10.3: every write path 403s for auditor, server-side."""
+    """Every write path 403s for auditor, server-side."""
     perms = resolve_perms(_user(UserRole.AUDITOR))
     assert not perms.can_write_budgets
     assert not perms.can_write_policies

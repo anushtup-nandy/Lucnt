@@ -1,4 +1,4 @@
-"""Vendor registry resolution (PRODUCTION_PLAN T1-3/T1-9).
+"""Vendor registry resolution.
 
 `resolve_or_create_vendor` is the get-or-create the capture path uses to attach a
 place-of-supply record to every spend. A new vendor is created **unregistered**
@@ -44,7 +44,7 @@ def resolve_or_create_vendor(db: Session, company_id: uuid.UUID, name: str) -> V
         return existing
 
     # Unenriched: no country and registered nowhere (gst_registered_in defaults to
-    # []). The tax engine routes such a vendor conservatively and flags it (TE-1b).
+    # []). The tax engine routes such a vendor conservatively and flags it.
     vendor = Vendor(
         company_id=company_id,
         name=name,

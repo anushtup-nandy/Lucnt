@@ -1,4 +1,4 @@
-"""ApiKey ORM model — SDK auth, resolves a request to a company (PLAN.md §3).
+"""ApiKey ORM model — SDK auth, resolves a request to a company.
 
 `key_hash` is SHA-256 of the full secret, not bcrypt: an API key is a
 high-entropy generated secret (not a low-entropy human password), so it needs
@@ -25,7 +25,7 @@ class ApiKeyMode(enum.StrEnum):
 
 
 class ApiKeyScope(enum.StrEnum):
-    """What a key may do — separation of duties (PRODUCTION_PLAN T0-12).
+    """What a key may do — separation of duties.
 
     `runtime` keys drive the money path (authorize/capture) and reads only; they
     are the credential an agent holds and must NOT be able to raise their own

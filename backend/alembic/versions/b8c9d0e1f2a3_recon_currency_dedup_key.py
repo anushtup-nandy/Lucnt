@@ -1,17 +1,17 @@
-"""recon exceptions: currency + dedup_key (Tier 2 recovery correctness)
+"""recon exceptions: currency + dedup_key (recovery correctness)
 
 Revision ID: b8c9d0e1f2a3
 Revises: a7b8c9d0e1f2
 Create Date: 2026-07-23 22:30:00.000000
 
-Two columns on `reconciliation_exceptions` for Tier 2 recovery correctness:
+Two columns on `reconciliation_exceptions` for recovery correctness:
 
 - `currency` — the currency of `amount_at_stake` (the transaction's paid currency),
   so the inbox "$ at stake" header aggregates *per currency* instead of summing
-  ₹ + $ + ¥ into a meaningless total (PRODUCTION_PLAN T2-2).
+  ₹ + $ + ¥ into a meaningless total.
 - `dedup_key` — a stable recurring-identity key (type:agent:vendor:amount:currency)
   for the ledger-detector types, so a *dismissed* recurring exception (e.g. a
-  subscription) is not re-flagged next month on a new transaction row (T2-7). NULL
+  subscription) is not re-flagged next month on a new transaction row. NULL
   for the per-transaction types (failed_delivery, tax_unclassified).
 
 Both are nullable; existing rows are back-filled from the joined transaction. The

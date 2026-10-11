@@ -2,7 +2,7 @@
 
 Unblocks `sdk/examples/example_agent.py` end-to-end, which needs `agent=ops` /
 `entity=sg` and `agent=research` / `entity=in` to exist. Agent identity/roster
-matches `docs/lucnt-v9.html`'s AGENTS array; `spent_ytd`/`spent_today` are
+matches the dashboard mockup's AGENTS array; `spent_ytd`/`spent_today` are
 seeded at 0 rather than copied from the mockup, whose numbers are a demo
 snapshot (e.g. "research" shown budget-exhausted) rather than a sane starting
 state for a fresh install. Idempotent on company/entities/agents (matched by
@@ -185,7 +185,7 @@ _AGENTS = [
 
 
 # (name, country, gst_registered_in) — the vendors `example_agent.py` spends to,
-# enriched so place of supply (not currency) decides tax (TE-1). Names match the
+# enriched so place of supply (not currency) decides tax. Names match the
 # example's vendor strings exactly (normalized lower/trim) so the capture path's
 # resolve-or-create finds these rows instead of auto-creating unenriched ones —
 # without this the demo's imported spends classify UNCLASSIFIED and its reverse-
@@ -229,11 +229,11 @@ def _get_or_create_entities(db: Session, company: Company) -> dict[str, Entity]:
                 currency=currency,
                 accounting_std=std,
                 tax_regime=regime,
-                # Place of supply of the recipient (TE-1): the entity's country is
+                # Place of supply of the recipient: the entity's country is
                 # its 2-letter code upper-cased (sg->SG, in->IN, us->US). Without it
                 # every spend classifies UNCLASSIFIED — tax can't be decided.
                 country=code.upper(),
-                # US buyer state for sales/use-tax lookup (TE-2). Delaware has no
+                # US buyer state for sales/use-tax lookup. Delaware has no
                 # state sales tax, so a US spend books cleanly (no use-tax accrual).
                 us_state="DE" if code == "us" else None,
                 timezone=tz,
@@ -273,7 +273,7 @@ def _get_or_create_agents(
 
 
 # --- Dashboard personas (P7.0) ---------------------------------------------
-# One user per role in `UserRole`, so the persona switch in `docs/DEMO.md` demos
+# One user per role in `UserRole`, so the dashboard persona switch demos
 # against real server-side scoping rather than a UI toggle. `owner` names the
 # agent slugs assigned to that user's `agents.owner_user_id` — all seven were
 # NULL before this, which made `agent_scope="owned"` untestable.
@@ -326,7 +326,7 @@ def _get_or_create_users(db: Session, company: Company) -> list[tuple[str, str]]
 
 
 def _get_or_create_vendors(db: Session, company: Company) -> None:
-    """Seed the demo vendors with their place of supply (TE-1)."""
+    """Seed the demo vendors with their place of supply."""
     for name, country, registered in _VENDORS:
         normalized = normalize_vendor_name(name)
         existing = db.execute(

@@ -42,7 +42,7 @@ class ReconListResponse(BaseModel):
     summarize all *active* (open + recovering) exceptions for the company,
     independent of the list filters — the "$ at stake" headline. `total_at_stake`
     is a **per-currency** map (currency -> sum), never a meaningless cross-currency
-    total (PRODUCTION_PLAN T2-2).
+    total.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -59,7 +59,7 @@ class ReconResolveRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     action: Literal["resolve", "dismiss"]
-    # Bounded (T3-8): `fix_notes` lands in a TEXT column, so nothing downstream
+    # Bounded: `fix_notes` lands in a TEXT column, so nothing downstream
     # rejects an oversized note — the cap is what stops one resolve inflating
     # storage and the audit record.
     fix_notes: str | None = Field(default=None, max_length=NOTES_MAX)
@@ -75,7 +75,7 @@ class FailedDeliveryRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     transaction_id: uuid.UUID
-    # Bounded free text (T2-14): an unbounded reason is an abuse/DoS vector.
+    # Bounded free text: an unbounded reason is an abuse/DoS vector.
     reason: str = Field(min_length=1, max_length=500)
     # Non-negative; the router additionally caps it at the transaction's amount.
     amount_at_stake: Decimal | None = Field(default=None, ge=0)

@@ -4,7 +4,7 @@ Revision ID: f2a3b4c5d6e7
 Revises: e1f2a3b4c5d6
 Create Date: 2026-07-28 12:00:00.000000
 
-T5-4. An approved-but-uncaptured hold reserves an agent's budget indefinitely
+An approved-but-uncaptured hold reserves an agent's budget indefinitely
 (`services/spend_window.py::reserved_spend`), so a vendor error after
 `authorize()` — or a crash between authorize and capture — silently and
 permanently shrinks what that agent may spend. Two independent releases:

@@ -1,4 +1,4 @@
-"""Prometheus instrumentation (T4-4).
+"""Prometheus instrumentation.
 
 Deliberately small. Three series answer the questions an on-call engineer
 actually asks about this system — is the money path up, is it slow, and what is
@@ -60,7 +60,7 @@ authorize_verdicts_total = Counter(
     ("verdict",),
 )
 
-# F-7: the rate limiter fails open on a Redis outage — a defensible choice, but
+# The rate limiter fails open on a Redis outage — a defensible choice, but
 # a silent one until this counter existed. Any increase means brute-force
 # protection is OFF and must page (alert rule: infra/prometheus/alerts.yml).
 rate_limiter_fail_open_total = Counter(

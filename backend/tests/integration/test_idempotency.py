@@ -1,4 +1,4 @@
-"""Idempotent authorize + capture (PRODUCTION_PLAN T0-6).
+"""Idempotent authorize + capture.
 
 A timed-out `spend()` that actually committed server-side must not double-book
 when retried. The client sends the same `Idempotency-Key`; the server returns the

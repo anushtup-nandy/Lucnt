@@ -24,7 +24,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# India GST rate slabs (T1-10) so a caller can state a 0/5/12/28% supply instead of
+# India GST rate slabs so a caller can state a 0/5/12/28% supply instead of
 # always paying the 18% "standard" rate the compile-time constant assumed.
 _IN_SLABS: tuple[tuple[str, str], ...] = (
     ("gst_0", "0.00"),

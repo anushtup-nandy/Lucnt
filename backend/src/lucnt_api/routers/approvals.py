@@ -1,6 +1,6 @@
 """Approval queue (M6 approver persona) — makes review/human_hold verdicts real.
 
-PRODUCTION_PLAN T0-11: the policy engine can return `review`/`human_hold`, but
+The policy engine can return `review`/`human_hold`, but
 until now nothing could act on them — no endpoint listed them and `capture`
 rejected anything not `approved`, so two of four verdict types were dead ends.
 This router lists pending holds and lets an approver approve (budget re-checked)
@@ -78,7 +78,7 @@ def list_approvals(
 ) -> ApprovalListResponse:
     """List holds awaiting approval (review + human_hold) for the current company.
 
-    Paginated (T3-3): the queue grows with how long holds go unattended, which is
+    Paginated: the queue grows with how long holds go unattended, which is
     exactly the situation in which an unbounded response is least welcome.
     """
     stmt = select(Authorization).where(
@@ -110,7 +110,7 @@ def approve(
     """Approve a pending hold — after a budget re-check — so it can be captured."""
     authorization = _resolve_pending(db, company, approval_id)
 
-    # Lock the agent and re-check the budget atomically (T0-1): approving several
+    # Lock the agent and re-check the budget atomically: approving several
     # pending holds must not collectively bust the budget the engine deferred on.
     agent = db.execute(
         select(Agent).where(Agent.id == authorization.agent_id).with_for_update()
@@ -122,7 +122,7 @@ def approve(
             "authorization references a missing entity",
         )
     month_start, _ = period_starts(now_in_entity_tz(entity))
-    # Value this hold in the entity's functional currency for the re-check (T1-2);
+    # Value this hold in the entity's functional currency for the re-check;
     # fall back to the paid amount only for a legacy hold with no FX snapshot.
     hold_functional = authorization.local_amount or authorization.amount
     projected = (

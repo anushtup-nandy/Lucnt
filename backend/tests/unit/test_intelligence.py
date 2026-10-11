@@ -77,7 +77,7 @@ def test_fingerprint_exact_statistics() -> None:
     assert stats.stddev == Decimal("16.0000")  # exact: sqrt(256)
     assert stats.minimum == Decimal("10.0000")
     assert stats.maximum == Decimal("50.0000")
-    # Leave-one-out (T2-4): the 50 is scored against its four 10s (a flat baseline,
+    # Leave-one-out: the 50 is scored against its four 10s (a flat baseline,
     # σ=0), so it reads as maximally out of pattern, capped at _MAX_Z = 10.
     assert fp.anomaly_score == Decimal("10.0000")
 
@@ -120,7 +120,7 @@ def test_fingerprint_flat_history_has_zero_anomaly() -> None:
 
 
 def test_fingerprint_lone_outlier_fires_below_eight_samples() -> None:
-    """T2-4: a lone outlier in a 5-point history fires.
+    """A lone outlier in a 5-point history fires.
 
     Population σ over all points capped a lone outlier at √(n-1) = 2.0 for n=5 —
     below the 2.5 threshold, so it was silently missed. Leave-one-out removes the
@@ -132,7 +132,7 @@ def test_fingerprint_lone_outlier_fires_below_eight_samples() -> None:
 
 
 def test_fingerprint_home_currency_can_be_pinned() -> None:
-    """T2-6: an explicit home currency overrides modal derivation and is stable."""
+    """An explicit home currency overrides modal derivation and is stable."""
     records = [_record(amount="10", currency="USD") for _ in range(3)]
     records.append(_record(amount="9999", currency="EUR"))
     fp = compute_fingerprint(records, home_currency="EUR")
@@ -177,7 +177,7 @@ def test_score_anomaly_cross_currency_has_no_zscore() -> None:
 
 
 def test_score_anomaly_known_non_top_vendor_not_flagged() -> None:
-    """T2-8: a vendor seen before but outside the top-3 is *not* 'unknown'.
+    """A vendor seen before but outside the top-3 is *not* 'unknown'.
 
     Judged against the full vendor history, not just the top few — the old
     top-3-only check flagged every fourth+ vendor as anomalous.
@@ -250,7 +250,7 @@ def test_project_spend_on_track() -> None:
 
 
 def test_project_spend_dampens_early_month() -> None:
-    """T2-9: a day-1 spend is not extrapolated to ~30x itself.
+    """A day-1 spend is not extrapolated to ~30x itself.
 
     Naive run-rate (mtd / day_of_month) would project 300 * 30 = 9000 on day 1;
     the elapsed-days floor (7) dampens it to 9000 / 7 ≈ 1285.71.

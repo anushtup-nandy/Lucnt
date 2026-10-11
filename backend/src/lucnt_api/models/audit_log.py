@@ -1,4 +1,4 @@
-"""AuditLog ORM model — append-only trail of state mutations (PRODUCTION_PLAN T0-14).
+"""AuditLog ORM model — append-only trail of state mutations.
 
 A financial-controls product must record who changed what: budget edits, policy
 create/deactivate, approvals, reconciliation resolutions. Each row is written

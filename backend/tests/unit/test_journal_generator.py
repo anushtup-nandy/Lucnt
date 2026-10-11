@@ -3,7 +3,7 @@
 Models are instantiated in memory (never added to a session), so these assert
 the accounting logic in isolation. The key invariant under test: every
 generated journal balances (Σ debit == Σ credit). The tax ``rate`` is injected
-into `compute_tax` (T1-12); these tests state it explicitly.
+into `compute_tax`; these tests state it explicitly.
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ def test_expense_account_selection(
 
 
 def test_caller_category_overrides_vendor_inference() -> None:
-    """An explicit, known caller category wins over vendor inference (T1-19)."""
+    """An explicit, known caller category wins over vendor inference."""
     entity = Entity(code="us", currency="USD")
     txn = _txn(
         paid_amount=Decimal("10"),
@@ -239,7 +239,7 @@ def test_caller_category_overrides_vendor_inference() -> None:
     ],
 )
 def test_whole_token_vendor_matching(vendor: str, expected_code: str) -> None:
-    """Vendor classification matches whole tokens, not substrings (T1-19)."""
+    """Vendor classification matches whole tokens, not substrings."""
     entity = Entity(code="us", currency="USD")
     txn = _txn(paid_amount=Decimal("10"), paid_currency="USD", vendor=vendor)
     tax = compute_tax(
@@ -254,7 +254,7 @@ def test_whole_token_vendor_matching(vendor: str, expected_code: str) -> None:
 
 
 def test_blocked_itc_rcm_books_tax_into_expense() -> None:
-    """Blocked-ITC RCM (IN travel): no input-credit leg; GST is a cost (T1-14)."""
+    """Blocked-ITC RCM (IN travel): no input-credit leg; GST is a cost."""
     entity = Entity(code="in", currency="INR")
     txn = _txn(
         paid_amount=Decimal("100"),

@@ -1,19 +1,19 @@
-"""Journal generator (backend/PLAN.md §5, Module 2/4).
+"""Journal generator.
 
 Maps a captured transaction + its tax treatment onto double-entry journal
 lines against the company's Chart of Accounts. Pure: it builds and returns
 unsaved `JournalEntry` rows; the caller adds them to the session.
 
 All amounts are booked in the entity's **functional currency** (FX-converted at
-capture — PRODUCTION_PLAN T1-1), never the raw paid amount, so a single entity's
-journal never mixes currencies.
+capture), never the raw paid amount, so a single entity's journal never mixes
+currencies.
 
 One **unified** double-entry that balances by construction (Σ debit == Σ credit)
-covers every case — reverse charge, domestic inclusive/exclusive (T1-10), the
-CGST/SGST/IGST head split (T1-9), blocked ITC (T1-14) and US no-tax:
+covers every case — reverse charge, domestic inclusive/exclusive, the CGST/SGST/IGST
+head split, blocked ITC and US no-tax:
 
-    Cr Wallet(gross)                              # cash out (T1-10 gross_amount)
-    Dr InputTaxCredit[head](reclaim)  per head    # capitalised input credit (T1-9)
+    Cr Wallet(gross)                              # cash out (gross_amount)
+    Dr InputTaxCredit[head](reclaim)  per head    # capitalised input credit
     Cr GSTPayable[head](tax)          per head     # reverse-charge output GST only
     Dr Expense(gross + Σpayable − Σreclaim)        # the residual that balances it
 
@@ -41,7 +41,7 @@ from lucnt_api.services.tax_engine import TaxTreatment
 
 _ZERO = Decimal("0")
 
-# Whole-token vendor keywords (T1-19): matched against the vendor's tokenised
+# Whole-token vendor keywords: matched against the vendor's tokenised
 # words, so "roads" no longer matches "ads" and "metabase" no longer matches
 # "meta". Plurals are listed explicitly (word-boundary alone misses "airlines").
 _TRAVEL_KEYWORDS = frozenset(
@@ -69,7 +69,7 @@ def _select_expense_code(
 ) -> str:
     """Pick the expense account for a spend from caller category / vendor signals.
 
-    An explicit, known caller `category` wins (T1-19); otherwise LLM/API spend (a
+    An explicit, known caller `category` wins; otherwise LLM/API spend (a
     model or token count) books to AI & Compute, and a **whole-token** vendor
     match routes to Travel or Marketing, falling back to Software & Subscriptions.
     """
@@ -108,9 +108,9 @@ def generate_journal(
     Raises:
         ValueError: if the generated journal does not balance (a bug).
     """
-    # All legs are in the entity's functional currency (T1-1); the tax amounts
-    # from `tax_engine` are already functional too (T1-4), so the journal is
-    # single-currency and balances.
+    # All legs are in the entity's functional currency; the tax amounts from
+    # `tax_engine` are already functional too, so the journal is single-currency and
+    # balances.
     currency: str = transaction.local_currency
     ledger = entity.code
     txn_id = transaction.id
@@ -121,7 +121,7 @@ def generate_journal(
     def line(
         account: Account, *, debit: Decimal = _ZERO, credit: Decimal = _ZERO
     ) -> JournalEntry:
-        """One unsaved, self-sufficient line in the functional currency (T1-21)."""
+        """One unsaved, self-sufficient line in the functional currency."""
         return JournalEntry(
             transaction_id=txn_id,
             company_id=company_id,
@@ -141,11 +141,11 @@ def generate_journal(
         transaction.tokens_consumed,
         transaction.category,
     )
-    # Unified double-entry (T1-9/T1-10). The wallet pays the gross cash-out
-    # (``tax.gross_amount`` — functional for inclusive/RCM, functional+tax for a
-    # tax-exclusive domestic supply); the expense is the residual after per-head
-    # input tax credit is capitalised and any reverse-charge output GST is booked
-    # as a payable. Balances by construction: expense = gross + Σpayable − Σreclaim.
+    # Unified double-entry. The wallet pays the gross cash-out (``tax.gross_amount`` —
+    # functional for inclusive/RCM, functional+tax for a tax-exclusive domestic supply);
+    # the expense is the residual after per-head input tax credit is capitalised and any
+    # reverse-charge output GST is booked as a payable. Balances by construction:
+    # expense = gross + Σpayable − Σreclaim.
     gross = tax.gross_amount
     total_payable = (
         sum((c.tax_amount for c in tax.components), _ZERO)
@@ -159,7 +159,7 @@ def generate_journal(
         line(accounts[expense_code], debit=expense_amount),
         line(accounts[WALLET_CODE], credit=gross),
     ]
-    # Per-head input tax credit (T1-9): one Dr ITC[head] leg per component with a
+    # Per-head input tax credit: one Dr ITC[head] leg per component with a
     # reclaimable amount. A blocked component carries reclaim 0, so no leg — the GST
     # stays inside the expense. India intra-state books two legs (CGST + SGST).
     for comp in tax.components:

@@ -7,7 +7,7 @@ Three different secrets, three deliberately different treatments:
   be guessed, and would cost a scan of every row on the money path.
 * **Passwords** — low-entropy and human-chosen, so argon2id, which is memory-hard
   and cannot be looked up. `argon2-cffi` over `python-jose`'s ecosystem for the
-  reasons recorded in `pyproject.toml` (T4-8) and `frontend/PLAN.md` §2.
+  reasons recorded in `pyproject.toml`.
 * **Dashboard tokens** — HS256 JWTs signed with `settings.secret_key` (P7.0).
   Access tokens are short-lived and held in the SPA's memory; refresh tokens are
   longer-lived and confined to an httpOnly SameSite=Strict cookie.
@@ -15,9 +15,9 @@ Three different secrets, three deliberately different treatments:
 **Refresh tokens are stateless, and therefore not revocable before expiry.**
 `POST /auth/logout` clears the cookie, which ends the session on that browser,
 but a token already copied out of it stays valid for its remaining window. A
-revocation list needs a table, and P7.0 is deliberately migration-free
-(`frontend/PLAN.md` §10). The mitigation is the 7-day ceiling; revisit at GA
-alongside the WorkOS/Clerk swap (D1).
+revocation list needs a table, and P7.0 is deliberately migration-free. The
+mitigation is the 7-day ceiling; revisit at GA alongside the WorkOS/Clerk swap
+(D1).
 """
 
 from __future__ import annotations

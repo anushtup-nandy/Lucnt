@@ -1,7 +1,7 @@
 """Intelligence router (Phase 5, M8) — recompute the CFO tables, serve live memory.
 
 Two endpoints, both ledger-reading (they never touch the frozen `authorize→capture`
-spine — `CLAUDE.local.md`, like the Phase 4 recon scan):
+spine, like the Phase 4 recon scan):
 
 - `POST /intelligence/recompute` runs the pure intelligence services
   (`services/intelligence.py` + `services/insight_generator.py`) over the whole
@@ -61,7 +61,7 @@ from lucnt_api.services.insight_generator import (
 from lucnt_api.services.intelligence import (
     # Imported from the pure engine so the SQL cost-unit aggregate below uses
     # the engine's own fallback label and money rounding rather than a copy
-    # that could drift from it (T3-2).
+    # that could drift from it.
     _UNATTRIBUTED,
     CostUnit,
     FingerprintFeatures,
@@ -79,8 +79,8 @@ router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 _WARNING_PCT = Decimal("80")  # mirrors budgets._rollup — utilisation warning line
 _ONE_PLACE = Decimal("0.1")
 _QUERY_COST_UNITS = 5  # top cost-per-output rows returned by query()
-# Rows fetched per round trip when `recompute` streams the whole company ledger
-# (T3-2). Mirrors `recon._LEDGER_CHUNK_SIZE`: big enough to amortise the round
+# Rows fetched per round trip when `recompute` streams the whole company ledger.
+# Mirrors `recon._LEDGER_CHUNK_SIZE`: big enough to amortise the round
 # trip, small enough that no single fetch reintroduces the memory spike.
 _LEDGER_CHUNK_SIZE = 1_000
 
@@ -119,7 +119,7 @@ def _record(txn: Transaction) -> SpendRecord:
 def _record_from_row(row: _SpendRow) -> SpendRecord:
     """Project a streamed ledger row to the intelligence value object.
 
-    The column-tuple twin of `_record` (T3-2). `recompute` scans the entire
+    The column-tuple twin of `_record`. `recompute` scans the entire
     company ledger, so it selects the eight columns a `SpendRecord` needs rather
     than hydrating — and retaining — a `Transaction` entity per row.
 
@@ -164,7 +164,7 @@ def _budget_block(db: Session, agent: Agent, entity: Entity) -> BudgetBlock:
     """Live budget headroom for the current month (mirrors the budgets rollup).
 
     Spend is the entity-local, current-month committed figure derived from the
-    ledger (T2-3), not the never-reset ``agents.spent_ytd`` counter — so an agent
+    ledger, not the never-reset ``agents.spent_ytd`` counter — so an agent
     on-budget this month is not told it is "exhausted" by an inception-to-date
     total compared against a monthly budget.
     """
@@ -200,9 +200,8 @@ def _build_intel(
     """Compute the full intelligence bundle for one agent from its records.
 
     ``now`` is entity-local and ``fallback_currency`` is the entity's functional
-    currency; the fingerprint pins its home currency to it (T2-6) and ages its
-    velocity to ``now`` (T2-16), and the projection uses local month boundaries
-    (T2-9).
+    currency; the fingerprint pins its home currency to it and ages its velocity
+    to ``now``, and the projection uses local month boundaries.
     """
     features = compute_fingerprint(records, home_currency=fallback_currency, now=now)
     currency = features.home_currency or fallback_currency
@@ -226,7 +225,7 @@ def _build_intel(
 @router.post(
     "/recompute",
     response_model=RecomputeResponse,
-    # See recon.scan: a full-ledger recompute behind the tight bucket (T3-7).
+    # See recon.scan: a full-ledger recompute behind the tight bucket.
     dependencies=[Depends(require_cheap_enough)],
 )
 def recompute(
@@ -254,7 +253,7 @@ def recompute(
         ).scalars()
     }
 
-    # T3-2: stream only the eight columns a `SpendRecord` needs, grouped in a
+    # Stream only the eight columns a `SpendRecord` needs, grouped in a
     # single pass. Hydrating `Transaction` entities pinned the whole ledger in
     # the identity map *alongside* the records derived from it, for a response
     # of five scalars. Ordering by `agent_id` keeps each agent's rows
@@ -278,7 +277,7 @@ def recompute(
     for row in ledger:
         records_by_agent.setdefault(row[0], []).append(_record_from_row(row))
 
-    # One SELECT for every agent's fingerprint instead of one per agent (T3-2).
+    # One SELECT for every agent's fingerprint instead of one per agent.
     fingerprints = _existing_fingerprints(db, records_by_agent.keys())
 
     intels: list[AgentIntel] = []
@@ -322,7 +321,7 @@ def recompute(
 def _existing_fingerprints(
     db: Session, agent_ids: Collection[uuid.UUID]
 ) -> dict[uuid.UUID, Fingerprint]:
-    """Load the fingerprint rows for `agent_ids` in one query (T3-2).
+    """Load the fingerprint rows for `agent_ids` in one query.
 
     Replaces the per-agent SELECT that `_upsert_fingerprint` used to issue from
     inside the recompute loop. `uq_fingerprints_agent` guarantees at most one
@@ -355,7 +354,7 @@ def _upsert_fingerprint(
 
     A concurrent recompute may insert the row between our prefetch and INSERT;
     the SAVEPOINT lets us fall back to an update instead of 500-ing on the
-    `uq_fingerprints_agent` violation (T2-15).
+    `uq_fingerprints_agent` violation.
 
     Args:
         db: Active session.
@@ -364,7 +363,7 @@ def _upsert_fingerprint(
         features: Freshly computed feature vector and anomaly score.
         now: UTC wall-clock time to stamp as `last_updated`.
         existing_by_agent: Prefetched fingerprints from `_existing_fingerprints`
-            (T3-2) — the loop-invariant replacement for a per-agent SELECT.
+            — the loop-invariant replacement for a per-agent SELECT.
     """
     existing = existing_by_agent.get(agent.id)
     if existing is None:
@@ -392,7 +391,7 @@ def _upsert_fingerprint(
 def _existing_memories(
     db: Session, drafts: Sequence[DraftMemory]
 ) -> dict[tuple[uuid.UUID, MemoryType], Memory]:
-    """Load the memory rows `drafts` will upsert, in one query (T3-2).
+    """Load the memory rows `drafts` will upsert, in one query.
 
     Replaces the per-draft SELECT inside `_upsert_memories`. `uq_memories_agent_type`
     guarantees at most one row per `(agent_id, memory_type)`, so that pair is a
@@ -421,7 +420,7 @@ def _upsert_memories(
     """Insert or refresh each (agent, type) memory; returns the count written.
 
     Race-safe against a concurrent recompute via a per-row SAVEPOINT that falls
-    back to an update on the `uq_memories_agent_type` violation (T2-15). That
+    back to an update on the `uq_memories_agent_type` violation. That
     fallback also covers the one case the prefetched map cannot see: two drafts
     sharing a key, where the second insert collides with the first.
 
@@ -429,7 +428,7 @@ def _upsert_memories(
         db: Active session.
         company: Owning company (stamped on an inserted row).
         drafts: Memories to upsert.
-        existing_by_key: Prefetched rows from `_existing_memories` (T3-2).
+        existing_by_key: Prefetched rows from `_existing_memories`.
 
     Returns:
         The number of memories written (inserted or refreshed).
@@ -467,7 +466,7 @@ def _upsert_memories(
 
 
 def _sync_insights(db: Session, company: Company, drafts: list[DraftInsight]) -> None:
-    """Upsert insights on their stable `dedup_key`, preserving ids (T2-10).
+    """Upsert insights on their stable `dedup_key`, preserving ids.
 
     Instead of delete-all + reinsert (which churned ids and raced a human's
     "apply"), match each draft to an existing row by `dedup_key`:
@@ -538,7 +537,7 @@ def query(
     """An agent's living financial memory (M8), served without a ledger scan.
 
     Two paths, because this is the per-spend SDK call and a full scan per call is
-    O(n) per call and O(n^2) over an agent's lifetime (T3-2):
+    O(n) per call and O(n^2) over an agent's lifetime:
 
     * **Fast path** — an agent that has been through `/recompute` has a stored
       `Fingerprint`, so the statistics are read rather than recomputed, and the
@@ -610,7 +609,7 @@ def query(
 
 
 def _cost_units_for_agent(db: Session, agent_id: uuid.UUID) -> list[CostUnit]:
-    """`cost_per_output` as one `GROUP BY`, instead of scanning every record (T3-2).
+    """`cost_per_output` as one `GROUP BY`, instead of scanning every record.
 
     Deliberately mirrors `services.intelligence.cost_per_output` term for term —
     same `(project, currency)` grouping, same `"(unattributed)"` fallback for a
@@ -675,7 +674,7 @@ def _cost_units_for_agent(db: Session, agent_id: uuid.UUID) -> list[CostUnit]:
 def _month_to_date_for_agent(
     db: Session, agent_id: uuid.UUID, home_currency: str | None, now: datetime
 ) -> Decimal:
-    """The SQL twin of `_month_to_date` (T3-2).
+    """The SQL twin of `_month_to_date`.
 
     Matches it exactly, including the two things that make it *not*
     interchangeable with `spend_window.committed_spend`: it filters to the home
@@ -698,7 +697,7 @@ def _month_to_date_for_agent(
 def _fingerprint_block_from_vector(
     vector: Mapping[str, Any],
 ) -> FingerprintBlock | None:
-    """Rebuild the fingerprint view from a persisted `feature_vector` (T3-2).
+    """Rebuild the fingerprint view from a persisted `feature_vector`.
 
     `as_feature_vector` stores every money/ratio field as `str(Decimal)`, so this
     round-trips exactly — no float ever touches the figures. `Any` is unavoidable

@@ -36,14 +36,14 @@ _MIN_FINGERPRINT_SAMPLES = 3  # min home-currency spends to establish a baseline
 _RECENT_WINDOW = 10  # trailing spends the anomaly score scans
 _TOP_VENDORS = 3
 ANOMALY_Z_THRESHOLD = Decimal("2.5")  # z at/above which a spend reads "anomalous"
-# Cap the reported z. Leave-one-out scoring (T2-4) divides by the spread of the
+# Cap the reported z. Leave-one-out scoring divides by the spread of the
 # *other* points; a perfectly flat baseline has zero spread, so a differing
 # candidate would be infinitely anomalous. Cap it to a large-but-finite score so
 # the outlier still fires (unlike the old population-σ score, which mathematically
 # capped a lone outlier at √(n-1) and so could not fire below 8 samples).
 _MAX_Z = Decimal("10")
 # Floor the run-rate divisor so an early-month projection is not wild: on day 1 a
-# single renewal must not extrapolate to ~30x the budget (T2-9).
+# single renewal must not extrapolate to ~30x the budget.
 _MIN_PROJECTION_DAYS = 7
 _UNATTRIBUTED = "(unattributed)"
 _MONEY = Decimal("0.0001")  # ledger precision, Numeric(18, 4)
@@ -103,7 +103,7 @@ class FingerprintFeatures:
     daily_velocity: Decimal  # avg records/day across the observed span
     anomaly_score: Decimal  # max recent z-score (0 when not computable)
     # The *full* set of vendors the agent has transacted with (not just the top
-    # few) — the honest "known vendor" set for `score_anomaly` (T2-8). Defaulted so
+    # few) — the honest "known vendor" set for `score_anomaly`. Defaulted so
     # historical/test constructions that predate the field still build.
     known_vendors: frozenset[str] = frozenset()
 
@@ -252,11 +252,11 @@ def compute_fingerprint(
 
     ``home_currency``: pin the home currency (the entity's functional currency)
     rather than deriving the modal one, so it is stable month to month and never
-    silently flips on a currency-count tie (T2-6). Falls back to the modal
+    silently flips on a currency-count tie. Falls back to the modal
     currency when not given.
 
     ``now``: age the daily velocity to the present, so a dormant agent's velocity
-    decays instead of reading present-tense off its last-active span (T2-16).
+    decays instead of reading present-tense off its last-active span.
     """
     if not records:
         return FingerprintFeatures(
@@ -334,7 +334,7 @@ def compute_fingerprint(
 def _leave_one_out_z(amounts: Sequence[Decimal], idx: int) -> Decimal | None:
     """z-score of ``amounts[idx]`` against the mean/σ of every *other* amount.
 
-    Leave-one-out (T2-4): the scored point is excluded from its own baseline, so a
+    Leave-one-out: the scored point is excluded from its own baseline, so a
     lone outlier cannot mute itself by dragging the mean/σ toward it (the bug that
     capped a lone outlier at √(n-1) and hid it below 8 samples). Returns None when
     there is no baseline; a differing candidate against a *flat* baseline (zero
@@ -378,7 +378,7 @@ def score_anomaly(
 
     "Never-before-seen" is judged against the agent's **full** vendor history
     (`features.known_vendors`), not just its top few — flagging every vendor
-    outside the top 3 as anomalous was wrong (T2-8). This function is correct but
+    outside the top 3 as anomalous was wrong. This function is correct but
     **not yet wired** into a call site; wiring it into `authorize()` (with a
     share-floor to avoid alerting on established-but-diverse spenders) is P6.
     """
@@ -451,7 +451,7 @@ def project_spend(
     Linear run-rate over a **floored** elapsed-day count:
     ``mtd / max(day_of_month, _MIN_PROJECTION_DAYS) * days_in_month``. The floor
     dampens the early-month explosion where a single day-1 renewal would otherwise
-    extrapolate to ~30x itself and cry "overrun" every month (T2-9). The projection
+    extrapolate to ~30x itself and cry "overrun" every month. The projection
     is never below the money already spent this month. ``now`` is expected in the
     entity's local timezone so month boundaries flip at local midnight, not 05:30
     for IST. ``on_track`` is False only when a positive budget is set and the

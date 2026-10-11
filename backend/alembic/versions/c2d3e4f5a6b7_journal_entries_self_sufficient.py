@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Add company_id/entity_id/posting_date; backfill; make transaction_id nullable.
 
-    T1-18/T1-21: journal lines become self-sufficient so the books read path scopes
+    Journal lines become self-sufficient so the books read path scopes
     and periodises off the line itself, and manual/funding/settlement journals can
     post with no transaction. Existing rows are backfilled from their transaction.
     """
@@ -55,7 +55,7 @@ def upgrade() -> None:
     op.alter_column("journal_entries", "company_id", nullable=False)
     op.alter_column("journal_entries", "entity_id", nullable=False)
     op.alter_column("journal_entries", "posting_date", nullable=False)
-    # T1-18: manual/funding/settlement journals post without a transaction.
+    # Manual/funding/settlement journals post without a transaction.
     op.alter_column("journal_entries", "transaction_id", nullable=True)
 
     op.create_foreign_key(

@@ -1,4 +1,4 @@
-"""FX resolver tests against the migration-seeded fx_rates (PRODUCTION_PLAN T1-1/T1-5).
+"""FX resolver tests against the migration-seeded fx_rates.
 
 Integration, not pure-unit: the resolver reads `fx_rates`, and the baseline rows
 (USD/INR/SGD/EUR/GBP) are seeded by migration `b8d3f1a2c4e5`, so they exist in

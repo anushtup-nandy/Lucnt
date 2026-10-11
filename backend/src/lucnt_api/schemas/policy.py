@@ -22,7 +22,7 @@ from lucnt_api.models.policy import PolicyRuleType, PolicyScopeType
 
 
 def _bound_config(value: dict[str, Any]) -> dict[str, Any]:
-    """Cap the size of a raw `config` blob before `parse_config` types it (T3-8).
+    """Cap the size of a raw `config` blob before `parse_config` types it.
 
     `parse_config` already rejects unknown keys per rule type (`extra="forbid"`),
     so this is defence in depth on the *shape* rather than the content: it stops

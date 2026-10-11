@@ -78,7 +78,7 @@ export interface paths {
          * List Approvals
          * @description List holds awaiting approval (review + human_hold) for the current company.
          *
-         *     Paginated (T3-3): the queue grows with how long holds go unattended, which is
+         *     Paginated: the queue grows with how long holds go unattended, which is
          *     exactly the situation in which an unbounded response is least welcome.
          */
         get: operations["list_approvals_approvals_get"];
@@ -330,7 +330,7 @@ export interface paths {
         put?: never;
         /**
          * Create Funding
-         * @description Fund an entity's wallet: Dr Wallet / Cr Contributed Capital (T1-18).
+         * @description Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.
          *
          *     The funding/opening-balance entry the ledger previously lacked — without it
          *     every balance sheet showed negative cash & equity from day one (the wallet was
@@ -354,7 +354,7 @@ export interface paths {
          * Get General Ledger
          * @description General ledger: every posted account/currency with its totals and balance.
          *
-         *     Two shapes, because the line-level view is the only unbounded one (T3-2):
+         *     Two shapes, because the line-level view is the only unbounded one:
          *
          *     * **Listing** (no `account`) — totals per account/currency, computed by a
          *       SQL `GROUP BY`. Costs one row per account, not one per journal line, so it
@@ -385,7 +385,7 @@ export interface paths {
         put?: never;
         /**
          * Create Manual Journal
-         * @description Post a balanced manual journal — an accrual, prepaid, or correction (T1-18).
+         * @description Post a balanced manual journal — an accrual, prepaid, or correction.
          *
          *     Admin-scoped and audited. Booked in the entity's functional currency; the
          *     lines must reference real CoA accounts and balance.
@@ -448,7 +448,7 @@ export interface paths {
         put?: never;
         /**
          * Settle Taxes
-         * @description Book a return-cycle GST settlement, clearing Payable against ITC (T1-11).
+         * @description Book a return-cycle GST settlement, clearing Payable against ITC.
          *
          *     Nets the period's accumulated output GST (the per-head Payable accounts) against
          *     input tax credit (the per-head ITC accounts), books the residual as GST Payable
@@ -568,7 +568,7 @@ export interface paths {
          *
          *     A liveness probe that checks the database is a way to turn one database
          *     blip into every container being killed at once. `/health` is retained as
-         *     an alias so existing probes and `docs/DEMO.md` keep working.
+         *     an alias so existing probes keep working.
          */
         get: operations["health_live_health_live_get"];
         put?: never;
@@ -588,7 +588,7 @@ export interface paths {
         };
         /**
          * Health Ready
-         * @description Readiness: can this process actually serve? (T4-5).
+         * @description Readiness: can this process actually serve?
          *
          *     The old single `/health` returned a static dict, so a load balancer
          *     happily kept routing to a backend whose Postgres was gone. This one takes
@@ -615,7 +615,7 @@ export interface paths {
          * List Insights
          * @description List the company's insights, newest first, with an unapplied headline count.
          *
-         *     Dismissed insights are hidden by default (they are resolved — T2-10); pass
+         *     Dismissed insights are hidden by default (they are resolved); pass
          *     `include_dismissed=true` to see them.
          */
         get: operations["list_insights_insights_get"];
@@ -658,7 +658,7 @@ export interface paths {
         put?: never;
         /**
          * Dismiss Insight
-         * @description Dismiss an insight so recompute stops regenerating it (idempotent — T2-10).
+         * @description Dismiss an insight so recompute stops regenerating it (idempotent).
          */
         post: operations["dismiss_insight_insights__insight_id__dismiss_post"];
         delete?: never;
@@ -679,7 +679,7 @@ export interface paths {
          * @description An agent's living financial memory (M8), served without a ledger scan.
          *
          *     Two paths, because this is the per-spend SDK call and a full scan per call is
-         *     O(n) per call and O(n^2) over an agent's lifetime (T3-2):
+         *     O(n) per call and O(n^2) over an agent's lifetime:
          *
          *     * **Fast path** — an agent that has been through `/recompute` has a stored
          *       `Fingerprint`, so the statistics are read rather than recomputed, and the
@@ -835,7 +835,7 @@ export interface paths {
          * @description List reconciliation exceptions, grouped by currency, highest stake first.
          *
          *     Ordering is (currency, `$ at stake` desc): without an FX conversion, ranking
-         *     amounts *across* currencies is meaningless (₹5,000 is not > $100 — T2-2), so
+         *     amounts *across* currencies is meaningless (₹5,000 is not > $100), so
          *     the list groups by currency and ranks within each.
          */
         get: operations["list_exceptions_recon_get"];
@@ -887,10 +887,10 @@ export interface paths {
          *     - **(txn, type)** — an already-flagged transaction (any status) is not
          *       re-flagged; the detected ledger fact is immutable (the unique constraint is
          *       the backstop, and a per-row SAVEPOINT keeps a concurrent scan's race from
-         *       500-ing the whole pass — T2-15).
+         *       500-ing the whole pass).
          *     - **recurring identity (`dedup_key`)** — a dismissed/resolved recurring charge
          *       (a subscription, a repeated overcharge) is not re-raised on next month's new
-         *       transaction row (T2-7).
+         *       transaction row.
          */
         post: operations["scan_recon_scan_post"];
         delete?: never;
@@ -1014,7 +1014,7 @@ export interface paths {
         put?: never;
         /**
          * Void
-         * @description Release an approved hold whose spend never happened (T5-4).
+         * @description Release an approved hold whose spend never happened.
          *
          *     Without this, a hold orphaned by a vendor error after `authorize()` — or by a
          *     crash between authorize and capture — reserves the agent's budget forever
@@ -1072,7 +1072,7 @@ export interface paths {
         put?: never;
         /**
          * Reverse Transaction
-         * @description Reverse a committed transaction with a contra entry (T1-16 refund/credit note).
+         * @description Reverse a committed transaction with a contra entry (refund/credit note).
          *
          *     Books a new reversal transaction (positive amount, contra journal) that
          *     negates the original and frees the agent's budget; the original is flagged
@@ -1542,7 +1542,7 @@ export interface components {
          * @description Response body for `GET /budgets` — per-agent + per-workflow rollups.
          *
          *     `total` counts every agent matching the request's filters, not the length of
-         *     the returned `agents` page (T3-3). `workflows` is unpaginated and rolls up
+         *     the returned `agents` page. `workflows` is unpaginated and rolls up
          *     *all* member agents, so a rollup stays correct regardless of the page.
          */
         BudgetsResponse: {
@@ -1754,7 +1754,7 @@ export interface components {
         };
         /**
          * FundingRequest
-         * @description `POST /books/funding` — a wallet funding / opening-balance top-up (T1-18).
+         * @description `POST /books/funding` — a wallet funding / opening-balance top-up.
          *
          *     Books Dr Wallet / Cr Contributed Capital in the entity's functional currency,
          *     so a funded entity's balance sheet no longer shows negative cash & equity from
@@ -1989,7 +1989,7 @@ export interface components {
          * ManualJournalRequest
          * @description `POST /books/journal` — a balanced manual journal (accrual, adjustment).
          *
-         *     Admin-scoped and audited (T1-18). Booked in the entity's functional currency;
+         *     Admin-scoped and audited. Booked in the entity's functional currency;
          *     the lines must balance (Σ debit == Σ credit) and reference real CoA accounts.
          */
         ManualJournalRequest: {
@@ -2352,9 +2352,9 @@ export interface components {
          *     `DUPLICATE`, `OVERCHARGE`, and `UNUSED_SUBSCRIPTION` are detected from the
          *     ledger by `services/detectors.py`; `FAILED_DELIVERY` is agent-reported (the
          *     SDK `mark_failed_delivery()` hook) because it cannot be inferred from spend
-         *     data alone. `TAX_UNCLASSIFIED` is *capture-emitted* (TE-1b): a spend hit a
-         *     vendor with no place-of-supply data, so tax was booked conservatively and the
-         *     vendor needs enriching before the treatment can be finalised.
+         *     data alone. `TAX_UNCLASSIFIED` is *capture-emitted*: a spend hit a vendor with
+         *     no place-of-supply data, so tax was booked conservatively and the vendor needs
+         *     enriching before the treatment can be finalised.
          * @enum {string}
          */
         ReconExceptionType: "duplicate" | "overcharge" | "unused_subscription" | "failed_delivery" | "tax_unclassified";
@@ -2366,7 +2366,7 @@ export interface components {
          *     summarize all *active* (open + recovering) exceptions for the company,
          *     independent of the list filters — the "$ at stake" headline. `total_at_stake`
          *     is a **per-currency** map (currency -> sum), never a meaningless cross-currency
-         *     total (PRODUCTION_PLAN T2-2).
+         *     total.
          */
         ReconListResponse: {
             /** Items */
@@ -2512,8 +2512,8 @@ export interface components {
          * @description The computed GST position + the settlement journal booked (if any).
          *
          *     Clears the accumulated per-head GST Payable against Input Tax Credit so the
-         *     balance sheet no longer shows an ever-growing liability + asset (T1-11); the
-         *     net is booked as GST Payable to Government, and any excess ITC carries forward.
+         *     balance sheet no longer shows an ever-growing liability + asset; the net is
+         *     booked as GST Payable to Government, and any excess ITC carries forward.
          */
         TaxSettlementResponse: {
             /** Credit Carried Forward */
@@ -2659,7 +2659,7 @@ export interface components {
          *     be an N+1 per page; on a single row they are two queries, and the dashboard's
          *     transaction detail is meaningless without them: the balanced double entry is
          *     the product's central claim, and a page that asserts it without showing it is
-         *     the façade `docs/production/plan2.md` F-3 says not to build.
+         *     a façade.
          */
         TransactionFull: {
             /**
@@ -2948,7 +2948,7 @@ export interface components {
          * @description Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.
          *
          *     Releases an approved-but-uncaptured hold so it stops reserving the agent's
-         *     budget (T5-4). Used when the spend the hold was taken for did not happen —
+         *     budget. Used when the spend the hold was taken for did not happen —
          *     the vendor call failed after `authorize()` returned, say.
          */
         VoidRequest: {
@@ -4333,7 +4333,7 @@ export interface operations {
                 vendor?: string | null;
                 /** @description Filter by entity code */
                 entity?: string | null;
-                /** @description Filter to estimate-booked (true) or settled (false) rows (F-8) */
+                /** @description Filter to estimate-booked (true) or settled (false) rows */
                 estimated?: boolean | null;
                 /** @description Filter to reversed (true) or live (false) rows */
                 reversed?: boolean | null;

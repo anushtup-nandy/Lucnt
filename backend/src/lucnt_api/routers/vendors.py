@@ -1,10 +1,10 @@
-"""Vendors router — the place-of-supply registry (PRODUCTION_PLAN T1-3/T1-9).
+"""Vendors router — the place-of-supply registry.
 
 A vendor's country/state/registration decide RCM and the CGST/SGST/IGST head split
 at capture. Spends auto-create unenriched vendor rows (`services/vendors.py`); a
 finance admin enriches them here so future spends are taxed by place of supply
-rather than the currency fallback. Mutations are admin-scoped and audited (T0-12/
-T0-14); reads are company-scoped.
+rather than the currency fallback. Mutations are admin-scoped and
+audited; reads are company-scoped.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from lucnt_api.services.vendors import normalize_vendor_name
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 
 # Fields whose change can alter a spend's tax regime — a change to any of them
-# re-checks the vendor's booked history for divergence (TE-1c).
+# re-checks the vendor's booked history for divergence.
 _PLACE_OF_SUPPLY_FIELDS = frozenset({"country", "state", "gst_registered_in"})
 
 
@@ -165,7 +165,7 @@ def update_vendor(
     for field, value in updated.items():
         setattr(vendor, field, value)
     db.flush()
-    # TE-1c: if place of supply changed, re-check the vendor's already-booked spends
+    # If place of supply changed, re-check the vendor's already-booked spends
     # and flag any whose regime now diverges — never rewriting history.
     if _PLACE_OF_SUPPLY_FIELDS & updated.keys():
         reflag_divergent_history(db, company.id, vendor)

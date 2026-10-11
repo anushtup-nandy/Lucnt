@@ -1,4 +1,4 @@
-"""Company-scoped lookups shared by routers (`CLAUDE.md` §2.3, DRY).
+"""Company-scoped lookups shared by routers (DRY).
 
 `entity_or_404` was written inline in `routers/transactions.py`, again in
 `routers/agents.py`, and would have been written four more times by the P7.0

@@ -1,8 +1,8 @@
 """Recovery agent (Phase 4, M7) — maps an exception to a drafted recovery action.
 
-Pure and draft-only (design decision, `logs/log_14070726.md`): given an exception
-type and the transaction facts, it returns a `RecoveryPlan` (method + a drafted
-message + a human-escalation flag). The router stores the plan in the exception's
+Pure and draft-only (design decision): given an exception type and the
+transaction facts, it returns a `RecoveryPlan` (method + a drafted message + a
+human-escalation flag). The router stores the plan in the exception's
 `evidence_json` so the recovery inbox shows the recommended action immediately.
 
 Actually *sending* the drafted message (vendor email / portal submission) is a

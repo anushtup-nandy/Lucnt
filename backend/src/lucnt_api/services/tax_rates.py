@@ -1,4 +1,4 @@
-"""Effective-dated statutory tax-rate resolution (PRODUCTION_PLAN T1-12).
+"""Effective-dated statutory tax-rate resolution.
 
 Rates live in the `tax_rates` table (regime, category, effective_from). The rate
 in force for a supply is the latest ``effective_from <=`` the transaction date, so
@@ -25,22 +25,22 @@ from sqlalchemy.orm import Session
 
 from lucnt_api.models import TaxRate
 
-# The default rate slab. GST slabs (0/5/12/18/28) and inclusive/exclusive land in
-# T1-10 as additional categories; every regime seeds at least "standard".
+# The default rate slab. GST slabs (0/5/12/18/28) and inclusive/exclusive land
+# as additional categories; every regime seeds at least "standard".
 STANDARD_CATEGORY = "standard"
-# The US regime whose rows are keyed per-state by `US-{state}` jurisdiction (TE-2).
+# The US regime whose rows are keyed per-state by `US-{state}` jurisdiction.
 US_REGIME = "US-Sales-Tax"
 
 
 @dataclass(frozen=True)
 class UsTaxRule:
-    """A US per-state sales/use-tax rule in force on a date (TE-2)."""
+    """A US per-state sales/use-tax rule in force on a date."""
 
     jurisdiction: str  # e.g. "US-TX"
     # standard | use_tax | exempt | no_tax | disputed (see `TaxRate.rule_type`).
     rule_type: str
     rate: Decimal
-    # The `tax_rates` row this came from + its provenance, for the audit trail (TE-6).
+    # The `tax_rates` row this came from + its provenance, for the audit trail.
     rule_id: uuid.UUID
     source: str
 
@@ -89,7 +89,7 @@ def resolve_rate_row(
     category: str = STANDARD_CATEGORY,
     on_date: date,
 ) -> TaxRate:
-    """The in-force regime-level `TaxRate` row (for the applied-rule trail, TE-6).
+    """The in-force regime-level `TaxRate` row (for the applied-rule trail).
 
     Same match as `resolve_rate` (regime-level, ``jurisdiction IS NULL``, effective
     window) but returns the whole row so the caller can stamp `applied_rule_id` /
@@ -119,7 +119,7 @@ def resolve_us_rule(
     on_date: date,
     category: str = STANDARD_CATEGORY,
 ) -> UsTaxRule | None:
-    """The US sales/use-tax rule for a state in force on ``on_date``, or None (TE-2).
+    """The US sales/use-tax rule for a state in force on ``on_date``, or None.
 
     Keyed by the ``US-{state}`` jurisdiction. Returns ``None`` (rather than raising)
     when the state has no configured rule — the caller routes that to the recon

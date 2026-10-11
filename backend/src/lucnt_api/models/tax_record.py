@@ -21,7 +21,7 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "tax_records"
     __table_args__ = (
-        # Unindexed FK (T3-1): `services/tax_reclass.py` and the capture-replay
+        # Unindexed FK: `services/tax_reclass.py` and the capture-replay
         # rebuild both look records up by transaction.
         Index("ix_tax_records_transaction_id", "transaction_id"),
     )
@@ -29,7 +29,7 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     transaction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transactions.id"))
     # e.g. "GST_RCM" (reverse charge), "GST" (domestic), "SALES_TAX", "NONE".
     tax_type: Mapped[str] = mapped_column(String(50))
-    # The GST head this row books (T1-9): "CGST"/"SGST"/"IGST" for India place-of-
+    # The GST head this row books: "CGST"/"SGST"/"IGST" for India place-of-
     # supply, "GST" for the unsplit/fallback path, "NONE" for US. A split domestic
     # supply writes two rows (CGST + SGST); everything else writes one. Needed to
     # produce GSTR-3B (intra-state CGST+SGST vs inter-state/import IGST).
@@ -42,15 +42,14 @@ class TaxRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     reclaim_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 4), default=Decimal("0")
     )
-    # The functional (entity) currency tax_amount/reclaim_amount are computed in
-    # (T1-4) — tax is assessed on the FX-converted local amount, not the foreign
-    # paid amount.
+    # The functional (entity) currency tax_amount/reclaim_amount are computed in —
+    # tax is assessed on the FX-converted local amount, not the foreign paid amount.
     currency: Mapped[str] = mapped_column(String(3))
     legal_reference: Mapped[str] = mapped_column(Text)
     self_invoice_generated: Mapped[bool] = mapped_column(default=False)
     # The exact `tax_rates` row that produced this treatment + a snapshot of its
-    # provenance (TE-6): an auditor can trace "why this rate" without reverse-
-    # engineering the tables. Null for paths that apply no rate (UNCLASSIFIED,
+    # provenance: an auditor can trace "why this rate" without reverse-engineering
+    # the tables. Null for paths that apply no rate (UNCLASSIFIED,
     # CUSTOMS, US-unconfigured).
     applied_rule_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("tax_rates.id"), default=None

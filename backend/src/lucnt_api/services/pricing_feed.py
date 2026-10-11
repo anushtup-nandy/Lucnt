@@ -1,10 +1,10 @@
-"""Server-side pricing feed — resolves date-ranged rates to today's price (F-2).
+"""Server-side pricing feed — resolves date-ranged rates to today's price.
 
 The SDK ships a packaged pricing pack, which means a price change needs a
 client release — and a wrong price books a wrong amount. This service is the
-designed replacement (SCALABILITY_PLAN §5.7 tier iii): the server owns the
-pricing document, resolves any date-ranged rates against *today*, and serves a
-flat pack the SDK merges over its packaged fallback. Date logic lives here so
+designed replacement: the server owns the pricing document, resolves any
+date-ranged rates against *today*, and serves a flat pack the SDK merges over
+its packaged fallback. Date logic lives here so
 the client never grows a date engine; the client receives only flat string
 prices.
 

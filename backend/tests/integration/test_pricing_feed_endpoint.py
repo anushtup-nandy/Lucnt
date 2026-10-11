@@ -1,4 +1,4 @@
-"""Integration tests for GET /pricing/feed (F-2)."""
+"""Integration tests for GET /pricing/feed."""
 
 from __future__ import annotations
 

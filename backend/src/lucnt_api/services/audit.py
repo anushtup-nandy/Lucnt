@@ -1,4 +1,4 @@
-"""Audit-log helper (PRODUCTION_PLAN T0-14).
+"""Audit-log helper.
 
 `record()` appends an audit row within the caller's transaction — it does not
 commit — so the trail lands atomically with the mutation it describes. Callers

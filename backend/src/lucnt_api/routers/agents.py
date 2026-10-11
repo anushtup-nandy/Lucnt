@@ -1,13 +1,14 @@
-"""Agents router — read-only (backend/PLAN.md §4).
+"""Agents router — read-only.
 
-**Owner scoping (F-5, P7.0).** The `agent_owner` persona sees only agents whose
+**Owner scoping.** The `agent_owner` persona sees only agents whose
 `owner_user_id` is theirs, and that narrowing happens **in the SQL** — see
 `scope_agents`. Filtering after the query would still have read the other
 owner's rows out of the database, and would make `total` count rows the caller
-may not see. F-5 closes on the cross-owner leak test, not on a hidden nav item.
+may not see. Scoping is proven by the cross-owner leak test, not by a hidden nav
+item.
 
-`PATCH /agents/{id}` remains out of scope (`frontend/PLAN.md` §14): the auth this
-phase adds unblocks it, but nothing in P7 needs it.
+`PATCH /agents/{id}` remains out of scope: the auth this phase adds unblocks it,
+but nothing in P7 needs it.
 """
 
 from __future__ import annotations

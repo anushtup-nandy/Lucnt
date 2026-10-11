@@ -1,10 +1,9 @@
 """FxRate ORM model — USD-anchored, effective-dated FX reference rates.
 
-The single source of truth for currency conversion at capture (PRODUCTION_PLAN
-T1-1 / T1-5, and effective-dating T1-12). Global reference data (not
-company-scoped): one row per ``(currency, effective_from)`` giving the USD value
-of one unit of that currency from that date onward. The rate for any pair is
-cross-computed via USD by `services/fx.py`, which picks the latest
+The single source of truth for currency conversion at capture. Global reference
+data (not company-scoped): one row per ``(currency, effective_from)`` giving the
+USD value of one unit of that currency from that date onward. The rate for any
+pair is cross-computed via USD by `services/fx.py`, which picks the latest
 ``effective_from <= transaction_date``.
 
 The rate is **never caller-supplied** — a spending agent cannot game its own

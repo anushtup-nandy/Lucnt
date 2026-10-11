@@ -1,4 +1,4 @@
-"""Load test for the authorize→capture money path (F-9).
+"""Load test for the authorize→capture money path.
 
 Until this existed, every performance claim in the plans was *reasoned*
 (`WEB_CONCURRENCY=2` from connection arithmetic, hot-path indexes from query
@@ -15,7 +15,6 @@ Usage (backend running, `scripts/seed_dev.py` applied):
     locust -f backend/loadtest/locustfile.py --headless -u 20 -r 5 -t 300s \
         --host http://127.0.0.1:8000
 
-Results are recorded in docs/LOAD_TEST.md — update it when re-running.
 """
 
 from __future__ import annotations

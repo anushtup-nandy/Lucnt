@@ -1,4 +1,4 @@
-"""Pricing feed router — the server half of the SDK's pricing story (F-2).
+"""Pricing feed router — the server half of the SDK's pricing story.
 
 `GET /pricing/feed` serves the pack the SDK merges over its packaged fallback.
 Date-ranged rates are resolved here against today's UTC date, so a price

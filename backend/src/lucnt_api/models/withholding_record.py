@@ -1,12 +1,11 @@
-"""WithholdingRecord ORM model — India s.195 withholding on a payment (TE-3).
+"""WithholdingRecord ORM model — India s.195 withholding on a payment.
 
 The compliance record beside `tax_records` (GST): the second, independent regime a
 foreign remittance from an India entity owes. The authorize-time **block** lives on
 the authorization's verdict, not here — a persisted record means the remittance
 proceeded, so a record is never itself blocked. Form ids are nullable: the
-15CA/15CB documents are generated later (deferred, like the self-invoice was before
-T1-7). The double-entry GL leg (a TDS-payable liability + any gross-up) is deferred
-pending CA guidance (PRODUCTION_PLAN TE-3).
+15CA/15CB documents are generated later (deferred). The double-entry GL leg (a
+TDS-payable liability + any gross-up) is deferred pending CA guidance.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ class WithholdingRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     __tablename__ = "withholding_records"
     __table_args__ = (
-        # Unindexed FK (T3-1) — records are read back per transaction.
+        # Unindexed FK — records are read back per transaction.
         Index("ix_withholding_records_transaction_id", "transaction_id"),
     )
 
@@ -37,7 +36,7 @@ class WithholdingRecord(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     # DTAA treaty rate (valid TRC + Form 10F on file) vs the domestic default.
     treaty_rate_applied: Mapped[bool] = mapped_column(default=False)
     # 15CA (self-declaration) / 15CB (CA certificate) document ids — nullable until
-    # the documents are actually generated (deferred, TE-3).
+    # the documents are actually generated (deferred).
     form_15ca_id: Mapped[str | None] = mapped_column(String(50), default=None)
     form_15cb_id: Mapped[str | None] = mapped_column(String(50), default=None)
     legal_reference: Mapped[str] = mapped_column(Text, default="")

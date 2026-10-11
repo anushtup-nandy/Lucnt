@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Backend API for the LUCNT platform"
 requires-python = ">=3.12"
 dependencies = [
-    # T4-8: was `fastapi[standard]`, which pulls `fastapi-cli`,
+    # Was `fastapi[standard]`, which pulls `fastapi-cli`,
     # `fastapi-cloud-cli` (a deployment client that talks to a third-party
     # service), `rich-toolkit`, `jinja2`, `python-multipart` and
     # `email-validator` into the deployable image. None is imported anywhere in
@@ -21,16 +21,15 @@ dependencies = [
     "alembic>=1.13",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    # P7.0 dashboard auth. T4-8 removed `python-jose` and `bcrypt` here with
-    # standing instructions: "Reinstate them only alongside the auth feature that
-    # needs them, and prefer `argon2`/`bcrypt` over `python-jose`, which is thinly
-    # maintained." That feature is here, and the instruction is followed —
+    # P7.0 dashboard auth. An earlier cleanup removed `python-jose` and `bcrypt`
+    # here with standing instructions: "Reinstate them only alongside the auth
+    # feature that needs them, and prefer `argon2`/`bcrypt` over `python-jose`,
+    # which is thinly maintained." That feature is here, and the instruction is followed —
     # `python-jose` stays out. It pulled in `ecdsa`, whose Minerva timing attack
     # (PYSEC-2026-1325) the maintainers declared out of scope with **no planned
     # fix**, plus three `pyasn1` CVEs: four of the six findings `pip-audit` once
     # reported. `pyjwt` has neither dependency; `argon2-cffi` is memory-hard and
-    # is what hashes `users.password_hash`. See `security.py` and
-    # `frontend/PLAN.md` §2.
+    # is what hashes `users.password_hash`. See `security.py`.
     "pyjwt>=2.8",
     "argon2-cffi>=23.1",
     "structlog>=24.0",
@@ -38,7 +37,7 @@ dependencies = [
     "uuid6>=2024.1.12",
     "redis>=5.0",
     "prometheus-client>=0.20",
-    # Process manager for the deployable image (T4-1). `uvicorn.workers` is
+    # Process manager for the deployable image. `uvicorn.workers` is
     # deprecated in favour of the separately released `uvicorn-worker`, which is
     # what `infra/gunicorn.conf.py` loads.
     "gunicorn>=22.0",

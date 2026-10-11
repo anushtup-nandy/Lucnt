@@ -1,4 +1,4 @@
-"""TaxRate ORM model — effective-dated statutory tax rates (PRODUCTION_PLAN T1-12).
+"""TaxRate ORM model — effective-dated statutory tax rates.
 
 The single source of truth for the statutory rate applied at capture. Global
 reference data (not company-scoped): one row per ``(regime, category,
@@ -9,7 +9,7 @@ currency, so a rate change (SG GST 7%→8%→9%) never back-applies to a histori
 supply.
 
 ``category`` carries the rate slab (``"standard"`` today; IN GST 0/5/12/18/28 and
-inclusive/exclusive land in T1-10). The rate is **never caller-supplied** — an
+inclusive/exclusive land later). The rate is **never caller-supplied** — an
 agent cannot game its own tax by choosing a rate; it states facts (amount,
 currency, vendor), the system resolves the rate.
 """
@@ -33,7 +33,7 @@ class TaxRate(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # One rate per (regime, category, jurisdiction) per effective date; the
         # resolver orders by effective_from to pick the one in force on the txn date.
         # `jurisdiction` is in the key because many US per-state rows share
-        # (regime, category, effective_from) and differ only by state (TE-2).
+        # (regime, category, effective_from) and differ only by state.
         UniqueConstraint(
             "regime",
             "category",
@@ -48,13 +48,13 @@ class TaxRate(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     # The tax regime the rate belongs to (e.g. "IN-GST", "SG-GST", "US-Sales-Tax").
     regime: Mapped[str] = mapped_column(String(20))
-    # The rate slab within the regime ("standard" today; GST 0/5/12/18/28 in T1-10).
+    # The rate slab within the regime ("standard" today; GST 0/5/12/18/28 later).
     category: Mapped[str] = mapped_column(String(20), default="standard")
     # The sub-regime jurisdiction, for regimes that vary below the regime level: a
-    # US state as ``"US-TX"`` (TE-2). ``None`` for regime-level rows (IN/SG GST),
+    # US state as ``"US-TX"``. ``None`` for regime-level rows (IN/SG GST),
     # which the resolver matches with ``jurisdiction IS NULL``.
     jurisdiction: Mapped[str | None] = mapped_column(String(20), default=None)
-    # How the rate is applied (TE-2): "standard" (charged/self-assessed at `rate`),
+    # How the rate is applied: "standard" (charged/self-assessed at `rate`),
     # "use_tax" (self-accrued), "exempt"/"no_tax" (zero), or "disputed" (never
     # auto-applied — the engine routes it to the recon exception queue).
     rule_type: Mapped[str] = mapped_column(String(20), default="standard")
@@ -62,7 +62,7 @@ class TaxRate(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     rate: Mapped[Decimal] = mapped_column(Numeric(9, 6))
     # The rate applies to supplies dated on/after this date.
     effective_from: Mapped[date] = mapped_column(Date)
-    # The rate stops applying on this date (append-only close-out, TE-6): a change
+    # The rate stops applying on this date (append-only close-out): a change
     # closes the old row (sets `effective_to`) and inserts a new one, never mutating
     # history. ``None`` ⇒ still in force.
     effective_to: Mapped[date | None] = mapped_column(Date, default=None)

@@ -37,13 +37,13 @@ from lucnt_api.models.reconciliation_exception import ReconExceptionType
 # --- Detector defaults (business constants) ---
 # A true double-charge lands within seconds/minutes; a 24h window (with a `<=`
 # boundary) flagged routine agentic commerce — a $5 top-up 20x/day, or daily
-# billing at a gap of *exactly* 24h — as a duplicate forever (PRODUCTION_PLAN
-# T2-5). A tight window + a strict `<` boundary confines the signal to genuine
-# rapid double-charges. Higher-confidence dedup over the card rail wants an
-# idempotency-hash corroboration (P6.5) that the ledger alone cannot provide.
+# billing at a gap of *exactly* 24h — as a duplicate forever. A tight window +
+# a strict `<` boundary confines the signal to genuine rapid double-charges.
+# Higher-confidence dedup over the card rail wants an idempotency-hash
+# corroboration (P6.5) that the ledger alone cannot provide.
 _DUPLICATE_WINDOW = timedelta(minutes=5)
 _OVERCHARGE_FACTOR = Decimal("3")
-# Minimum baseline size *excluding the candidate* (leave-one-out, T2-13): a group
+# Minimum baseline size *excluding the candidate* (leave-one-out): a group
 # needs `_OVERCHARGE_MIN_SAMPLES + 1` charges before any one can be flagged.
 _OVERCHARGE_MIN_SAMPLES = 3
 _SUBSCRIPTION_MIN_OCCURRENCES = 3
@@ -101,7 +101,7 @@ def recurring_identity(view: TxnView) -> str:
 
     ``agent:vendor:amount:currency`` using the same vendor/amount canonicalisation
     the detectors group by, so the recon layer can dedupe recurring exceptions
-    (a dismissed subscription must not re-flag next month — T2-7) on exactly the
+    (a dismissed subscription must not re-flag next month) on exactly the
     identity the detectors treat as "the same charge".
     """
     return (
@@ -114,7 +114,7 @@ def _longest_monthly_run(gaps: Sequence[int], lo: int, hi: int) -> int:
     """Length of the longest run of *consecutive* gaps inside ``[lo, hi]`` days.
 
     A subscription is a run of regular monthly gaps; isolated monthly-length gaps
-    scattered among irregular ones are not (PRODUCTION_PLAN T2-16).
+    scattered among irregular ones are not.
     """
     best = run = 0
     for g in gaps:
@@ -161,7 +161,7 @@ def detect_duplicates(
         for i in range(1, len(ordered)):
             current = ordered[i]
             # Strict `<`: a gap of *exactly* the window (e.g. clockwork daily
-            # billing) is a cadence, not a double-charge (T2-5).
+            # billing) is a cadence, not a double-charge.
             original = next(
                 (
                     prior
@@ -203,10 +203,10 @@ def detect_overcharges(
     *other* charges to that vendor **in the same currency**. Two corrections vs a
     naive median-of-all:
 
-    - **Same-currency grouping (T2-1):** a median across currencies is
+    - **Same-currency grouping:** a median across currencies is
       meaningless — a routine ¥1,500 (~$10) charge would read as a ~$1,489
       overcharge against a USD baseline. The currency is part of the group key.
-    - **Leave-one-out baseline (T2-13):** each charge is compared to the median of
+    - **Leave-one-out baseline:** each charge is compared to the median of
       the *other* charges, so a lone outlier cannot inflate the very baseline it is
       judged against. A group needs more than `min_samples` charges (so the
       baseline still has `min_samples`) before anything is flagged.
@@ -257,7 +257,7 @@ def detect_unused_subscriptions(
     resolve time (there is no per-subscription usage telemetry). Requires at least
     `min_occurrences` charges forming a **consecutive run** of ``min_occurrences -
     1`` monthly-cadence gaps: gaps are *rounded* to whole days (not truncated, so a
-    30.9-day gap counts as 31, not 30 — T2-16), and scattered one-off matches among
+    30.9-day gap counts as 31, not 30), and scattered one-off matches among
     irregular gaps do not qualify.
     """
     lo, hi = cadence_days

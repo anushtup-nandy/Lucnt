@@ -1,11 +1,11 @@
-"""recon_exception_type += tax_unclassified (TE-1b conservative-default flag)
+"""recon_exception_type += tax_unclassified (conservative-default flag)
 
 Revision ID: b2c3d4e5f6a7
 Revises: a1f2b3c4d5e6
 Create Date: 2026-07-22 10:15:00.000000
 
 When a spend hits a vendor with no place-of-supply data, the tax engine can no
-longer silently guess import-vs-domestic from currency (PRODUCTION_PLAN TE-1). It
+longer silently guess import-vs-domestic from currency. It
 books a conservative no-phantom treatment and the money path opens a recon
 exception so a finance admin enriches the vendor. That needs a new
 `recon_exception_type` value — this one is *capture-emitted*, unlike the ledger

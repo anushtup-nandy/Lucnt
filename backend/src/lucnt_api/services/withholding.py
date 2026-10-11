@@ -1,4 +1,4 @@
-"""India s.195 withholding-tax engine (PRODUCTION_PLAN TE-3).
+"""India s.195 withholding-tax engine.
 
 A **second, independent regime check beside GST**: every India-entity → foreign
 (non-resident) vendor payment owes income-tax withholding under s.195, *in
@@ -17,10 +17,9 @@ Form 10F; otherwise the higher domestic default applies. Above the 15CB threshol
 CA certificate is required, so a remittance whose treaty position cannot be
 certified (docs missing) is **held for documentation** rather than remitted blind.
 
-**Not modelled here (deferred, noted in PRODUCTION_PLAN TE-3):** the double-entry
-GL leg (a TDS-payable liability + any gross-up — needs CA guidance on who bears the
-tax) and the actual 15CA/15CB document generation (the record carries nullable form
-ids, as the self-invoice did before T1-7).
+**Not modelled here (deferred):** the double-entry GL leg (a TDS-payable liability
++ any gross-up — needs CA guidance on who bears the tax) and the actual 15CA/15CB
+document generation (the record carries nullable form ids).
 """
 
 from __future__ import annotations
@@ -59,7 +58,7 @@ def determine_withholding(
     domestic_rate: Decimal,
     cb_threshold: Decimal,
 ) -> WithholdingOutcome:
-    """Compute s.195 withholding for a payment (TE-3).
+    """Compute s.195 withholding for a payment.
 
     Args:
         buyer_country: The paying entity's ISO country. Withholding applies only

@@ -1,10 +1,10 @@
 """Dashboard auth end-to-end: login, refresh, the discriminator, and scoping.
 
-`frontend/PLAN.md` §13 names the four things here that can be silently wrong:
+Four things here can be silently wrong:
 
 * the **auth-context discriminator** — two principal types on one header, where a
   mis-parse is an auth bypass rather than a 401;
-* the **cross-owner leak** (F-5) — an `agent_owner` must not be able to read
+* the **cross-owner leak** — an `agent_owner` must not be able to read
   another owner's agent, and the closing evidence is this test, not a hidden nav
   item;
 * **role gating** — a page a role cannot see must have an endpoint it cannot call;
@@ -295,14 +295,14 @@ def test_logout_clears_the_cookie(client: TestClient, world: World) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# F-5 — the cross-owner leak test
+# The cross-owner leak test
 # --------------------------------------------------------------------------- #
 
 
 def test_an_agent_owner_cannot_list_another_owners_agent(
     client: TestClient, world: World
 ) -> None:
-    """**F-5 closes on this.** Scoping is in the SQL, not in the sidebar."""
+    """**Closes the cross-owner leak.** Scoping is in the SQL, not in the sidebar."""
     token = _login(client, world.users[UserRole.AGENT_OWNER])
     body = client.get("/agents", headers=_auth(token)).json()
     slugs = {item["slug"] for item in body["items"]}

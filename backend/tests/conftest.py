@@ -4,7 +4,7 @@ Requires `alembic upgrade head` to have been run against the target database
 first -- these are integration tests against the real migrated schema, not a
 SQLAlchemy `create_all()` shortcut.
 
-**Which database (T4-12).** Set `TEST_DATABASE_URL` and the suite runs against
+**Which database.** Set `TEST_DATABASE_URL` and the suite runs against
 it; leave it unset and it falls back to `DATABASE_URL`, i.e. the developer's own
 database, with a warning. The fallback is safe for the suite itself (every
 fixture rolls its transaction back) but not for CI's migration round-trip, which
@@ -49,7 +49,7 @@ def resolved_engine() -> Engine:
 
 @pytest.fixture(autouse=True, scope="session")
 def _startup_checks_off() -> Iterator[None]:
-    """Skip the lifespan readiness check for the suite (T4-12).
+    """Skip the lifespan readiness check for the suite.
 
     `TestClient(app)` runs the real lifespan, whose check pings the module-level
     engine in `database.py`. Tests never use that engine -- routes are served
@@ -68,7 +68,7 @@ def _startup_checks_off() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _rate_limiting_off() -> Iterator[None]:
-    """Disable rate limiting for the suite, and say why explicitly (T3-7).
+    """Disable rate limiting for the suite, and say why explicitly.
 
     Redis runs in local compose, so leaving the limiter on would make the suite
     depend on wall-clock windows and on counters surviving between runs: the

@@ -1,14 +1,14 @@
-"""Books router — read-only financial statements (backend/PLAN.md §4, Module 2/4).
+"""Books router — read-only financial statements.
 
 Every figure derives from `journal_entries` joined to `transactions` (for
 company/entity scope) and `accounts` (for category). Nothing here writes; the
 journal is produced at capture time by `services/journal_generator.py`.
 
-**Per-currency (PRODUCTION_PLAN T1-1).** Journal lines carry a functional
-currency; a statement only balances *within* one currency. Every figure is
-grouped and totalled per currency, so a company spanning entities in INR/SGD/USD
-gets one set of per-currency totals rather than a single meaningless mixed sum.
-A consolidated (FX-translated) view is deferred to T1-6.
+**Per-currency.** Journal lines carry a functional currency; a statement only
+balances *within* one currency. Every figure is grouped and totalled per currency,
+so a company spanning entities in INR/SGD/USD gets one set of per-currency totals
+rather than a single meaningless mixed sum. A consolidated (FX-translated) view
+is deferred.
 """
 
 from __future__ import annotations
@@ -86,8 +86,8 @@ router = APIRouter(
 
 _ZERO = Decimal("0")
 _RETAINED_EARNINGS_NAME = "Retained Earnings"
-# Category for a posted line whose account code resolves to no CoA account
-# (T1-21) — surfaced loudly rather than silently dropped by an inner join.
+# Category for a posted line whose account code resolves to no CoA account —
+# surfaced loudly rather than silently dropped by an inner join.
 _UNMAPPED = "unmapped"
 
 _FROM_DESC = "Include transactions on/after this date (YYYY-MM-DD)"
@@ -102,7 +102,7 @@ def _as_dt(day: date) -> datetime:
 def _posting_date_conditions(
     date_from: date | None, date_to: date | None
 ) -> list[ColumnElement[bool]]:
-    """Restrict a journal line's `posting_date` to a period (T1-17/T1-21).
+    """Restrict a journal line's `posting_date` to a period.
 
     The statements periodise off the line's own ``posting_date``, so they are true
     period statements independent of any transaction join and cover manual/funding/
@@ -141,7 +141,7 @@ class _Aggregate:
     debit: Decimal
     credit: Decimal
     # Number of journal lines behind these totals. Only the general ledger reads
-    # it (T3-2); the trial balance and P&L ignore it.
+    # it; the trial balance and P&L ignore it.
     line_count: int = 0
 
 
@@ -248,7 +248,7 @@ def _gl_entries(
     """One page of a single account's journal lines, keyed by (code, currency).
 
     Scoped to one account and bounded by `page` so the general ledger never
-    materialises the whole journal (T3-2). Ordered by currency then posting time
+    materialises the whole journal. Ordered by currency then posting time
     so paging is stable; a page may therefore straddle two currency sections of
     the same account.
 
@@ -393,7 +393,7 @@ def get_general_ledger(
 ) -> GeneralLedgerResponse:
     """General ledger: every posted account/currency with its totals and balance.
 
-    Two shapes, because the line-level view is the only unbounded one (T3-2):
+    Two shapes, because the line-level view is the only unbounded one:
 
     * **Listing** (no `account`) — totals per account/currency, computed by a
       SQL `GROUP BY`. Costs one row per account, not one per journal line, so it
@@ -650,7 +650,7 @@ def get_cash_flow(
     return CashFlowResponse(operating=operating, currencies=currencies)
 
 
-# --- Write endpoints: manual journals + funding (T1-18) ----------------------
+# --- Write endpoints: manual journals + funding -----------------------------
 
 
 def _post_journal(
@@ -666,7 +666,7 @@ def _post_journal(
     """Build, balance-check and stage a set of self-sufficient journal lines.
 
     Each spec is ``(account_code, debit, credit)``. The lines carry no
-    ``transaction_id`` (T1-18) and must reference real CoA accounts and balance
+    ``transaction_id`` and must reference real CoA accounts and balance
     (Σ debit == Σ credit). Does not commit — the caller owns audit + commit.
     """
     entries: list[JournalEntry] = []
@@ -736,7 +736,7 @@ def create_manual_journal(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> PostedJournalResponse:
-    """Post a balanced manual journal — an accrual, prepaid, or correction (T1-18).
+    """Post a balanced manual journal — an accrual, prepaid, or correction.
 
     Admin-scoped and audited. Booked in the entity's functional currency; the
     lines must reference real CoA accounts and balance.
@@ -784,7 +784,7 @@ def create_funding(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> PostedJournalResponse:
-    """Fund an entity's wallet: Dr Wallet / Cr Contributed Capital (T1-18).
+    """Fund an entity's wallet: Dr Wallet / Cr Contributed Capital.
 
     The funding/opening-balance entry the ledger previously lacked — without it
     every balance sheet showed negative cash & equity from day one (the wallet was
@@ -840,7 +840,7 @@ def settle_taxes(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TaxSettlementResponse:
-    """Book a return-cycle GST settlement, clearing Payable against ITC (T1-11).
+    """Book a return-cycle GST settlement, clearing Payable against ITC.
 
     Nets the period's accumulated output GST (the per-head Payable accounts) against
     input tax credit (the per-head ITC accounts), books the residual as GST Payable

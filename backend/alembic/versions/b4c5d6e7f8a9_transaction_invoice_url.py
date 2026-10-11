@@ -1,4 +1,4 @@
-"""persist the capture contract's invoice_url (F-12)
+"""persist the capture contract's invoice_url
 
 `CaptureRequest.invoice_url` has been accepted and length-validated since P1
 and then silently dropped — `transactions` had no column for it, so a caller

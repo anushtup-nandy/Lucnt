@@ -23,7 +23,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create the append-only audit_logs table (PRODUCTION_PLAN T0-14)."""
+    """Create the append-only audit_logs table."""
     op.create_table(
         "audit_logs",
         sa.Column("id", sa.Uuid(), nullable=False),

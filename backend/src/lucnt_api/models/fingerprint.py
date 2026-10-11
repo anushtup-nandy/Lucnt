@@ -5,13 +5,13 @@ summary of how it spends (mean/stddev amount, top vendors, active hours, daily
 velocity) plus an `anomaly_score` for its most out-of-pattern recent spend. The
 intelligence layer recomputes it from the ledger (`POST /intelligence/recompute`)
 rather than on the capture path, so the frozen `authorize→capture` spine stays
-lane-agnostic (`CLAUDE.local.md`) — exactly like the Phase 4 recovery scan.
+lane-agnostic — exactly like the Phase 4 recovery scan.
 
 Exactly one fingerprint exists per agent (`uq_fingerprints_agent`); recompute
 upserts it in place, so `created_at` records when the agent was first
 fingerprinted and `last_updated` when it was last refreshed. The fingerprint is
 the heart of the switching cost: it accrues value with every transaction and
-resets to zero on any competitor (`docs/Ledgr-Master-Document.md` M8).
+resets to zero on any competitor.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class Fingerprint(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         # One fingerprint per agent, ever — recompute upserts this row rather
         # than appending, so the fingerprint is a single evolving record.
         UniqueConstraint("agent_id", name="uq_fingerprints_agent"),
-        # Company-scoped reads during recompute (T3-1); agent_id is unique already.
+        # Company-scoped reads during recompute; agent_id is unique already.
         Index("ix_fingerprints_company_id", "company_id"),
     )
 
@@ -49,7 +49,7 @@ class Fingerprint(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     feature_vector: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     # Max z-score among the agent's recent spends vs its own baseline — a rolling
     # "how out of pattern is it lately" health signal. NUMERIC, never FLOAT
-    # (sdk/PLAN.md: Decimal not float).
+    # (Decimal, not float).
     anomaly_score: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"))
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

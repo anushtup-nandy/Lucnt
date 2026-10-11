@@ -1,8 +1,8 @@
 """Pydantic schemas for the transactions router.
 
 `SpendRequest`/`Verdict`/`Transaction` mirror `sdk/src/lucnt/models.py`
-field-for-field: this is the frozen wire contract (sdk/PLAN.md §1). Do not
-add, rename, or drop a field here without updating the SDK models in lockstep.
+field-for-field: this is the frozen wire contract. Do not add,
+rename, or drop a field here without updating the SDK models in lockstep.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ class SpendRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # Every `max_length` below mirrors the column the value lands in (T3-8).
+    # Every `max_length` below mirrors the column the value lands in.
     # Without them an oversized string passes validation and fails in Postgres as
     # a 500 `DataError`; with them the caller gets a 422 naming the field.
     agent: str = Field(min_length=1, max_length=AGENT_SLUG_MAX)
@@ -48,9 +48,9 @@ class SpendRequest(BaseModel):
     vendor: str = Field(min_length=1, max_length=VENDOR_MAX)
     # Money must be strictly positive: a zero/negative authorize would *reduce*
     # projected spend and always approve, and a negative capture would decrement
-    # spent_ytd (a budget-refund / theft primitive). See PRODUCTION_PLAN T0-4.
+    # spent_ytd (a budget-refund / theft primitive).
     amount: Decimal = Field(gt=0)
-    # Mandatory (T1-5): the caller always states the currency it paid in — the one
+    # Mandatory: the caller always states the currency it paid in — the one
     # fact only it knows. Never silently defaulted, so a foreign spend can never be
     # mislabelled as domestic. Validated to an ISO-4217 shape and upper-cased.
     currency: str
@@ -59,16 +59,16 @@ class SpendRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=REASON_MAX)
     intent: str | None = Field(default=None, max_length=INTENT_MAX)
     project: str | None = Field(default=None, max_length=PROJECT_MAX)
-    # Optional expense category (T1-19): a known category
+    # Optional expense category: a known category
     # (software|ai_compute|travel|marketing|general) books to that account and
-    # drives blocked-ITC (T1-14); an unknown value falls back to vendor inference.
+    # drives blocked-ITC; an unknown value falls back to vendor inference.
     category: str | None = Field(default=None, max_length=CATEGORY_MAX)
-    # Tax slab + inclusive/exclusive (T1-10). `tax_category` picks the GST rate slab
+    # Tax slab + inclusive/exclusive. `tax_category` picks the GST rate slab
     # (e.g. "gst_5"|"gst_12"|"gst_28"; omitted ⇒ "standard"); `tax_inclusive` says
     # whether a domestic amount embeds GST (default) or has it added on top.
     tax_category: str | None = Field(default=None, max_length=TAX_CATEGORY_MAX)
     tax_inclusive: bool = True
-    # Whether the purchase is a service or goods (TE-4). A cross-border *goods*
+    # Whether the purchase is a service or goods. A cross-border *goods*
     # spend routes to a customs path, never the services reverse charge; defaults to
     # ``service`` (agent spend is ~all services), so existing callers are unaffected.
     supply_type: Literal["service", "goods"] = "service"
@@ -123,17 +123,17 @@ class CaptureRequest(BaseModel):
 
     authorization_id: uuid.UUID
     source: Literal["sdk", "card", "invoice"] = "sdk"
-    # Evidence link persisted on the transaction (F-12) and readable back via
+    # Evidence link persisted on the transaction and readable back via
     # GET /transactions/{id}; the M3 invoice hook is its structured consumer.
     invoice_url: str | None = Field(default=None, max_length=URL_MAX)
-    # A settlement override, when present, must be strictly positive (T0-4); its
-    # upper bound versus the authorized amount is enforced in the router (T0-3).
+    # A settlement override, when present, must be strictly positive; its
+    # upper bound versus the authorized amount is enforced in the router.
     amount: Decimal | None = Field(default=None, gt=0)
     model: str | None = Field(default=None, max_length=MODEL_NAME_MAX)
     tokens: int | None = Field(default=None, ge=0)
-    # F-8: True when the booked amount is the authorize-time estimate rather
-    # than settled actual usage — the SDK's T5-1 fallback sets this so the
-    # ledger can distinguish an estimate from truth instead of an ERROR log.
+    # True when the booked amount is the authorize-time estimate rather than
+    # settled actual usage — the SDK's fallback sets this so the ledger can
+    # distinguish an estimate from truth instead of an ERROR log.
     estimated: bool = False
 
 
@@ -188,9 +188,9 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
-    # F-8: echoes the request flag so the caller can see what the ledger booked.
+    # Echoes the request flag so the caller can see what the ledger booked.
     estimated: bool = False
-    # F-12: echoes the persisted evidence link (readable back via GET too).
+    # Echoes the persisted evidence link (readable back via GET too).
     invoice_url: str | None = None
     journal: list[JournalLine] = Field(default_factory=list)
     tax: TaxInfo | None = None
@@ -216,15 +216,15 @@ class TransactionDetail(BaseModel):
     intent: str | None
     model_used: str | None
     tokens_consumed: int | None
-    # F-8: the booked amount is an unsettled estimate (see `CaptureRequest`).
+    # The booked amount is an unsettled estimate (see `CaptureRequest`).
     estimated: bool
-    # F-12: the evidence link supplied at capture, if any.
+    # The evidence link supplied at capture, if any.
     invoice_url: str | None
     status: str
     # `transactions.status` has exactly one member (`completed`), so `is_reversed`
     # is what actually distinguishes a live capture from a reversed one — and the
-    # `reversed=` filter (P7.0) would otherwise return rows the client cannot
-    # label. Mirrors why F-8 added `estimated` to this schema.
+    # `reversed=` filter would otherwise return rows the client cannot label.
+    # Mirrors why `estimated` is on this schema.
     is_reversed: bool
     reason_text: str | None
     failure_reason: str | None
@@ -238,7 +238,7 @@ class TransactionFull(TransactionDetail):
     be an N+1 per page; on a single row they are two queries, and the dashboard's
     transaction detail is meaningless without them: the balanced double entry is
     the product's central claim, and a page that asserts it without showing it is
-    the façade `docs/production/plan2.md` F-3 says not to build.
+    a façade.
     """
 
     tax: TaxInfo | None = None
@@ -258,7 +258,7 @@ class VoidRequest(BaseModel):
     """Request body for `POST /transactions/void`. Mirrors `sdk.ledger.void()`.
 
     Releases an approved-but-uncaptured hold so it stops reserving the agent's
-    budget (T5-4). Used when the spend the hold was taken for did not happen —
+    budget. Used when the spend the hold was taken for did not happen —
     the vendor call failed after `authorize()` returned, say.
     """
 

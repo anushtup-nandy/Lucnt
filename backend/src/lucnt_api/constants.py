@@ -1,4 +1,4 @@
-"""Request-input bounds shared by the schemas (T3-8).
+"""Request-input bounds shared by the schemas.
 
 Two kinds of constant live here, and the distinction matters:
 
