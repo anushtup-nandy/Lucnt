@@ -1,8 +1,4 @@
-"""Public exception hierarchy for the lucnt SDK.
-
-Every error the SDK raises inherits from `LucntError` so callers can catch
-one type and still discriminate on subclass when they need to.
-"""
+"""Public exception hierarchy; everything inherits from `LucntError`."""
 
 from __future__ import annotations
 
@@ -18,25 +14,14 @@ class ConfigurationError(LucntError):
 class TransportError(LucntError):
     """Raised on network failures, timeouts, and 5xx responses.
 
-    These are the retryable failures: nothing is known about whether the
-    server acted, so a retry must carry the original idempotency key.
+    Retryable, but the server may have acted: retry with the same idempotency key.
     """
 
 
 class ContractError(LucntError):
     """Raised when a 2xx response does not match the contract the SDK expects.
 
-    Sits between the two neighbours it is deliberately *not*: `APIError` is the
-    API refusing on purpose, and `TransportError` is retryable. This is neither.
-    A body that failed to parse, lacked an expected key, or failed model
-    validation will fail identically on a retry, so it must never be retried —
-    it means this SDK version and the backend disagree about the wire contract.
-
-    Before this existed, those three failures escaped as a raw
-    `json.JSONDecodeError`, `KeyError`, or `pydantic.ValidationError` — outside
-    the hierarchy, so `except LucntError` missed them and a caller's money-path
-    error handling did not cover the case where the SDK could not read the
-    verdict it had just been given.
+    Not retryable: the SDK version and backend disagree on the wire contract.
 
     Attributes:
         path: The API path whose response could not be read, when known.
@@ -51,14 +36,9 @@ class ContractError(LucntError):
 class APIError(LucntError):
     """Base for 4xx responses the API returned deliberately.
 
-    Carries the parsed `detail` rather than the raw response body — a 4xx from
-    an edge proxy is often HTML, and interpolating that into a message is how
-    a stack trace ends up with a page of markup in it.
-
     Attributes:
         status_code: The HTTP status code, or None if unavailable.
-        detail: The API's `detail` field when the body was JSON, else a
-            truncated snippet of the response text.
+        detail: The API's JSON `detail`, else a truncated body snippet.
         request_id: The `X-Request-Id` echoed by the backend, for support.
     """
 
@@ -82,10 +62,7 @@ class AuthError(APIError):
 
 
 class InvalidRequestError(APIError):
-    """Raised on 400/422: the request was malformed or failed validation.
-
-    Never retry this — the same request will fail identically.
-    """
+    """Raised on 400/422: the request was malformed. Never retry."""
 
 
 class NotFoundError(APIError):
@@ -95,10 +72,8 @@ class NotFoundError(APIError):
 class ConflictError(APIError):
     """Raised on 409: the request collided with the resource's current state.
 
-    Note this is *not* how a duplicate `capture()` surfaces — the backend
-    dedupes a retried capture on `authorization_id` and replays the original
-    transaction with a 200. A 409 from capture means something genuinely
-    different, e.g. capturing an authorization that policy blocked.
+    A retried `capture()` is replayed with 200, not 409; a 409 means e.g.
+    capturing a blocked authorization.
     """
 
 
@@ -106,8 +81,7 @@ class RateLimitError(APIError):
     """Raised on 429: the API's rate limiter rejected the request.
 
     Attributes:
-        retry_after: Seconds to wait, parsed from the `Retry-After` header,
-            or None when the server did not send one.
+        retry_after: Seconds from `Retry-After`, or None if absent.
     """
 
     def __init__(
@@ -129,22 +103,15 @@ class RateLimitError(APIError):
 class IdempotencyConflict(LucntError):
     """Raised when one `operation()` scope is used for two different spends.
 
-    The server replays the first hold for a repeated idempotency key *without
-    comparing the payload*, so a second, materially different spend under the
-    same op id would be handed a verdict belonging to the first one. That is a
-    silent double-book in the opposite direction — an unapproved spend reported
-    as approved — so the SDK refuses locally instead.
-
-    One `operation()` scope is one logical spend. Open a separate scope per
-    spend, or pass an explicit `idempotency_key=` to opt out.
+    The server replays the first verdict for a repeated key without comparing
+    payloads. Use one scope per spend, or pass an explicit `idempotency_key=`.
     """
 
 
 class PolicyBlocked(LucntError):
     """Raised by `authorize()`/`spend()` in strict mode on a non-approved verdict.
 
-    Carries the verdict's `status` (blocked/review/human_hold), machine-readable
-    `code`, and human `reason` so callers that catch it can still branch.
+    Carries the verdict's `status`, machine-readable `code`, and `reason`.
     """
 
     def __init__(
@@ -163,8 +130,4 @@ class PolicyBlocked(LucntError):
 
 
 class BudgetExhausted(PolicyBlocked):
-    """A `PolicyBlocked` whose `code == "budget_exhausted"`.
-
-    Subclasses `PolicyBlocked` so `except PolicyBlocked` catches budget blocks
-    too, while callers who care specifically can catch `BudgetExhausted`.
-    """
+    """A `PolicyBlocked` whose `code == "budget_exhausted"`."""

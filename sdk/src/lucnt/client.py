@@ -1,20 +1,7 @@
-"""Internal HTTP transport for the lucnt SDK — synchronous and async.
+"""Internal HTTP transport (sync and async): typed errors, idempotency, retries.
 
-`Transport` / `AsyncTransport` are the single choke point every SDK call
-(`authorize`, `capture`, `spend`, ...) routes through. They map HTTP failures
-onto the typed exception hierarchy in `exceptions.py` so callers never see a
-bare `httpx` exception, forward the caller's `Idempotency-Key` so a retried
-write replays server-side instead of double-booking, and retry transient
-failures with jittered exponential backoff.
-
-**The two share every decision and differ only in the lines that do I/O**.
-Retry eligibility, the attempt count, the backoff schedule, response
-classification, and the status→exception mapping are all module-level and pure;
-each class contributes a short loop around them. That split is deliberate rather
-than tidy: a divergence in *which* failures the async path retries, or in
-whether it sends the idempotency key, is a double-booked spend — not a cosmetic
-inconsistency. Sharing the decisions makes such a drift impossible to introduce
-in one path only.
+All retry/classification decisions are shared module-level functions, so the
+sync and async paths cannot drift (a drift here is a double-booked spend).
 """
 
 from __future__ import annotations
@@ -42,18 +29,12 @@ from lucnt.models import LucntConfig
 
 _USER_AGENT = f"lucnt-python/{__version__}"
 
-# The backend persists the key in a String(255) column with a partial unique
-# index on (company_id, idempotency_key). Declared here, beside the header that
-# carries it, and read by every producer of a key — a second copy of this number
-# is a copy that eventually disagrees with the column.
+# Matches the backend's String(255) idempotency_key column.
 MAX_IDEMPOTENCY_KEY_CHARS = 255
 
-# A 4xx from an edge proxy is often an HTML error page. Cap what reaches the
-# exception message so a traceback never carries a screenful of markup.
+# Edge-proxy 4xx bodies are often HTML; keep them out of tracebacks.
 _MAX_DETAIL_CHARS = 200
 
-# Methods with no side effect, so a retry is safe even without an idempotency
-# key. Everything else must opt in — see `Transport.request(retry_safe=...)`.
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 _STATUS_EXCEPTIONS: dict[int, type[APIError]] = {
@@ -68,24 +49,10 @@ _STATUS_EXCEPTIONS: dict[int, type[APIError]] = {
 
 
 def check_idempotency_key(value: str, source: str) -> str:
-    """Validate a key against the server's column before it can silently collide.
-
-    A blank key is the dangerous case: it is falsy server-side, so it would
-    either be ignored (no dedupe at all, and the caller believes they have it) or
-    dedupe *every* blank-keyed request in the company against the first one. An
-    over-long key would be truncated into a collision with whatever shares its
-    first 255 characters.
-
-    Args:
-        value: The candidate key.
-        source: What produced it, named in the error message — e.g.
-            `"operation() op_id"` or `"idempotency_key"`.
-
-    Returns:
-        The key, whitespace-stripped.
+    """Strip and validate an idempotency key; blank or over-long keys would collide.
 
     Raises:
-        ConfigurationError: The key is blank or longer than the column.
+        ConfigurationError: The key is blank or longer than 255 characters.
     """
     cleaned = value.strip()
     if not cleaned:
@@ -99,43 +66,22 @@ def check_idempotency_key(value: str, source: str) -> str:
 
 
 def _sleep(seconds: float) -> None:
-    """Block between retry attempts.
-
-    A module-level indirection so tests can assert the backoff *schedule*
-    without spending real wall-clock on it.
-    """
+    """Block between retry attempts (module-level so tests can patch it)."""
     time.sleep(seconds)
 
 
 async def _asleep(seconds: float) -> None:
-    """Yield to the event loop between retry attempts.
-
-    The async twin of `_sleep`, and patched the same way in tests. Never
-    `time.sleep` here: blocking the loop for a backoff delay would stall every
-    other coroutine in the process, which is the whole failure the async
-    transport exists to remove.
-    """
+    """Yield to the event loop between retry attempts (async `_sleep`)."""
     await asyncio.sleep(seconds)
 
 
 def truncate_body(text: str) -> str:
-    """Cap a response body to what may safely appear in an error message.
-
-    Shared with `ledger.py`, which quotes an unreadable body in a
-    `ContractError`: one policy for "never put a screenful of an edge proxy's
-    HTML into a traceback", applied wherever a body reaches a message.
-    """
+    """Cap a response body to what may safely appear in an error message."""
     return text.strip()[:_MAX_DETAIL_CHARS]
 
 
 def _parse_detail(response: httpx.Response) -> str | None:
-    """Pull FastAPI's `detail` out of an error body, falling back to text.
-
-    Returns None when the body is empty. Never returns more than
-    `_MAX_DETAIL_CHARS` characters. Safe on an async response: both transports
-    read the body in full before classifying, so `.json()` / `.text` never
-    block here.
-    """
+    """Pull FastAPI's `detail` out of an error body, falling back to truncated text."""
     try:
         payload = response.json()
     except ValueError:
@@ -146,11 +92,7 @@ def _parse_detail(response: httpx.Response) -> str | None:
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:
-    """Read `Retry-After` as seconds, ignoring the HTTP-date form.
-
-    The backend's limiter always sends delta-seconds; a date-form
-    header from an intermediary is dropped rather than guessed at.
-    """
+    """Read `Retry-After` as seconds, ignoring the HTTP-date form."""
     raw = response.headers.get("Retry-After")
     if raw is None:
         return None
@@ -185,24 +127,14 @@ def _raise_for_error(response: httpx.Response, path: str) -> None:
 
 @dataclass(frozen=True)
 class _Transient:
-    """A failure worth retrying, carrying what to raise if attempts run out.
-
-    Returned rather than raised so the caller's loop decides between sleeping
-    and giving up — the one decision that differs between the sync and async
-    transports (`_sleep` vs `await _asleep`).
-    """
+    """A retryable failure, carrying what to raise if attempts run out."""
 
     error: TransportError
     retry_after: float | None = None
 
 
 def _transient_from_exc(exc: httpx.HTTPError, path: str) -> _Transient:
-    """Wrap an httpx-level failure as a retryable `_Transient`.
-
-    A timeout gets its own message because it is the one network failure a
-    caller can act on by raising `read_timeout` rather than by investigating
-    connectivity.
-    """
+    """Wrap an httpx-level failure as a retryable `_Transient`."""
     if isinstance(exc, httpx.TimeoutException):
         error = TransportError(f"Request to {path} timed out")
     else:
@@ -214,19 +146,9 @@ def _transient_from_exc(exc: httpx.HTTPError, path: str) -> _Transient:
 def _classify(
     response: httpx.Response, path: str, *, last_attempt: bool
 ) -> httpx.Response | _Transient:
-    """Decide what a response means: success, retryable, or a typed refusal.
+    """Classify a response: success, retryable (5xx/429), or raise a typed 4xx.
 
-    A 4xx other than 429 is never retried — a policy block is an answer, not a
-    blip, and repeating it just burns the agent's latency budget to be refused
-    again. A 429 *is* retryable, but on the final attempt the caller gets the
-    typed `RateLimitError` (carrying `retry_after`) so it can schedule its own
-    retry rather than a bare `TransportError`.
-
-    Returns:
-        The response itself on success, or a `_Transient` to retry.
-
-    Raises:
-        APIError: Any deliberate 4xx (subclass per `_STATUS_EXCEPTIONS`).
+    On the last attempt a 429 raises `RateLimitError` (with `retry_after`).
     """
     if response.status_code < 400:
         return response
@@ -252,10 +174,7 @@ def _attempt_count(
 ) -> int:
     """How many times this request may be sent.
 
-    Conservative by default: a request is retried only if it is a safe method,
-    carries an idempotency key, or the call site opted in. An unkeyed POST is
-    **not** retried — it may have landed server-side before the connection
-    dropped, and repeating it is the double-book.
+    An unkeyed POST is never retried: it may already have landed server-side.
     """
     eligible = (
         retry_safe or method.upper() in _SAFE_METHODS or idempotency_key is not None
@@ -266,16 +185,9 @@ def _attempt_count(
 def _backoff_delay(
     config: LucntConfig, attempt: int, retry_after: float | None
 ) -> float:
-    """Seconds to wait before `attempt` (0-based), capped by `backoff_max`.
+    """Seconds to wait before `attempt` (0-based): full-jitter exponential backoff.
 
-    Exponential with **full jitter** — a uniform draw from `[0, window)` rather
-    than the window itself. Without it, every client that failed on the same
-    blip retries in the same millisecond and reproduces the load that caused the
-    failure.
-
-    A server-sent `Retry-After` wins when honoured, but is still capped: a
-    hostile or misconfigured intermediary must not be able to park the caller's
-    agent for an hour.
+    `Retry-After` wins when honoured but is still capped by `backoff_max`.
     """
     if retry_after is not None and config.respect_retry_after:
         return min(retry_after, config.backoff_max)
@@ -291,12 +203,7 @@ def _idempotency_headers(idempotency_key: str | None) -> dict[str, str] | None:
 
 
 def _timeout(config: LucntConfig) -> httpx.Timeout:
-    """Build the per-phase timeout both transports use.
-
-    The connect/read split exists because connect and read fail for different reasons
-    — a dead host should give up fast, a slow policy evaluation should not. Both
-    fall back to the overall timeout.
-    """
+    """Build the per-phase timeout; unset phases fall back to the overall one."""
     return httpx.Timeout(
         config.timeout,
         connect=config.connect_timeout or config.timeout,
@@ -318,14 +225,7 @@ class Transport:
     def __init__(
         self, config: LucntConfig, *, transport: httpx.BaseTransport | None = None
     ) -> None:
-        """Build the pooled client.
-
-        Args:
-            config: Resolved SDK configuration (API key, base URL, timeouts,
-                retry policy).
-            transport: Optional `httpx.BaseTransport` override, used in tests
-                to inject an `httpx.MockTransport` instead of real sockets.
-        """
+        """Build the pooled client; `transport` is a test injection point."""
         self._config = config
         self._client = httpx.Client(
             base_url=config.base_url,
@@ -344,38 +244,19 @@ class Transport:
         idempotency_key: str | None = None,
         retry_safe: bool = False,
     ) -> httpx.Response:
-        """Send a request, retrying transient failures, and raise typed errors.
-
-        Retries only transient failures — network errors, timeouts, 5xx and 429
-        — and only when the request is safe to repeat. A 4xx is never retried:
-        a policy block is an answer, not a blip, and repeating it just burns the
-        agent's latency budget to get the same refusal.
+        """Send a request, retrying transient failures (network, 5xx, 429).
 
         Args:
-            method: HTTP method, e.g. `"POST"`.
+            method: HTTP method.
             path: Path relative to the configured base URL.
             json: Optional JSON request body.
-            params: Optional URL query parameters (e.g. for GET reads).
-            idempotency_key: Sent as `Idempotency-Key`. The server replays the
-                original result for a repeat key instead of acting twice,
-                which is what makes retrying a write safe — so passing one also
-                marks the request retry-safe.
-            retry_safe: Force retry eligibility for a write the server dedupes
-                by resource id rather than by key (`capture` dedupes on
-                `authorization_id`). Reads are eligible automatically.
-
-        Returns:
-            The successful `httpx.Response` (status < 400).
+            params: Optional URL query parameters.
+            idempotency_key: Sent as `Idempotency-Key`; makes the write retry-safe.
+            retry_safe: Retry a write the server dedupes by resource id.
 
         Raises:
-            AuthError: The API key was rejected (401/403).
-            NotFoundError: No such resource (404).
-            ConflictError: The request collided with resource state (409).
-            InvalidRequestError: Malformed or invalid request (400/422).
-            RateLimitError: The rate limiter rejected the request (429).
-            APIError: Any other 4xx response.
-            TransportError: A network failure, timeout, or 5xx response — after
-                retries are exhausted.
+            APIError: A 4xx (typed subclass per status); never retried.
+            TransportError: Network failure, timeout, or 5xx after retries.
         """
         headers = _idempotency_headers(idempotency_key)
         attempts = _attempt_count(self._config, method, idempotency_key, retry_safe)
@@ -418,29 +299,12 @@ class Transport:
 
 
 class AsyncTransport:
-    """Thin wrapper around a pooled `httpx.AsyncClient` bound to one `LucntConfig`.
-
-    Behaviourally identical to `Transport` — same retry eligibility, same
-    backoff schedule, same status→exception mapping, all shared at module level
-    — differing only in awaiting the request and the backoff.
-
-    **Bound to the event loop that created it.** An `httpx.AsyncClient`'s
-    connection pool holds loop-bound objects, so one built on a loop that has
-    since closed cannot serve requests on a new loop. `ledger.py` therefore
-    keeps one instance per running loop rather than a process-wide singleton.
-    """
+    """Async `Transport`, bound to the event loop that created it."""
 
     def __init__(
         self, config: LucntConfig, *, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
-        """Build the pooled async client.
-
-        Args:
-            config: Resolved SDK configuration (API key, base URL, timeouts,
-                retry policy).
-            transport: Optional `httpx.AsyncBaseTransport` override, used in
-                tests to inject an `httpx.MockTransport` instead of real sockets.
-        """
+        """Build the pooled async client; `transport` is a test injection point."""
         self._config = config
         self._client = httpx.AsyncClient(
             base_url=config.base_url,
@@ -459,38 +323,7 @@ class AsyncTransport:
         idempotency_key: str | None = None,
         retry_safe: bool = False,
     ) -> httpx.Response:
-        """Send a request, retrying transient failures, and raise typed errors.
-
-        Identical in behaviour to `Transport.request` — same eligibility rules,
-        same backoff schedule, same exception mapping, all shared at module
-        level — except that the request and the backoff are awaited.
-
-        Args:
-            method: HTTP method, e.g. `"POST"`.
-            path: Path relative to the configured base URL.
-            json: Optional JSON request body.
-            params: Optional URL query parameters (e.g. for GET reads).
-            idempotency_key: Sent as `Idempotency-Key`. The server replays the
-                original result for a repeat key instead of acting twice,
-                which is what makes retrying a write safe — so passing one also
-                marks the request retry-safe.
-            retry_safe: Force retry eligibility for a write the server dedupes
-                by resource id rather than by key (`capture` dedupes on
-                `authorization_id`). Reads are eligible automatically.
-
-        Returns:
-            The successful `httpx.Response` (status < 400).
-
-        Raises:
-            AuthError: The API key was rejected (401/403).
-            NotFoundError: No such resource (404).
-            ConflictError: The request collided with resource state (409).
-            InvalidRequestError: Malformed or invalid request (400/422).
-            RateLimitError: The rate limiter rejected the request (429).
-            APIError: Any other 4xx response.
-            TransportError: A network failure, timeout, or 5xx response — after
-                retries are exhausted.
-        """
+        """Async `Transport.request`; same retry and error semantics."""
         headers = _idempotency_headers(idempotency_key)
         attempts = _attempt_count(self._config, method, idempotency_key, retry_safe)
 
@@ -514,11 +347,7 @@ class AsyncTransport:
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def aclose(self) -> None:
-        """Close the underlying connection pool.
-
-        Must be awaited from the loop that built the pool. `lucnt.aclose()` is
-        the public shutdown call; this is what it delegates to.
-        """
+        """Close the pool; must be awaited on the loop that built it."""
         await self._client.aclose()
 
     async def __aenter__(self) -> AsyncTransport:

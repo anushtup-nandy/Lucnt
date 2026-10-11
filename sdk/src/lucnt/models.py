@@ -8,52 +8,30 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-# What the SDK accepts on a money argument.
-#
-# `float` is deliberately absent. It was accepted through 0.x and is **rejected
-# from 1.0.0**: this is a ledger, and `Decimal(1.83)` is not `Decimal("1.83")`.
-# Accepting a float meant the SDK either propagated that error into a booked
-# amount or silently repaired it via `str()` — and a caller who never saw a
-# complaint had no reason to learn which. Pass `Decimal("1.83")`, `"1.83"`, or
-# an exact integer of the currency's major unit.
-#
-# `int` stays because an integer is exact; `bool` is rejected at the boundary
-# even though it is an `int` subclass, because `amount=True` booking 1.00 is
-# never what anyone meant.
+# No `float`: `Decimal(1.83) != Decimal("1.83")`. `bool` is rejected at the
+# boundary despite subclassing `int`.
 Money = Decimal | int | str
 
 
 class LucntConfig(BaseModel):
     """Resolved SDK configuration: credentials, endpoint, timeouts, retry policy.
 
-    Every field here is an *operator knob* — settable via `configure()` or a
-    `LUCNT_*` env var. Constants that are protocol contract (a status code the
-    server also defines) or a safety control (the TLS-enforcement host
-    allowlist) deliberately do not appear here: making either configurable turns
-    a guarantee into a setting someone can switch off.
+    Safety controls (e.g. the TLS host allowlist) are deliberately not fields.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    # SecretStr so the key never lands in a repr/log/traceback. Read the
-    # plaintext with `api_key.get_secret_value()` only where it is actually sent.
+    # SecretStr keeps the key out of reprs, logs, and tracebacks.
     api_key: SecretStr
     base_url: str
-    # Overall per-request budget, and the default for phases without their own
-    # value. `connect`/`read` split out because they fail for different reasons:
-    # a dead host should give up fast, a slow policy evaluation should not.
     timeout: float
     connect_timeout: float | None = None
     read_timeout: float | None = None
-    # Retry policy. `max_retries` counts retries, not attempts: 2 means up
-    # to 3 requests. Backoff is exponential with full jitter, capped.
+    # Counts retries, not attempts: 2 means up to 3 requests.
     max_retries: int = Field(default=2, ge=0)
     backoff_base: float = Field(default=0.25, gt=0)
     backoff_max: float = Field(default=8.0, gt=0)
     respect_retry_after: bool = True
-    # Server-fetched pricing feed: the backend serves today's effective
-    # vendor prices and the packaged pack becomes the offline fallback, so a
-    # price change (or a lapsing intro rate) never needs a client release.
     pricing_feed: bool = True
     pricing_feed_ttl: float = Field(default=3600.0, ge=0)
 
@@ -70,12 +48,7 @@ class TaskContext(BaseModel):
 
 
 class SpendRequest(BaseModel):
-    """Request body for `POST /transactions/authorize` — the frozen P1 wire contract.
-
-    `amount` is `Decimal`, never `float`: this is a ledger, and float
-    rounding error compounds across authorize -> capture -> journal ->
-    reconciliation.
-    """
+    """Request body for `POST /transactions/authorize` (the wire contract)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -83,37 +56,27 @@ class SpendRequest(BaseModel):
     entity: str
     vendor: str
     amount: Decimal
-    # Mandatory: the caller always states the currency it paid in — the one
-    # fact only it knows. Never silently defaulted, so a foreign spend is never
-    # mislabelled as domestic. The backend validates the ISO-4217 shape.
+    # Never defaulted, so a foreign spend is never mislabelled as domestic.
     currency: str
     reason: str
     intent: str | None = None
     project: str | None = None
-    # Optional expense category: software|ai_compute|travel|marketing|general.
-    # A known value books to that account + drives blocked-ITC; else vendor-inferred.
+    # software|ai_compute|travel|marketing|general; else vendor-inferred.
     category: str | None = None
-    # Tax slab + inclusive/exclusive. `tax_category` picks the GST rate slab
-    # (e.g. "gst_5"; omitted -> standard rate); `tax_inclusive` says whether a
-    # domestic amount embeds GST (default) or has it added on top.
+    # GST rate slab (e.g. "gst_5"); omitted -> standard rate.
     tax_category: str | None = None
     tax_inclusive: bool = True
-    # Service vs goods. A cross-border *goods* spend routes to a customs path,
-    # not the services reverse charge; defaults to "service" (agent spend is ~all
-    # services), so existing callers are unaffected.
+    # Cross-border goods route to customs, not the services reverse charge.
     supply_type: Literal["service", "goods"] = "service"
     model: str | None = None
     tokens: int | None = None
 
 
 class Verdict(BaseModel):
-    """Policy verdict from `POST /transactions/authorize`, before any spend happens.
+    """Policy verdict from `authorize()`, before any spend happens.
 
-    `code` is a machine-readable reason (`ok`, `budget_exhausted`,
-    `merchant_blocked`, `velocity_exceeded`, `amount_over_threshold`,
-    `outside_hours`). It drives `strict=True` error mapping in `ledger.py`:
-    `budget_exhausted` -> `BudgetExhausted`, any other blocking code ->
-    `PolicyBlocked`. An open string set, so a new backend code never breaks this.
+    `code` is an open string set (`ok`, `budget_exhausted`, `merchant_blocked`,
+    `velocity_exceeded`, `amount_over_threshold`, `outside_hours`, ...).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -132,9 +95,7 @@ class Verdict(BaseModel):
 class VoidResult(BaseModel):
     """Result of releasing a hold via `void()`.
 
-    `already_released` is True when the hold had already been voided, which makes
-    a retried `void()` a safe no-op rather than an error to handle — it is called
-    from failure paths, where a second failure is the last thing the caller needs.
+    `already_released` is True on a repeat void, which is a safe no-op.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -146,16 +107,11 @@ class VoidResult(BaseModel):
 
 
 class BudgetStatus(BaseModel):
-    """An agent's live budget utilisation, from `check_budget()` (Phase 3).
+    """An agent's live budget utilisation, from `check_budget()`.
 
-    Mirrors the backend `AgentBudget`. `status` is `ok` | `warning` |
-    `exhausted`; every figure is derived server-side from live spend.
-
-    **Self-regulate on `available`, not `remaining`**. `remaining` is
-    `monthly_budget − captured spend`; the authorize gate additionally
-    subtracts outstanding holds (`reserved`), so `available` is the headroom
-    the gate will actually grant. An agent that checks `remaining` can see
-    room, spend, and be blocked anyway.
+    Self-regulate on `available` (`remaining - reserved` holds), not
+    `remaining`: it is what the authorize gate will actually grant.
+    `status` is `ok` | `warning` | `exhausted`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -164,9 +120,7 @@ class BudgetStatus(BaseModel):
     monthly_budget: Decimal
     spent: Decimal
     remaining: Decimal
-    # Live approved-but-uncaptured holds, measured with the gate's predicate.
     reserved: Decimal
-    # remaining − reserved: what the authorize gate will actually grant.
     available: Decimal
     pct_used: Decimal
     status: str
@@ -178,10 +132,7 @@ class BudgetStatus(BaseModel):
 
 
 class JournalLine(BaseModel):
-    """One double-entry journal line booked for a captured spend (Phase 2).
-
-    Mirrors the backend `JournalLine`; part of the frozen wire contract.
-    """
+    """One double-entry journal line booked for a captured spend."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -194,11 +145,7 @@ class JournalLine(BaseModel):
 
 
 class TaxInfo(BaseModel):
-    """The jurisdiction tax treatment computed for a captured spend (Phase 2).
-
-    Mirrors the backend `TaxInfo`; part of the frozen wire contract. For a
-    reverse-charge spend `reverse_charge` and `self_invoice_generated` are True.
-    """
+    """The jurisdiction tax treatment computed for a captured spend."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -215,11 +162,7 @@ class TaxInfo(BaseModel):
 
 
 class Transaction(BaseModel):
-    """A committed spend, returned by `POST /transactions/capture`.
-
-    Phase 2 adds the `journal` (double-entry lines) and `tax` (treatment) the
-    backend books synchronously on capture.
-    """
+    """A committed spend with its journal lines and tax treatment, from `capture()`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -229,11 +172,8 @@ class Transaction(BaseModel):
     vendor: str
     amount: Decimal
     currency: str | None = None
-    # True when `amount` is the authorize-time estimate rather than settled
-    # actual usage — meter()'s best-effort fallback books that way instead of losing
-    # the spend, and the ledger records which rows it happened to.
+    # True when `amount` is the authorize-time estimate, not settled usage.
     estimated: bool = False
-    # The evidence link passed to `capture()`, persisted on the ledger row.
     invoice_url: str | None = None
     journal: list[JournalLine] = Field(default_factory=list)
     tax: TaxInfo | None = None
@@ -245,11 +185,7 @@ class Transaction(BaseModel):
 
 
 class BudgetSummary(BaseModel):
-    """Live budget headroom inside a `FinancialMemory` (Phase 5).
-
-    Mirrors the query response's budget block. Distinct from `BudgetStatus`
-    (which `check_budget()` returns and carries the agent slug).
-    """
+    """Live budget headroom inside a `FinancialMemory`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -261,7 +197,7 @@ class BudgetSummary(BaseModel):
 
 
 class SpendProjection(BaseModel):
-    """A month-end spend projection from the current run-rate (Phase 5)."""
+    """A month-end spend projection from the current run-rate."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -275,7 +211,7 @@ class SpendProjection(BaseModel):
 
 
 class CostPerOutput(BaseModel):
-    """Cost per unit of work (a project) for an agent, in one currency (Phase 5)."""
+    """Cost per unit of work (a project) for an agent, in one currency."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -290,7 +226,7 @@ class CostPerOutput(BaseModel):
 
 
 class VendorShare(BaseModel):
-    """One vendor's share of an agent's transaction count (Phase 5)."""
+    """One vendor's share of an agent's transaction count."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -300,11 +236,9 @@ class VendorShare(BaseModel):
 
 
 class SpendFingerprint(BaseModel):
-    """A compact view of an agent's learned spend fingerprint (Phase 5, M8).
+    """A compact view of an agent's learned spend fingerprint.
 
-    Amount statistics are null until the agent has enough same-currency history
-    to establish a baseline; `anomaly_score` is the largest recent deviation from
-    that baseline (0 when not yet computable).
+    Amount stats are None until there is enough same-currency history.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -321,12 +255,9 @@ class SpendFingerprint(BaseModel):
 
 
 class FinancialMemory(BaseModel):
-    """An agent's living financial memory, from `query()` (Phase 5, M8).
+    """An agent's living financial memory, from `query()`.
 
-    Computed live from the ledger so an agent can self-regulate *before* it
-    spends: budget headroom, a month-end run-rate projection, cost-per-output,
-    and its spend fingerprint. `headline` is a plain-language answer to the
-    optional `question` (keyword-routed server-side; no LLM).
+    `headline` answers the optional `question` (keyword-routed; no LLM).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -346,12 +277,7 @@ class FinancialMemory(BaseModel):
 
 
 class ReconException(BaseModel):
-    """A reconciliation exception, returned by `mark_failed_delivery()` (Phase 4).
-
-    Mirrors the fields of the backend `ReconExceptionResponse` the SDK cares
-    about (server-only timestamps are ignored). `evidence` carries the drafted
-    recovery plan the recovery layer will act on.
-    """
+    """A reconciliation exception, returned by `mark_failed_delivery()`."""
 
     model_config = ConfigDict(frozen=True)
 

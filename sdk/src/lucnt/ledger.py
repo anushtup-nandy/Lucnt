@@ -1,24 +1,7 @@
-"""authorize() / capture() / spend() — the universal spend-type-agnostic primitive.
+"""authorize() / capture() / spend(): the universal spend-type-agnostic primitive.
 
-Every agent-initiated spend flows through this pair: `authorize()` lets
-policy block *before* money moves; `capture()` commits the real spend to
-the ledger. `spend()` is the atomic convenience for callers with nothing to
-gate mid-way. Spend-type-agnostic: a flight, a SaaS seat, and a token batch
-all flow through the same primitive (`model`/`tokens` are optional, for the
-API/LLM subset only).
-
-**Every function has an `_async` twin**. The pair shares one
-`_Call` — the method, path, body, idempotency key, and retry-safety of the
-request — so the two paths cannot disagree about the wire contract. That is the
-point of the indirection: an async variant that forgot to send the idempotency
-key, or posted to a different path, would be a silent double-book that only
-async callers hit. Building the request once makes that class of drift
-unrepresentable rather than merely unlikely.
-
-Calling a synchronous function from inside a running event loop raises rather
-than blocking it: a 30-second policy call that stalls every other coroutine in
-the process surfaces as unrelated timeouts elsewhere, which is far harder to
-diagnose than an error naming the async variant.
+Sync and `_async` twins build the same `_Call`, so they cannot disagree on the
+wire contract. Sync calls raise inside a running event loop instead of blocking.
 """
 
 from __future__ import annotations
@@ -70,15 +53,11 @@ _ModelT = TypeVar("_ModelT", bound=BaseModel)
 _transport_lock = threading.Lock()
 _transport: Transport | None = None
 _transport_config: LucntConfig | None = None
-# Pools displaced by a genuine reconfigure. Never closed inline — see below.
+# Pools displaced by a reconfigure; closed at exit, never inline.
 _retired_transports: list[Transport] = []
 
 _async_lock = threading.Lock()
-# Keyed by event loop, not process-wide. An httpx.AsyncClient's pool holds
-# loop-bound objects, so a pool built under one `asyncio.run()` cannot serve
-# requests under the next one — a process-wide singleton would hand out a pool
-# bound to a closed loop. Weak keys so a finished loop's entry disappears with
-# it rather than pinning the loop object alive for the process's lifetime.
+# Per event loop (async pools are loop-bound); weak keys so dead loops drop out.
 _async_transports: WeakKeyDictionary[
     asyncio.AbstractEventLoop, tuple[AsyncTransport, LucntConfig]
 ] = WeakKeyDictionary()
@@ -87,21 +66,8 @@ _async_transports: WeakKeyDictionary[
 def _get_transport() -> Transport:
     """Return the process-wide pooled Transport, rebuilding it if reconfigured.
 
-    Thread-safe on three counts:
-
-    1. The check-and-build is under a lock. Unsynchronized, two threads racing
-       the first call each build a pool and one is silently leaked.
-    2. Configs are compared **by value**, not identity. `configure()` returns a
-       fresh object every call, so an identity check rebuilt the pool on any
-       re-`configure()` — even one passing identical settings.
-    3. A displaced pool is **retired, not closed**. Closing inline would pull
-       the socket out from under a request in flight on another thread; httpx
-       raises a bare `RuntimeError` for that, which is outside the SDK's
-       exception hierarchy and — now that retries exist — is not something the
-       transport would recognise as retryable. Retired pools are closed at
-       interpreter exit instead. Reconfiguring is a startup-time operation, so
-       the bounded cost is a handful of idle pools in the rare process that
-       does it repeatedly; the alternative is a torn request in a money path.
+    Config is compared by value. A displaced pool is retired, not closed:
+    closing it could tear a request in flight on another thread.
     """
     global _transport, _transport_config
     config = get_config()
@@ -128,19 +94,7 @@ def _require_running_loop() -> asyncio.AbstractEventLoop:
 
 
 def _forbid_running_loop(sync_name: str, async_name: str) -> None:
-    """Refuse a blocking call made from inside an event loop.
-
-    The failure this prevents is not the caller's own latency — it is that a
-    synchronous request blocks the *whole loop* for up to the request timeout,
-    so every unrelated coroutine in the process stalls with it. That surfaces as
-    mysterious timeouts in other subsystems, which is why this raises instead of
-    warning: an explicit error naming the async variant costs one line to fix,
-    a stalled loop costs an afternoon to diagnose.
-
-    Running the sync function in a worker thread stays valid — there is no
-    running loop *in that thread*, so this does not fire on
-    `asyncio.to_thread(lucnt.spend, ...)`.
-    """
+    """Refuse a blocking call from inside an event loop (it would stall the loop)."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -156,12 +110,7 @@ def _forbid_running_loop(sync_name: str, async_name: str) -> None:
 def _get_async_transport() -> AsyncTransport:
     """Return the pooled AsyncTransport for the running loop, rebuilding on reconfigure.
 
-    Mirrors `_get_transport`'s locking and by-value config comparison. A pool
-    displaced by a genuine reconfigure is simply dropped rather than retired:
-    closing it needs an `await`, and this function is deliberately synchronous
-    (building an `httpx.AsyncClient` does no I/O) so every async entry point can
-    call it without an extra round trip. Reconfiguring is a startup-time
-    operation, so the dropped pool is collected with nothing in flight.
+    A displaced pool is dropped, not closed: closing needs an `await`.
     """
     loop = _require_running_loop()
     config = get_config()
@@ -177,22 +126,8 @@ def _get_async_transport() -> AsyncTransport:
 async def aclose() -> None:
     """Close the async connection pool belonging to the running event loop.
 
-    Await this before the loop shuts down if you want sockets released
-    deterministically:
-
-        async def main() -> None:
-            try:
-                await lucnt.spend_async(...)
-            finally:
-                await lucnt.aclose()
-
-    Optional, and a no-op when this loop never made an async call. Skipping it
-    leaks nothing beyond the process: the pool is garbage-collected with the
-    loop and the OS reclaims its sockets at exit. Async pools are deliberately
-    *not* closed by the interpreter-exit handler that closes the synchronous
-    ones — that runs with no loop available, and driving a fresh loop to close a
-    client bound to a dead one is a shutdown-time traceback rather than a
-    cleanup.
+    Optional; await before loop shutdown to release sockets deterministically.
+    A no-op if this loop never made an async call.
     """
     loop = _require_running_loop()
     with _async_lock:
@@ -208,21 +143,13 @@ def _close_transports() -> None:
         pools = [*_retired_transports, *([_transport] if _transport else [])]
         _retired_transports.clear()
     for pool in pools:
-        # Never raise during interpreter exit — a failed close here would
-        # surface as a confusing shutdown traceback and hide the real work.
         with contextlib.suppress(Exception):
             pool.close()
 
 
 @dataclass(frozen=True)
 class _Call:
-    """One HTTP call, fully described but not yet made.
-
-    The sync and async variants of each operation build the *same* `_Call`, so
-    the path, body, idempotency key, and retry-safety of a request are decided
-    in exactly one place. A drift between the two on any of those is a
-    double-booked spend rather than a cosmetic inconsistency.
-    """
+    """One HTTP call, fully described but not yet made (shared by sync/async)."""
 
     method: str
     path: str
@@ -233,13 +160,7 @@ class _Call:
 
 
 def _payload(response: httpx.Response, path: str) -> dict[str, object]:
-    """Read a success body as a JSON object, or raise `ContractError`.
-
-    Every endpoint the SDK calls answers with a JSON object. A body that is not
-    one means this SDK version and the backend disagree — which used to escape
-    as a bare `json.JSONDecodeError`, outside the SDK's hierarchy, so a caller's
-    `except LucntError` around a money path did not cover it.
-    """
+    """Read a success body as a JSON object, or raise `ContractError`."""
     try:
         parsed = response.json()
     except ValueError as exc:
@@ -257,12 +178,7 @@ def _payload(response: httpx.Response, path: str) -> dict[str, object]:
 
 
 def _model(model: type[_ModelT], payload: dict[str, object], path: str) -> _ModelT:
-    """Validate a response body into `model`, or raise `ContractError`.
-
-    A `pydantic.ValidationError` escaping from here would be both outside the
-    SDK's hierarchy and misleading — it reads like the *caller* sent something
-    invalid, when in fact the server's response is the thing that did not match.
-    """
+    """Validate a response body into `model`, or raise `ContractError`."""
     try:
         return model.model_validate(payload)
     except ValidationError as exc:
@@ -310,27 +226,7 @@ def _resolve_required(explicit: str | None, ambient: str | None, field: str) -> 
 
 
 def _as_decimal(amount: Money, field: str = "amount") -> Decimal:
-    """Normalize an exact money input to `Decimal`, rejecting `float`.
-
-    Converts via the string form so a plain `amount=10` stays exact.
-
-    `float` is refused rather than repaired. `Decimal(1.83)` is not
-    `Decimal("1.83")`, and quietly routing floats through `str()` taught callers
-    that float money is fine — right up until one of them computed an amount
-    (`0.1 + 0.2`) and booked `0.30000000000000004`. A ledger has to be exact at
-    its boundary, so the boundary says so.
-
-    Args:
-        amount: `Decimal`, `int`, or `str`.
-        field: Parameter name, named in the error message.
-
-    Returns:
-        The amount as an exact `Decimal`.
-
-    Raises:
-        ConfigurationError: The value is a `float`, a `bool`, another
-            unsupported type, or a string that is not a number.
-    """
+    """Normalize an exact money input to `Decimal`, rejecting `float` and `bool`."""
     if isinstance(amount, Decimal):
         return amount
     # bool before int: `amount=True` would otherwise book 1.00 of the currency.
@@ -348,35 +244,19 @@ def _as_decimal(amount: Money, field: str = "amount") -> Decimal:
 
 
 def _new_idempotency_key() -> str:
-    """Mint a key for one logical authorize, reused across its transport retries.
-
-    Auto-generating per call covers the transport-retry case: the same
-    key goes out on every attempt, so a request that reached the server before
-    the connection dropped replays instead of minting a second hold. It does
-    *not* cover an application-level retry — calling `authorize()` again is a
-    new logical spend and gets a new key. `lucnt.operation()` is the
-    mechanism for that case; an explicit `idempotency_key=` still overrides both.
-    """
+    """Mint a key for one authorize; covers transport retries, not caller retries."""
     return uuid.uuid4().hex
 
 
-# Fields excluded from an operation scope's payload guardrail: free-text labels
-# and LLM attribution metadata. Everything else is included **by default**, so a
-# field added to `SpendRequest` later is fingerprinted unless someone
-# deliberately exempts it — the fail-safe direction for a correctness check.
-# The excluded fields cannot cause a wrong *approval*: the verdict and the
-# booked money follow agent/entity/vendor/amount/currency and the tax fields,
-# all of which are compared. Keeping cosmetic drift out of the check is what
-# stops it becoming a nuisance customers route around by not using operation().
+# Cosmetic fields that cannot change the verdict or booked money. Deny-list, so
+# new `SpendRequest` fields are fingerprinted by default (fail-safe).
 _FINGERPRINT_EXCLUDED = frozenset({"intent", "model", "project", "reason", "tokens"})
 
 
 def _operation_fingerprint(request: SpendRequest) -> dict[str, object]:
     """Reduce a request to the fields that decide which spend it is.
 
-    Dumped in python mode, not JSON: it keeps `amount` a `Decimal`, so
-    `amount=10` and `amount="10.00"` compare equal instead of tripping the
-    guardrail on a difference that isn't one.
+    Python-mode dump keeps `amount` a `Decimal`, so `10 == "10.00"`.
     """
     return {
         field: value
@@ -386,11 +266,7 @@ def _operation_fingerprint(request: SpendRequest) -> dict[str, object]:
 
 
 def _resolve_idempotency_key(explicit: str | None, request: SpendRequest) -> str:
-    """Pick the key for one authorize: explicit → ambient `operation()` → auto.
-
-    An explicit key opts out of the ambient scope entirely, guardrail included —
-    the caller has taken over responsibility for the replay semantics.
-    """
+    """Pick the key: explicit (skips the guardrail), then `operation()`, then auto."""
     if explicit is not None:
         return check_idempotency_key(explicit, "idempotency_key")
     op = get_current_operation()
@@ -495,53 +371,39 @@ def authorize(
 ) -> Verdict:
     """Ask policy for a verdict on a spend, before any money moves.
 
-    `agent`/`entity`/`intent`/`project` fall back to the ambient `task()`
-    context when not passed explicitly. With `strict=True`, a non-approved
-    verdict raises instead of returning — `BudgetExhausted` if the block was a
-    budget cap, else `PolicyBlocked` (which `BudgetExhausted` subclasses).
+        verdict = lucnt.authorize(vendor="Acme", amount="49.00", currency="USD",
+                                  reason="seat upgrade")
+        if verdict.approved:
+            ...  # pay, then lucnt.capture(verdict)
 
     Args:
-        vendor: The merchant or vendor being paid, e.g. `"United Airlines"`.
-        amount: The amount to hold, as `Decimal`, `int`, or `str`. `float` is
-            rejected — money must be exact.
+        vendor: The merchant or vendor being paid.
+        amount: Amount to hold as `Decimal`, `int`, or `str` (`float` rejected).
         reason: Human-readable justification, stored on the transaction.
-        currency: ISO-4217 code of the currency actually being paid in. Never
-            defaulted, so a foreign spend is never mislabelled as domestic.
-        agent: Agent handle to attribute the spend to. Falls back to `task()`.
-        entity: Legal entity handle. Falls back to `task()`.
-        intent: Free-text purpose of the task. Falls back to `task()`.
-        project: Cost-center / project label. Falls back to `task()`.
-        category: Expense category (`software`, `ai_compute`, `travel`,
-            `marketing`, `general`). Inferred from the vendor when omitted.
-        tax_category: Tax slab override, e.g. `"gst_5"`. Standard rate if omitted.
-        tax_inclusive: Whether a domestic `amount` already embeds tax (default)
-            or has it added on top.
-        supply_type: `"service"` (default) or `"goods"` — a cross-border goods
-            spend routes to a customs path rather than the services reverse charge.
+        currency: ISO-4217 code actually paid in; never defaulted.
+        agent: Agent handle; falls back to `task()`.
+        entity: Legal entity handle; falls back to `task()`.
+        intent: Free-text purpose; falls back to `task()`.
+        project: Cost-center / project label; falls back to `task()`.
+        category: `software|ai_compute|travel|marketing|general`; else inferred.
+        tax_category: Tax slab override, e.g. `"gst_5"`.
+        tax_inclusive: Whether a domestic `amount` already embeds tax.
+        supply_type: `"service"` or `"goods"` (cross-border goods use customs).
         model: Model identifier, for LLM/API spend only.
         tokens: Tokens consumed, for LLM/API spend only.
         strict: Raise on a non-approved verdict instead of returning it.
-        idempotency_key: Reuse the same key to make a retry replay the original
-            hold instead of minting a second one. Resolution order is
-            this argument, then an ambient `lucnt.operation()` scope, then a key
-            generated for this call alone. The auto key covers the SDK's own
-            transport retries; if *your* code retries, wrap the call in
-            `lucnt.operation()` or pass a key here.
+        idempotency_key: Overrides the `operation()` scope and auto-generated key.
 
     Returns:
-        A `Verdict`. With `strict=False` (default) a blocking verdict is
-        returned, never raised — always check `.approved` before spending.
+        A `Verdict`; when not strict, check `.approved` before spending.
 
     Raises:
         PolicyBlocked: `strict=True` and the verdict was not approved.
         BudgetExhausted: `strict=True` and the block was a budget cap.
-        IdempotencyConflict: An ambient `operation()` scope is already bound to
-            a materially different spend.
-        ContractError: The server's response could not be read as a `Verdict`.
-        ConfigurationError: `amount` is a `float` or otherwise inexact,
-            `idempotency_key` is blank or over 255 characters, `agent`/`entity`
-            is resolvable from neither argument nor `task()`, or this was called
-            from a running event loop (use `authorize_async`).
+        IdempotencyConflict: The `operation()` scope holds a different spend.
+        ContractError: The response could not be read as a `Verdict`.
+        ConfigurationError: Inexact amount, bad key, unresolvable agent/entity,
+            or called from a running event loop.
     """
     _forbid_running_loop("authorize", "authorize_async")
     call = _authorize_call(
@@ -583,29 +445,7 @@ async def authorize_async(
     strict: bool = False,
     idempotency_key: str | None = None,
 ) -> Verdict:
-    """Await a policy verdict on a spend, before any money moves.
-
-    The async twin of `authorize()` — identical semantics, identical wire
-    request, identical `task()` / `operation()` context handling (contextvars
-    propagate into a coroutine automatically, so `task()` works unchanged around
-    an `await`).
-
-    Takes the same arguments as `authorize()`; see there for what each means.
-
-    Returns:
-        A `Verdict`. With `strict=False` (default) a blocking verdict is
-        returned, never raised — always check `.approved` before spending.
-
-    Raises:
-        PolicyBlocked: `strict=True` and the verdict was not approved.
-        BudgetExhausted: `strict=True` and the block was a budget cap.
-        IdempotencyConflict: An ambient `operation()` scope is already bound to
-            a materially different spend.
-        ContractError: The server's response could not be read as a `Verdict`.
-        ConfigurationError: `amount` is a `float` or otherwise inexact,
-            `idempotency_key` is blank or over 255 characters, or
-            `agent`/`entity` is resolvable from neither argument nor `task()`.
-    """
+    """Async `authorize()`; same arguments, returns, and raises."""
     call = _authorize_call(
         vendor=vendor,
         amount=amount,
@@ -649,22 +489,19 @@ def _capture_call(
         "invoice_url": invoice_url,
     }
     if amount is not None:
-        body["amount"] = str(_as_decimal(amount))  # Decimal → str for JSON
+        body["amount"] = str(_as_decimal(amount))
     if model is not None:
         body["model"] = model
     if tokens is not None:
         body["tokens"] = tokens
     if estimated:
-        # Sent only when True: an older backend never sees a field it does not
-        # know, and False is the wire default anyway.
+        # Only sent when True, so older backends never see an unknown field.
         body["estimated"] = True
     return _Call(
         "POST",
         _CAPTURE_PATH,
         json=body,
-        # Safe to retry without a key: the backend dedupes on the
-        # authorization_id unique constraint and replays the original
-        # transaction, so a repeat can never double-book.
+        # Backend dedupes on authorization_id, so a retry replays.
         retry_safe=True,
     )
 
@@ -680,38 +517,24 @@ def capture(
 ) -> Transaction:
     """Commit the spend approved by `verdict` to the ledger.
 
-    `amount`/`model`/`tokens` **settle** the transaction with values known only
-    after the spend — the actual LLM cost from `meter()`, for instance. When
-    omitted, the authorization's held values stand (the common SDK path). This
-    is the hold-vs-settle split: `authorize` holds an estimate, `capture` books
-    the truth.
+    Retry-safe without a key: a repeat replays the original transaction.
 
-    Takes no idempotency key, deliberately: `verdict.authorization_id` already
-    is one. A repeated capture hits the backend's unique constraint on that
-    column and replays the original transaction (200), so a retry after a lost
-    response never double-books. A 409 here means something else entirely —
-    capturing a hold that policy blocked, say.
+        tx = lucnt.capture(verdict, amount="47.12", invoice_url=url)
 
     Args:
         verdict: The `Verdict` returned by `authorize()`.
         invoice_url: Optional evidence link attached to the transaction.
-        amount: The actual settled amount (overrides the authorized estimate),
-            as `Decimal`, `int`, or `str`. `float` is rejected.
-        model: The actual model used (overrides the authorized value).
-        tokens: The actual tokens consumed (overrides the authorized value).
+        amount: Actual settled amount, overriding the hold (`float` rejected).
+        model: Actual model used, overriding the authorized value.
+        tokens: Actual tokens consumed, overriding the authorized value.
         estimated: Mark the booked amount as an unsettled estimate.
-            `meter()` sets this when it cannot read actual usage and books the
-            hold's estimate rather than losing the spend; the ledger records
-            the flag so an estimate is never presented as settled truth.
 
     Returns:
         The booked `Transaction`.
 
     Raises:
-        ContractError: The server's response could not be read as a
-            `Transaction`.
-        ConfigurationError: `amount` is a `float` or otherwise inexact, or this
-            was called from a running event loop (use `capture_async`).
+        ContractError: The response could not be read as a `Transaction`.
+        ConfigurationError: Inexact amount, or called from a running event loop.
     """
     _forbid_running_loop("capture", "capture_async")
     call = _capture_call(
@@ -734,29 +557,7 @@ async def capture_async(
     tokens: int | None = None,
     estimated: bool = False,
 ) -> Transaction:
-    """Commit the spend approved by `verdict` to the ledger (async twin).
-
-    Identical to `capture()` — same body, same `authorization_id` dedupe, same
-    retry-safety.
-
-    Args:
-        verdict: The `Verdict` returned by `authorize_async()`.
-        invoice_url: Optional evidence link attached to the transaction.
-        amount: The actual settled amount (overrides the authorized estimate),
-            as `Decimal`, `int`, or `str`. `float` is rejected.
-        model: The actual model used (overrides the authorized value).
-        tokens: The actual tokens consumed (overrides the authorized value).
-        estimated: Mark the booked amount as an unsettled estimate; see
-            `capture()`.
-
-    Returns:
-        The booked `Transaction`.
-
-    Raises:
-        ContractError: The server's response could not be read as a
-            `Transaction`.
-        ConfigurationError: `amount` is a `float` or otherwise inexact.
-    """
+    """Async `capture()`; same arguments, returns, and raises."""
     call = _capture_call(
         verdict,
         invoice_url=invoice_url,
@@ -784,8 +585,7 @@ def _void_call(verdict: Verdict, *, reason: str | None) -> _Call:
         "POST",
         _VOID_PATH,
         json=body,
-        # Safe to retry: the server returns the original release for an
-        # already-voided hold rather than acting twice.
+        # A repeat void returns the original release.
         retry_safe=True,
     )
 
@@ -793,40 +593,21 @@ def _void_call(verdict: Verdict, *, reason: str | None) -> _Call:
 def void(verdict: Verdict, *, reason: str | None = None) -> VoidResult:
     """Release an approved hold whose spend never happened.
 
-    An approved-but-uncaptured authorization reserves the agent's budget until it
-    is captured or released. So a vendor call that fails *after* `authorize()`
-    returned — or a crash between authorize and capture — permanently and
-    silently shrinks what that agent may spend. Call this whenever you took a
-    hold and then did not spend:
-
-        verdict = lucnt.authorize(vendor="OpenAI", amount="2.00",
-                                  currency="USD", reason="batch embed")
-        try:
-            result = do_the_purchase()
-        except VendorError:
-            lucnt.void(verdict, reason="vendor rejected the request")
-            raise
-        lucnt.capture(verdict, amount=result.actual_cost)
-
-    `meter()` does this for you on its own error path.
-
-    Idempotent and safe to retry: voiding an already-voided hold returns the
-    original release with `already_released=True` rather than raising.
+    An uncaptured hold keeps reserving budget, so void it whenever the
+    purchase fails after `authorize()`. Idempotent.
 
     Args:
         verdict: The `Verdict` returned by `authorize()`.
-        reason: Why the spend did not happen, stored on the hold for the
-            recovery inbox (M7).
+        reason: Why the spend did not happen, stored on the hold.
 
     Returns:
         A `VoidResult` carrying when the hold was released.
 
     Raises:
         NotFoundError: No such authorization for this API key.
-        ConflictError: The hold was already captured — the money moved, so it
-            cannot be voided. Reverse the transaction instead.
-        ContractError: The server's response could not be read as a `VoidResult`.
-        ConfigurationError: Called from a running event loop (use `void_async`).
+        ConflictError: The hold was already captured; reverse it instead.
+        ContractError: The response could not be read as a `VoidResult`.
+        ConfigurationError: Called from a running event loop.
     """
     _forbid_running_loop("void", "void_async")
     call = _void_call(verdict, reason=reason)
@@ -834,21 +615,7 @@ def void(verdict: Verdict, *, reason: str | None = None) -> VoidResult:
 
 
 async def void_async(verdict: Verdict, *, reason: str | None = None) -> VoidResult:
-    """Release an approved hold whose spend never happened (async twin of `void`).
-
-    Args:
-        verdict: The `Verdict` returned by `authorize_async()`.
-        reason: Why the spend did not happen, stored on the hold for the
-            recovery inbox (M7).
-
-    Returns:
-        A `VoidResult` carrying when the hold was released.
-
-    Raises:
-        NotFoundError: No such authorization for this API key.
-        ConflictError: The hold was already captured — reverse it instead.
-        ContractError: The server's response could not be read as a `VoidResult`.
-    """
+    """Async `void()`; same arguments, returns, and raises."""
     call = _void_call(verdict, reason=reason)
     return _model(VoidResult, await _send_async(call), call.path)
 
@@ -878,42 +645,21 @@ def spend(
     strict: bool = False,
     idempotency_key: str | None = None,
 ) -> Verdict | Transaction:
-    """Authorize and, if approved, immediately capture — the atomic convenience.
+    """Authorize and, if approved, immediately capture.
 
-    For flows with nothing to gate mid-way (no purchase step between authorize
-    and capture). `strict=True` is forwarded to `authorize()`, so a non-approved
-    verdict raises (`PolicyBlocked` / `BudgetExhausted`) instead of returning.
+        lucnt.spend(vendor="Acme", amount="49.00", currency="USD",
+                    reason="seat upgrade", strict=True)
 
-    Args:
-        vendor: The merchant or vendor being paid.
-        amount: The amount to spend, as `Decimal`, `int`, or `str`. `float` is
-            rejected — money must be exact.
-        reason: Human-readable justification, stored on the transaction.
-        currency: ISO-4217 code of the currency actually being paid in.
-        agent: Agent handle to attribute the spend to. Falls back to `task()`.
-        entity: Legal entity handle. Falls back to `task()`.
-        intent: Free-text purpose of the task. Falls back to `task()`.
-        project: Cost-center / project label. Falls back to `task()`.
-        category: Expense category. Inferred from the vendor when omitted.
-        tax_category: Tax slab override. Standard rate if omitted.
-        tax_inclusive: Whether a domestic `amount` already embeds tax.
-        supply_type: `"service"` (default) or `"goods"`.
-        model: Model identifier, for LLM/API spend only.
-        tokens: Tokens consumed, for LLM/API spend only.
-        invoice_url: Optional evidence link attached to the transaction.
-        strict: Raise on a non-approved verdict instead of returning it.
-        idempotency_key: Forwarded to the authorize step. If your code retries
-            the whole call, wrap it in `lucnt.operation()` (or pass a key here)
-            — otherwise the retry mints a second hold and captures it, which is
-            the double-book idempotency exists to prevent.
+    Takes the arguments of `authorize()`, plus `invoice_url` for the capture.
+    If your code retries the whole call, wrap it in `lucnt.operation()`.
 
     Returns:
-        The booked `Transaction` if approved. With `strict=False`, a blocking
-        `Verdict` is returned unchanged; with `strict=True` it raises instead.
+        The booked `Transaction`, or the blocking `Verdict` when not strict.
 
     Raises:
-        ConfigurationError: `amount` is a `float` or otherwise inexact, or this
-            was called from a running event loop (use `spend_async`).
+        PolicyBlocked: `strict=True` and the verdict was not approved.
+        BudgetExhausted: `strict=True` and the block was a budget cap.
+        ConfigurationError: Inexact amount, or called from a running event loop.
     """
     _forbid_running_loop("spend", "spend_async")
     verdict = authorize(
@@ -959,20 +705,7 @@ async def spend_async(
     strict: bool = False,
     idempotency_key: str | None = None,
 ) -> Verdict | Transaction:
-    """Authorize and, if approved, capture — the atomic convenience (async twin).
-
-    Two awaits, not one: a blocking verdict short-circuits before the capture
-    round trip, exactly as in `spend()`.
-
-    Takes the same arguments as `spend()`; see there for what each means.
-
-    Returns:
-        The booked `Transaction` if approved. With `strict=False`, a blocking
-        `Verdict` is returned unchanged; with `strict=True` it raises instead.
-
-    Raises:
-        ConfigurationError: `amount` is a `float` or otherwise inexact.
-    """
+    """Async `spend()`; same arguments, returns, and raises."""
     verdict = await authorize_async(
         vendor=vendor,
         amount=amount,
@@ -1007,9 +740,7 @@ def _check_budget_call(agent: str | None) -> tuple[_Call, str]:
     """Build the budget read, returning the call and the resolved agent slug."""
     ctx = get_current_task()
     slug = _resolve_required(agent, ctx.agent if ctx else None, "agent")
-    # Filter server-side: `GET /budgets` is paginated, so scanning the returned
-    # array would miss any agent past the first page and report "no budget" for
-    # an agent that exists.
+    # Filter server-side: `GET /budgets` is paginated.
     return _Call("GET", _BUDGETS_PATH, params={"agent": slug, "limit": "1"}), slug
 
 
@@ -1039,17 +770,13 @@ def _check_budget_result(
             monthly_budget=row["monthly_budget"],
             spent=row["spent"],
             remaining=row["remaining"],
-            # Required, not defaulted: a backend too old to report holds
-            # would otherwise hand a self-regulating agent headroom the gate
-            # refuses — the exact inconsistency these fields exist to close.
+            # Required, not defaulted: missing holds would overstate headroom.
             reserved=row["reserved"],
             available=row["available"],
             pct_used=row["pct_used"],
             status=row["status"],
         )
     except (KeyError, ValidationError) as exc:
-        # A KeyError escaping here would be indistinguishable from a bug in the
-        # SDK; it is in fact the backend having renamed or dropped a field.
         raise ContractError(
             f"{path} returned a budget row this lucnt version cannot read "
             f"({exc!r}) — the backend may be newer than the SDK.",
@@ -1058,17 +785,16 @@ def _check_budget_result(
 
 
 def check_budget(*, agent: str | None = None) -> BudgetStatus:
-    """Read an agent's live budget utilisation (M8 — self-regulation).
+    """Read an agent's live budget utilisation.
 
-    `agent` falls back to the ambient `task()` context when not passed.
+    Args:
+        agent: Agent slug; falls back to `task()`.
 
     Returns:
-        A `BudgetStatus` for the agent (monthly budget, spend, remaining,
-        pct used, and an `ok`/`warning`/`exhausted` label).
+        A `BudgetStatus`; self-regulate on `.available`.
 
     Raises:
-        ConfigurationError: No agent given and none set via `task()`, or this
-            was called from a running event loop (use `check_budget_async`).
+        ConfigurationError: No agent resolvable, or called from a running loop.
         LucntError: No budget row matches the agent for this API key.
         ContractError: The response did not carry a readable budget row.
     """
@@ -1078,16 +804,7 @@ def check_budget(*, agent: str | None = None) -> BudgetStatus:
 
 
 async def check_budget_async(*, agent: str | None = None) -> BudgetStatus:
-    """Read an agent's live budget utilisation (async twin of `check_budget`).
-
-    Returns:
-        A `BudgetStatus` for the agent.
-
-    Raises:
-        ConfigurationError: No agent given and none set via `task()`.
-        LucntError: No budget row matches the agent for this API key.
-        ContractError: The response did not carry a readable budget row.
-    """
+    """Async `check_budget()`; same arguments, returns, and raises."""
     call, slug = _check_budget_call(agent)
     return _check_budget_result(await _send_async(call), slug, call.path)
 
@@ -1114,33 +831,21 @@ def query(
     agent: str | None = None,
     question: str | None = None,
 ) -> FinancialMemory:
-    """Read an agent's living financial memory (M8 — self-regulation).
+    """Read an agent's living financial memory.
 
-    Lets an agent check itself *before* it spends: budget headroom, a month-end
-    run-rate projection, cost-per-output, and its spend fingerprint. `agent`
-    falls back to the ambient `task()` context. `question` (e.g. "am I on track
-    this month?") is answered in `FinancialMemory.headline`, keyword-routed
-    server-side to the most relevant dimension — there is no LLM, so the full
-    structured memory is always returned regardless of the wording.
-
-    **Freshness.** `budget` is always computed live from the ledger. The
-    fingerprint statistics (mean, stddev, median, top vendors, anomaly score)
-    are served from the agent's last stored fingerprint once one exists, so they
-    are as fresh as the most recent server-side recompute; an agent that has
-    never been recomputed gets them computed live. Gate spending decisions on
-    `budget`, which never goes stale.
+    `budget` is always live; fingerprint stats may lag the last server
+    recompute, so gate spending on `budget`.
 
     Args:
-        agent: Agent slug to read; falls back to `task()` context.
-        question: Optional free-text question, routed to `headline`.
+        agent: Agent slug; falls back to `task()`.
+        question: Optional free-text question, answered in `headline`.
 
     Returns:
         A `FinancialMemory` for the agent.
 
     Raises:
-        ConfigurationError: No agent given and none set via `task()`, or this
-            was called from a running event loop (use `query_async`).
-        NotFoundError: The agent is unknown for this API key (404).
+        ConfigurationError: No agent resolvable, or called from a running loop.
+        NotFoundError: The agent is unknown for this API key.
         ContractError: The response could not be read as a `FinancialMemory`.
     """
     _forbid_running_loop("query", "query_async")
@@ -1153,24 +858,7 @@ async def query_async(
     agent: str | None = None,
     question: str | None = None,
 ) -> FinancialMemory:
-    """Read an agent's living financial memory (async twin of `query`).
-
-    Same freshness caveat as `query()`: gate spending decisions on `budget`,
-    which is always live, rather than on the fingerprint statistics, which are
-    as fresh as the last server-side recompute.
-
-    Args:
-        agent: Agent slug to read; falls back to `task()` context.
-        question: Optional free-text question, routed to `headline`.
-
-    Returns:
-        A `FinancialMemory` for the agent.
-
-    Raises:
-        ConfigurationError: No agent given and none set via `task()`.
-        NotFoundError: The agent is unknown for this API key (404).
-        ContractError: The response could not be read as a `FinancialMemory`.
-    """
+    """Async `query()`; same arguments, returns, and raises."""
     call = _query_call(agent, question)
     return _model(FinancialMemory, await _send_async(call), call.path)
 
@@ -1210,7 +898,7 @@ def _failed_delivery_call(
         "POST",
         _FAILED_DELIVERY_PATH,
         json=body,
-        # Safe to retry: the server dedupes the exception per transaction (P4).
+        # The server dedupes the exception per transaction.
         retry_safe=True,
     )
 
@@ -1222,30 +910,20 @@ def mark_failed_delivery(
     reason: str,
     amount_at_stake: Money | None = None,
 ) -> ReconException:
-    """Flag a committed spend whose downstream task failed (Phase 4 recovery, M7).
-
-    Some spend cannot be judged from ledger data alone — the agent paid but the
-    task errored (a corrupt dataset, an undelivered service). This reports that
-    to the recovery layer, which opens a `failed_delivery` exception and drafts a
-    refund request. Pass the `Transaction` returned by `capture()`/`spend()`, or
-    its id.
+    """Flag a committed spend whose downstream task failed, for recovery.
 
     Args:
         transaction: The committed `Transaction` whose task failed.
         transaction_id: The transaction id, if the object isn't at hand.
-        reason: Human-readable description of the failure (stored as evidence).
-        amount_at_stake: Recoverable amount as `Decimal`, `int`, or `str`;
-            defaults server-side to the transaction's full paid amount when
-            omitted. `float` is rejected.
+        reason: Description of the failure, stored as evidence.
+        amount_at_stake: Recoverable amount; defaults to the full paid amount.
 
     Returns:
-        The created (or, on a repeat call, existing) `ReconException` — the
-        server dedupes an active failed-delivery per transaction.
+        The created (or, on repeat, existing) `ReconException`.
 
     Raises:
-        ConfigurationError: Neither `transaction` nor `transaction_id` given,
-            `amount_at_stake` is a `float`, or this was called from a running
-            event loop (use `mark_failed_delivery_async`).
+        ConfigurationError: No transaction given, inexact amount, or called
+            from a running event loop.
         ContractError: The response could not be read as a `ReconException`.
     """
     _forbid_running_loop("mark_failed_delivery", "mark_failed_delivery_async")
@@ -1260,22 +938,6 @@ async def mark_failed_delivery_async(
     reason: str,
     amount_at_stake: Money | None = None,
 ) -> ReconException:
-    """Flag a committed spend whose downstream task failed (async twin).
-
-    Args:
-        transaction: The committed `Transaction` whose task failed.
-        transaction_id: The transaction id, if the object isn't at hand.
-        reason: Human-readable description of the failure (stored as evidence).
-        amount_at_stake: Recoverable amount as `Decimal`, `int`, or `str`;
-            defaults server-side to the full paid amount. `float` is rejected.
-
-    Returns:
-        The created (or existing) `ReconException`.
-
-    Raises:
-        ConfigurationError: Neither `transaction` nor `transaction_id` given, or
-            `amount_at_stake` is a `float`.
-        ContractError: The response could not be read as a `ReconException`.
-    """
+    """Async `mark_failed_delivery()`; same arguments, returns, and raises."""
     call = _failed_delivery_call(transaction, transaction_id, reason, amount_at_stake)
     return _model(ReconException, await _send_async(call), call.path)

@@ -1,47 +1,7 @@
-"""Transport-layer governor — every wire request is governed by construction.
+"""Transport-layer governor: every vendor wire request is authorized and captured.
 
-`meter()`'s method wrappers cover the call paths the adapter *names*
-(`chat.completions.create`, `messages.create/stream`). The finding was that a
-real vendor client exposes many more paths that reach the network —
-`with_raw_response`, `with_streaming_response`, `responses`, `beta.*`,
-`embeddings` — and every one of them passed through the proxy silently
-unmetered: a LangChain agent spent real money with no ledger row and no error.
-
-This module closes that class of hole *structurally* rather than path-by-path:
-both vendor SDKs funnel every request through one `httpx` transport, so a
-governing transport wrapped around it sees every call a future SDK version can
-invent. Each wire attempt is authorized before it is forwarded and captured
-from the response's own usage after — the same authorize→capture primitive,
-applied at the only chokepoint that cannot be bypassed from above.
-
-**Blocked verdicts are synthetic 403 responses, never exceptions.** This is
-forced, not stylistic, and was verified against the real `openai` client
-(probe: 2026-07-28): both vendor SDKs wrap *any* exception raised below their
-HTTP layer in their `APIConnectionError` and retry it, so raising
-`PolicyBlocked` here would burn the client's retry budget re-asking policy and
-then surface as a misleading connection error. A 403 response instead surfaces
-as the vendor's own typed error (`PermissionDeniedError`), carries the lucnt
-reason in its body, and is retried by neither SDK. Callers on the documented
-`meter()` paths still get typed `PolicyBlocked` from the method wrappers, which
-run *above* the vendor's HTTP layer; the transport is the safety net for every
-path the wrappers do not name.
-
-**Unknown spend paths fail closed.** A POST to a vendor path this module cannot
-price (audio, images, batches, fine-tuning) is refused with a synthetic 403
-naming the path and the escape hatches — `unmetered="allow"` to forward it
-ungoverned (logged, once per path), or the explicit `authorize()`/`capture()`
-primitive. Silent passthrough is the one behaviour this forbids.
-
-Frameworks that build their own vendor client (LangChain, agents SDKs) are
-covered via `metered_http_client()` / `metered_async_http_client()`: both
-accept an `http_client` and every one of their requests then flows through this
-governor:
-
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        http_client=lucnt.metered_http_client(vendor="openai", agent="researcher"),
-        max_retries=0,
-    )
+Blocks are synthetic 403 responses, not exceptions: vendor SDKs retry exceptions
+raised below their HTTP layer but never retry a 403. Unpriceable POSTs fail closed.
 """
 
 from __future__ import annotations
@@ -75,9 +35,7 @@ _logger = logging.getLogger("lucnt.governor")
 
 Unmetered = Literal["block", "allow"]
 
-# Set by meter()'s method wrappers around the vendor call they have already
-# authorized, so the transport does not govern — and double-book — the same
-# logical call. A contextvar so it is correct across threads and coroutines.
+# Set by meter() wrappers so the transport doesn't double-book the same call.
 _WRAPPER_GOVERNED: ContextVar[bool] = ContextVar(
     "lucnt_wrapper_governed", default=False
 )
@@ -103,9 +61,7 @@ _RESPONSES = "responses"
 _EMBEDDINGS = "embeddings"
 _MESSAGES = "messages"
 
-# POST paths that are known token-priced spend, by suffix so custom base URLs
-# (proxies, Azure-style gateways) still classify. Order matters: the most
-# specific suffix wins, so `/chat/completions` is tested before `/completions`.
+# Matched by suffix so custom base URLs still classify; most specific first.
 _KIND_BY_SUFFIX: tuple[tuple[str, str, str], ...] = (
     ("/chat/completions", "openai", _CHAT),
     ("/responses", "openai", _RESPONSES),
@@ -115,18 +71,13 @@ _KIND_BY_SUFFIX: tuple[tuple[str, str, str], ...] = (
     ("/completions", "openai", _LEGACY),
 )
 
-# POST paths that are known to be free of spend and safe to pass through.
 _FREE_POST_SUFFIXES: tuple[str, ...] = ("/messages/count_tokens",)
 
 
 def _classify(method: str, path: str) -> tuple[str, str] | None | Literal["unknown"]:
-    """Map one request onto its governance route.
+    """Map a request to None (pass through), `(vendor, kind)`, or `"unknown"`.
 
-    Returns `None` to pass through (reads, and POSTs known to be free),
-    `(vendor, kind)` for a priceable spend endpoint, and `"unknown"` for any
-    other POST — which then follows the fail-closed unmetered policy. Only
-    POST is governable: both vendors' spend endpoints are POST-only, and a
-    GET/DELETE (list models, delete a file) moves no money.
+    Only POST can spend; an unknown POST follows the fail-closed policy.
     """
     if method.upper() != "POST":
         return None
@@ -145,12 +96,7 @@ def _classify(method: str, path: str) -> tuple[str, str] | None | Literal["unkno
 
 
 def _embedding_input_tokens(adapter: MeterAdapter, value: object) -> int:
-    """Token estimate for an embeddings `input`, across its four wire shapes.
-
-    `input` may be a string, a list of strings, a list of token ids, or a
-    batch of token-id lists. Token ids are counted exactly (they *are* tokens);
-    text uses the pack's chars-per-token heuristic like every other estimate.
-    """
+    """Token estimate for embeddings `input` (str, strs, token ids, or batches)."""
     if isinstance(value, str):
         return max(1, adapter._text_tokens(value))
     if isinstance(value, (list, tuple)):
@@ -169,17 +115,10 @@ def _embedding_input_tokens(adapter: MeterAdapter, value: object) -> int:
 
 
 def _estimate(adapter: MeterAdapter, kind: str, body: Mapping[str, Any]) -> Decimal:
-    """Pre-call cost estimate for one classified request body.
-
-    Chat and Messages bodies are already the shape `MeterAdapter.estimate_cost`
-    walks (model/messages/system/tools + output caps). The other kinds are
-    normalised into that shape — or, for embeddings, priced directly as
-    input-only — so every endpoint reuses the same structural walker and the
-    same pricing table.
+    """Pre-call cost estimate, normalising each kind into the chat-shaped walker.
 
     Raises:
-        LucntError: The body names no string model, or the model is unpriced —
-            the caller refuses the request fail-closed rather than guessing.
+        LucntError: No string model, or the model is unpriced (caller fails closed).
     """
     if kind in (_CHAT, _MESSAGES):
         return adapter.estimate_cost(body)
@@ -226,12 +165,7 @@ def _estimate(adapter: MeterAdapter, kind: str, body: Mapping[str, Any]) -> Deci
 
 
 def _usage_from_payload(kind: str, payload: Mapping[str, Any]) -> Usage:
-    """Read normalized token usage off a parsed 2xx response body.
-
-    Raises:
-        LucntError: The payload carries no readable usage/model — the caller
-            degrades to booking the authorized estimate, never raises on.
-    """
+    """Read normalized token usage off a parsed 2xx response body."""
     usage = payload.get("usage")
     model = payload.get("model")
     if not isinstance(usage, Mapping) or not isinstance(model, str):
@@ -255,12 +189,8 @@ def _usage_from_payload(kind: str, payload: Mapping[str, Any]) -> Usage:
 class _SseUsageScanner:
     """Accumulate token usage out of a server-sent-event byte stream.
 
-    One rule set reads all three dialects the governed endpoints speak: every
-    `data:` event is probed at its top level, under `"message"` (Anthropic's
-    `message_start`) and under `"response"` (the Responses API's
-    `response.completed`) for a usage mapping and a model string. Token counts
-    take the max seen — the vendors report cumulative totals, so the largest
-    value is the final one regardless of which events carried it.
+    Probes each event's top level, `message`, and `response`. Counts take the
+    max seen, since vendors report cumulative totals.
     """
 
     def __init__(self) -> None:
@@ -442,12 +372,7 @@ async def _release_async(verdict: Verdict, reason: str) -> None:
 def _refusal(
     request: httpx.Request, error_type: str, code: str, message: str
 ) -> httpx.Response:
-    """A synthetic 403 the vendor SDK surfaces typed, loud, and unretried.
-
-    403 specifically: verified against the real clients — neither vendor SDK
-    retries it (unlike 409/429/5xx), and both raise their PermissionDenied
-    error carrying this body's message.
-    """
+    """A synthetic 403: neither vendor SDK retries it, and both raise it typed."""
     return httpx.Response(
         403,
         headers={"x-lucnt-blocked": code},
@@ -488,11 +413,9 @@ def _unmetered_message(path: str) -> str:
 
 
 class _GovernedByteStream(httpx.SyncByteStream):
-    """Pass a streamed body through, booking exactly once when it ends.
+    """Pass a streamed body through, booking exactly once on any exit path.
 
-    Books on every exit path — exhaustion, mid-stream error, and an abandoned
-    stream whose `close()` arrives first — because the vendor generated (and
-    charged for) whatever was streamed before the exit.
+    The vendor charges for whatever streamed before an error or abandonment.
     """
 
     def __init__(
@@ -586,12 +509,7 @@ def _scanner_usage(
 
 
 class _GovernorCore:
-    """State and pure decision logic shared by the sync and async transports.
-
-    The two transports differ only in how they do I/O — the classification,
-    estimation, refusal shapes, and unmetered policy must be identical, so
-    they live here once (the same reasoning as ledger's `_Call`).
-    """
+    """Decision logic shared by the sync and async transports, so they can't drift."""
 
     def __init__(
         self,
@@ -616,11 +534,7 @@ class _GovernorCore:
     def _plan(
         self, request: httpx.Request
     ) -> httpx.Response | tuple[str, str | None, Decimal, bool] | None:
-        """Decide one request's fate before any I/O happens.
-
-        Returns None to pass through, a synthetic refusal `Response` to return
-        as-is, or `(kind, model, estimate, streaming)` to govern.
-        """
+        """Return None (pass), a refusal, or `(kind, model, estimate, streaming)`."""
         if _WRAPPER_GOVERNED.get():
             return None
         route = _classify(request.method, request.url.path)
@@ -672,11 +586,7 @@ class _GovernorCore:
 class GovernedTransport(httpx.BaseTransport):
     """An `httpx` transport that authorizes, forwards, then books every spend.
 
-    Wraps the vendor client's real transport; installed by `meter()` or built
-    standalone via `metered_http_client()`. Per wire attempt: authorize (a
-    block becomes a synthetic 403, see module docstring) → forward → on a 2xx,
-    settle from the response's usage (streamed responses book when the stream
-    ends); on a non-2xx or a wire error, release the hold — no money moved.
+    A non-2xx or wire error releases the hold; streams book when they end.
     """
 
     def __init__(
@@ -690,7 +600,7 @@ class GovernedTransport(httpx.BaseTransport):
         project: str | None = None,
         unmetered: Unmetered = "block",
     ) -> None:
-        """Wrap `inner`; decisions are shared with the async twin via the core."""
+        """Wrap `inner` with the governor."""
         self._inner = inner
         self._core = _GovernorCore(
             adapter,
@@ -740,9 +650,7 @@ class GovernedTransport(httpx.BaseTransport):
             return response
         content_type = response.headers.get("content-type", "")
         if streaming or content_type.startswith("text/event-stream"):
-            # Usage arrives last on a stream; scan it in flight and book when
-            # the caller finishes (or abandons) the stream. A compressed SSE
-            # body cannot be scanned — the estimate is booked instead.
+            # Compressed SSE can't be scanned; the estimate is booked instead.
             encoded = response.headers.get("content-encoding", "identity") != "identity"
             scanner = None if encoded else _SseUsageScanner()
 
@@ -758,9 +666,7 @@ class GovernedTransport(httpx.BaseTransport):
                 extensions=response.extensions,
                 request=request,
             )
-        # Buffer the raw (possibly compressed) bytes and hand the caller an
-        # identical response; parse usage from the rebuilt copy, which decodes
-        # content-encoding through httpx's own machinery.
+        # Rebuild from raw bytes so httpx decodes content-encoding for parsing.
         raw = b"".join(cast("httpx.SyncByteStream", response.stream))
         response.close()
         rebuilt = httpx.Response(
@@ -797,7 +703,7 @@ class GovernedAsyncTransport(httpx.AsyncBaseTransport):
         project: str | None = None,
         unmetered: Unmetered = "block",
     ) -> None:
-        """Wrap `inner`; decisions are shared with the sync twin via the core."""
+        """Wrap `inner` with the governor."""
         self._inner = inner
         self._core = _GovernorCore(
             adapter,
@@ -926,42 +832,22 @@ def metered_http_client(
 ) -> httpx.Client:
     """Build an `httpx.Client` whose every request is governed.
 
-    The integration point for frameworks that construct their own vendor
-    client: anything accepting an `http_client=` — LangChain's `ChatOpenAI`,
-    the vendor SDKs themselves — is fully governed by passing one of these,
-    with no other code change:
-
-        llm = ChatOpenAI(
-            model="gpt-4o",
-            http_client=lucnt.metered_http_client(vendor="openai", agent="researcher"),
-            max_retries=0,
-        )
-
-    Semantics per request: known spend endpoints are authorized before the
-    request is forwarded and settled from the response's usage after (streamed
-    responses settle when the stream ends). A policy block or an unpriceable
-    call is refused with a synthetic 403 carrying the reason — surfaced by the
-    vendor SDK as its own typed error, never retried, no money moved. Reads
-    pass through untouched. Unknown POST paths follow `unmetered`.
-
-    **Turn off the vendor SDK's own retries** (`max_retries=0`) and retry at
-    the lucnt layer instead — the same rule as `meter()`.
+    Pass it as `http_client=` to frameworks that build their own vendor client
+    (e.g. LangChain), and set the vendor client's `max_retries=0`. Blocks and
+    unpriceable calls surface as a vendor 403 error; no money moves.
 
     Args:
-        vendor: `"openai"` or `"anthropic"` — which wire shapes to expect.
-        agent: Agent handle to attribute spend to. Falls back to `task()`.
-        entity: Legal entity handle. Falls back to `task()`.
-        intent: Free-text purpose. Falls back to `task()`.
-        project: Cost-center label. Falls back to `task()`.
-        pricing: Per-model `(input, output)` price per 1M tokens, merged over
-            the packaged pack (caller wins). `float` is rejected.
-        unmetered: `"block"` (default) refuses unpriceable POST paths with a
-            synthetic 403; `"allow"` forwards them ungoverned, logged once per
-            path.
-        **httpx_kwargs: Forwarded to `httpx.Client` (timeouts, proxies, ...).
+        vendor: `"openai"` or `"anthropic"`.
+        agent: Agent handle; falls back to `task()`.
+        entity: Legal entity handle; falls back to `task()`.
+        intent: Free-text purpose; falls back to `task()`.
+        project: Cost-center label; falls back to `task()`.
+        pricing: Model id -> `(input, output)` per 1M tokens; wins over the pack.
+        unmetered: `"block"` refuses unknown POST paths; `"allow"` forwards them.
+        **httpx_kwargs: Forwarded to `httpx.Client`.
 
     Returns:
-        A ready `httpx.Client` with the governor installed as its transport.
+        An `httpx.Client` with the governor as its transport.
 
     Raises:
         LucntError: Unknown `vendor`, malformed `pricing`, or a bad `unmetered`.
@@ -990,12 +876,7 @@ def metered_async_http_client(
     unmetered: Unmetered = "block",
     **httpx_kwargs: Any,
 ) -> httpx.AsyncClient:
-    """Build a governed `httpx.AsyncClient`.
-
-    The async twin of `metered_http_client()`; see there for semantics and
-    arguments. Pass it as the async `http_client` (LangChain:
-    `http_async_client=`).
-    """
+    """Async `metered_http_client()`; same arguments, returns an `httpx.AsyncClient`."""
     adapter = _adapter_for(vendor, pricing)
     transport = GovernedAsyncTransport(
         httpx.AsyncHTTPTransport(),
@@ -1019,19 +900,13 @@ def install_governor(
     project: str | None,
     unmetered: Unmetered,
 ) -> None:
-    """Swap a vendor client's httpx transport for a governed one (in place).
+    """Swap a vendor client's httpx transport for a governed one, in place.
 
-    Called by `meter()`. Mutating rather than copying is deliberate: the
-    governance must hold even for code that kept a reference to the unwrapped
-    client — the exact failure this closes.
+    In place so references to the unwrapped client are governed too.
 
     Raises:
-        LucntError: `client` exposes no httpx client at `._client`. Failing
-            loud is the point — proceeding would silently leave every
-            non-wrapped call path unmetered, which is the bug this module
-            exists to close. (Both real vendor SDKs are httpx-based and expose
-            `._client`; an object that does not is either a test double that
-            should model reality, or an HTTP stack this SDK cannot govern.)
+        LucntError: No httpx client at `._client`; proceeding would leave
+            non-wrapped paths unmetered.
     """
     http_client = getattr(client, "_client", None)
     if isinstance(http_client, httpx.AsyncClient):

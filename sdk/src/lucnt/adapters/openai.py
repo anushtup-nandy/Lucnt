@@ -1,15 +1,7 @@
-"""OpenAI client adapter for `meter()` (Phase 3.5 / B).
+"""OpenAI client adapter for `meter()`.
 
-Wraps `client.chat.completions.create(...)`; reads
-`response.usage.prompt_tokens` / `completion_tokens` and `response.model`.
-Detection is by module so `lucnt` never imports `openai`.
-
-Prices live in the packaged data pack (`lucnt/data/pricing.json`), not here.
-⚠️ The OpenAI table is a STARTER SET and intentionally small — OpenAI
-prices drift; verify it against current OpenAI pricing and extend it (or pass
-`meter(pricing=...)`) for your models before relying on the booked cost.
-`max_completion_tokens` is checked in addition to `max_tokens` for the output
-estimate.
+The packaged OpenAI price table is a small starter set; verify it or pass
+`meter(pricing=...)` before relying on booked cost.
 """
 
 from __future__ import annotations

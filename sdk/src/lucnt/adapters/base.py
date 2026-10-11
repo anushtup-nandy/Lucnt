@@ -1,17 +1,7 @@
-"""Base class for per-vendor meter adapters (Phase 3.5 / B).
+"""Base class for per-vendor meter adapters.
 
-An adapter teaches `meter()` one LLM client shape: how to detect it, which
-nested method to wrap (`method_path`), how to read token usage off the
-response, and how to price that usage into a Decimal USD cost. The SDK never
-imports `openai`/`anthropic` — detection is by the client's module name and
-usage is read duck-typed — so those stay optional dependencies of the
-*customer's* app, not of `lucnt`.
-
-Cost is inherently post-hoc for an LLM call, so the adapter also produces a
-pre-call *estimate* (from the request's rough input size and `max_tokens`
-ceiling) that `meter()` authorizes on before the call; the true cost is settled
-at capture. The estimate is deliberately crude — it gates policy, it is not the
-booked amount.
+Adapters price a crude pre-call estimate (the authorize gate) and the actual
+post-call usage (the booked amount). Vendor SDKs are never imported.
 """
 
 from __future__ import annotations
@@ -30,34 +20,22 @@ from lucnt.pricing import (
     normalize_prices,
 )
 
-# Both stay compiled in, deliberately: `_MILLION` is the pricing unit
-# itself, and `_FOUR_PLACES` matches the ledger's NUMERIC(18, 4) — making it
-# configurable would let the client round money differently from the books.
+# Not configurable: must match the ledger's NUMERIC(18, 4) rounding.
 _MILLION = Decimal(1_000_000)
 _FOUR_PLACES = Decimal("0.0001")
 
 
-# Content-block `type` discriminators across both vendors, for the pre-call
-# estimate. Kept compiled in rather than in the data pack: these are the
-# vendors' wire vocabulary, and a customer overriding them could only break the
-# walker — unlike a price or a model id, there is no per-customer variation to
-# express. Anything unrecognised falls through to the media charge, so a vendor
-# adding a block type degrades gracefully instead of counting base64 as prose.
+# Unrecognised block types are charged as media, never as base64 text.
 _TEXT_BLOCK_TYPES = frozenset({"text", "input_text", "output_text"})
 _IMAGE_BLOCK_TYPES = frozenset({"image", "image_url", "input_image"})
 _DOCUMENT_BLOCK_TYPES = frozenset({"document", "file", "input_file"})
 
 
 def _quantize(amount: Decimal) -> Decimal:
-    """Round a cost to the ledger's 4-decimal precision (half-up).
+    """Round a cost to 4dp half-up, flooring positive amounts at 0.0001.
 
-    A positive amount is floored at the ledger's smallest unit (0.0001) rather
-    than rounded to zero: the backend refuses zero-amount money (its
-    `amount > 0` invariant), so a sub-precision spend — 8 embedding tokens,
-    say — quantized to 0.0000 would fail authorize outright and bounce a
-    settlement into the estimate fallback. Booking the minimum unit
-    over-states such a spend by a fraction of a hundredth of a cent, which is
-    the correct direction: never book a real spend as zero.
+    The backend rejects zero amounts, so a real sub-precision spend books the
+    minimum unit rather than 0.
     """
     quantized = amount.quantize(_FOUR_PLACES, rounding=ROUND_HALF_UP)
     if quantized <= 0 < amount:
@@ -86,21 +64,14 @@ class Usage:
 class MeterAdapter:
     """Base adapter: detection, method path, usage extraction, and pricing.
 
-    Subclasses set `vendor`, `method_path`, and (optionally)
-    `output_token_keys`, and implement `matches` + `usage_from_response`.
-    Prices and the billing currency come from the packaged data pack keyed by
-    `vendor`, not from a class attribute — so adding a model id is a
-    data change, and a customer can override one without a release.
+    Subclasses set `vendor` and `method_path`, and implement `matches` and
+    `usage_from_response`. Prices come from the data pack keyed by `vendor`.
     """
 
     vendor: str
-    # Dotted path to the metered method, e.g. ("messages", "create").
     method_path: tuple[str, ...]
-    # Dotted path to a *separate* streaming helper that must also be metered.
-    # Anthropic's `messages.stream()` is its own method, so wrapping only
-    # `messages.create` left every streamed call completely unmetered — spend with
-    # no ledger row and no error. None when the vendor streams through
-    # `method_path` with a `stream=True` kwarg instead.
+    # A separate streaming method that must also be metered; None when the
+    # vendor streams through `method_path` with `stream=True`.
     stream_method_path: tuple[str, ...] | None = None
     # Request kwargs that cap output length, in priority order.
     output_token_keys: tuple[str, ...] = ("max_tokens",)
@@ -111,16 +82,11 @@ class MeterAdapter:
         """Resolve this vendor's prices from the pack, with optional overrides.
 
         Args:
-            pricing: Model id → `(input, output)` price per 1M tokens, merged
-                over the packaged table. Caller entries win, so a customer can
-                both correct a stale price and add a model the pack lacks.
+            pricing: Model id -> `(input, output)` per 1M tokens; wins over the pack.
 
         Raises:
-            LucntError: The pack has no entry for this adapter's vendor, or an
-                override is malformed.
+            LucntError: No pack entry for this vendor, or a malformed override.
         """
-        # Feed-merged when the server feed is reachable, packaged pack
-        # otherwise; caller overrides below win over both.
         pack = load_active_pack()
         vendor_pricing = pack.vendors.get(self.vendor)
         if vendor_pricing is None:
@@ -133,8 +99,6 @@ class MeterAdapter:
         self._image_tokens = pack.image_tokens
         self._document_page_tokens = pack.document_page_tokens
         self._default_document_pages = pack.default_document_pages
-        # The currency the vendor bills in, so `meter()` never hardcodes USD
-        # for a vendor that doesn't use it (C-6).
         self.currency = vendor_pricing.currency
         merged: dict[str, ModelPrices] = dict(vendor_pricing.models)
         if pricing:
@@ -143,26 +107,14 @@ class MeterAdapter:
 
     @classmethod
     def matches(cls, client: object) -> bool:
-        """True if this adapter handles `client`, sync or async (by module).
-
-        A classmethod so detection needs no instance — `resolve_adapter` can
-        test every adapter before paying to construct the one that matches.
-
-        Vendor knowledge — usage extraction, pricing, which method to wrap — is
-        identical for a vendor's sync and async clients, so one adapter serves
-        both and only `meter()`'s call wrapper differs. See `is_async`.
-        """
+        """True if this adapter handles `client`, sync or async (by module)."""
         raise NotImplementedError
 
     def is_async(self, client: object) -> bool:
         """True when `client` is this vendor's async client.
 
-        Asks the completion method whether calling it yields a coroutine, which
-        is a property of what the object *does*; the `Async...` class-name
-        convention both vendors follow is only the fallback, for a client whose
-        method cannot be resolved. Preferring the behavioural check means a
-        vendor renaming its class does not silently route an async client
-        through the blocking wrapper.
+        Checks the method for a coroutine first; the `Async` class name is only
+        a fallback, so a vendor rename cannot route async through sync.
         """
         method: object = client
         for name in self.method_path:
@@ -179,27 +131,14 @@ class MeterAdapter:
 
     @staticmethod
     def is_streaming_request(kwargs: Mapping[str, Any]) -> bool:
-        """True when this request asks the vendor to stream.
-
-        Both vendors spell it `stream=True` on the completion call. A streamed
-        response is an iterator, not a message, so `usage_from_response` cannot
-        read it and `meter()` must consume the stream instead.
-        """
+        """True when the request passes `stream=True`."""
         return kwargs.get("stream") is True
 
     def _snapshot_base(self, model: str) -> str | None:
         """Find the priced base id that `model` is a dated snapshot of.
 
-        Vendors publish a stable alias plus dated snapshots of it —
-        `gpt-4o-2024-08-06`, `claude-haiku-4-5-20251001` — billed at the alias's
-        rate. Only *those* resolve to the alias: the remainder after the base id
-        must be `-` followed by digits. The longest such base wins, so
-        `gpt-4o-mini-2024-07-18` prices as `gpt-4o-mini`, never as `gpt-4o`.
-
-        Matching on any prefix would be the dangerous version of this fix: a
-        genuinely new and pricier variant (`gpt-4o-turbo-ultra`) would silently
-        bill at the cheaper base's rate and under-book real money. A suffix that
-        isn't a snapshot returns None so `_prices` fails loudly instead.
+        Only `<base>-<digits>...` matches (longest base wins); a plain prefix
+        match would bill a pricier new variant at the cheaper base's rate.
         """
         matches = [
             base
@@ -210,20 +149,7 @@ class MeterAdapter:
         return max(matches, key=len) if matches else None
 
     def _prices(self, model: str, fallback_model: str | None = None) -> ModelPrices:
-        """Resolve prices for `model`: exact id, then dated snapshot, then fallback.
-
-        Args:
-            model: The model id to price — normally the one the vendor reported.
-            fallback_model: The id the caller *requested*, tried last. A vendor
-                may answer with an id the pack has never seen while the
-                requested alias is priced perfectly well.
-
-        Returns:
-            The `(input, output)` price per 1M tokens.
-
-        Raises:
-            LucntError: None of the three lookups resolved.
-        """
+        """Resolve prices: exact id, then dated snapshot, then `fallback_model`."""
         for candidate in (model, self._snapshot_base(model)):
             if candidate is not None and candidate in self.pricing:
                 return self.pricing[candidate]
@@ -240,11 +166,7 @@ class MeterAdapter:
 
         Args:
             usage: Token usage read off the vendor response.
-            fallback_model: The requested model id, used when the id the vendor
-                reported cannot be priced.
-
-        Returns:
-            The cost, quantized to the ledger's 4 decimal places.
+            fallback_model: Requested model id, used if the reported one is unpriced.
         """
         input_price, output_price = self._prices(
             usage.model, fallback_model=fallback_model
@@ -255,11 +177,7 @@ class MeterAdapter:
         return _quantize(raw)
 
     def estimate_cost(self, kwargs: Mapping[str, Any]) -> Decimal:
-        """Crude pre-call cost estimate for the authorize gate (not the booked amount).
-
-        Input tokens are approximated from the serialized `messages`/`system`
-        payload (~4 chars/token); output tokens from `max_tokens` (or a default).
-        """
+        """Crude pre-call cost estimate for the authorize gate (not booked)."""
         model = kwargs.get("model")
         if not isinstance(model, str):
             raise LucntError(
@@ -278,25 +196,10 @@ class MeterAdapter:
     def _block_tokens(self, block: object) -> int:
         """Estimate one content block, charging media as media.
 
-        The bug this replaces: the estimate used to be
-        `len(str(messages)) // 4`, which counted a **base64 payload as text**. A
-        1 MB image serializes to ~1.4M characters, so a single screenshot
-        estimated at ~350,000 input tokens — enough to trip an amount-threshold
-        policy or exhaust a budget on a call whose real usage is a few thousand
-        tokens. The failure was in the expensive direction: `authorize()` blocks
-        *before* the call, so an inflated estimate does not over-bill, it stops a
-        legitimate spend outright, and the caller sees a policy block with no
-        indication that an estimate was the cause.
-
-        Media blocks therefore contribute a flat per-item figure from the pack
-        and their payload is never measured. An unrecognised block with no text
-        field is charged as media too: it is the bounded, roughly-right guess for
-        the thing it most likely is, and it means a vendor adding a new media
-        type degrades to a slightly-off estimate rather than back to counting
-        base64.
+        Media gets a flat per-item figure; measuring base64 as text would
+        inflate the estimate enough to falsely block a legitimate spend.
         """
         if not isinstance(block, Mapping):
-            # A non-dict block (e.g. a bare string in a content list).
             return self._text_tokens(str(block))
         block_type = block.get("type")
         if block_type in _TEXT_BLOCK_TYPES:
@@ -307,7 +210,6 @@ class MeterAdapter:
             return self._document_page_tokens * self._default_document_pages
         text = block.get("text")
         if isinstance(text, str):
-            # Unknown wrapper that still carries plain text — count the text.
             return self._text_tokens(text)
         return self._image_tokens
 
@@ -322,13 +224,7 @@ class MeterAdapter:
         return self._text_tokens(str(content))
 
     def _estimate_input_tokens(self, kwargs: Mapping[str, Any]) -> int:
-        """Estimate prompt tokens by walking the request structurally.
-
-        Covers `system` (a string or, on Anthropic, a block list), every
-        message's `content`, and the serialized `tools` — tool schemas are real
-        input tokens and were previously ignored entirely, which under-estimated
-        every tool-using agent.
-        """
+        """Estimate prompt tokens from `system`, message content, and `tools`."""
         tokens = self._content_tokens(kwargs.get("system"))
         messages = kwargs.get("messages")
         if isinstance(messages, (list, tuple)):
@@ -341,8 +237,6 @@ class MeterAdapter:
             tokens += self._text_tokens(str(messages))
         tools = kwargs.get("tools")
         if tools is not None:
-            # JSON schemas are plain text on the wire; measuring the serialized
-            # form is the same heuristic applied to the same kind of content.
             tokens += self._text_tokens(str(tools))
         return max(1, tokens)
 

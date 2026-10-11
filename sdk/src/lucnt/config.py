@@ -11,12 +11,9 @@ from pydantic import SecretStr, ValidationError
 from lucnt.exceptions import ConfigurationError
 from lucnt.models import LucntConfig
 
-# A self-hosted backend started per the repo README. Production deployments set
-# `LUCNT_BASE_URL` (or pass `base_url=`) to their own https:// endpoint.
 _DEFAULT_BASE_URL = "http://localhost:8000"
 _DEFAULT_TIMEOUT = 30.0
-# Safety control, not a knob: http:// is permitted only against these
-# hosts. Exposing this to configuration would be a switch that disables TLS.
+# Deliberately not configurable: it would be a switch that disables TLS.
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 _active_config: LucntConfig | None = None
@@ -75,9 +72,7 @@ def _resolve(explicit: _T | None, env: _T | None, default: _T) -> _T:
     return default if resolved is None else resolved
 
 
-# Defaults are declared once, on `LucntConfig`, and read back here rather than
-# retyped — the same single-source discipline `_version.py` gets. A
-# second copy of "max_retries is 2" is a copy that eventually disagrees.
+# Single source: defaults live on `LucntConfig`.
 _DEFAULT_MAX_RETRIES: int = LucntConfig.model_fields["max_retries"].default
 _DEFAULT_BACKOFF_BASE: float = LucntConfig.model_fields["backoff_base"].default
 _DEFAULT_BACKOFF_MAX: float = LucntConfig.model_fields["backoff_max"].default
@@ -89,10 +84,7 @@ _DEFAULT_PRICING_FEED_TTL: float = LucntConfig.model_fields["pricing_feed_ttl"].
 
 
 def _require_secure_base_url(base_url: str) -> None:
-    """Reject a plaintext base URL so the Bearer key never crosses the wire raw.
-
-    `http://` is allowed only for a localhost dev backend.
-    """
+    """Reject plaintext base URLs except localhost, so the key never goes cleartext."""
     parsed = urlparse(base_url)
     if parsed.scheme == "https":
         return
@@ -120,41 +112,29 @@ def configure(
 ) -> LucntConfig:
     """Configure the SDK's credentials, endpoint, timeouts, and retry policy.
 
-    Every argument resolves in the same order: **explicit argument → `LUCNT_*`
-    environment variable → built-in default**. Call this once before any other
-    `lucnt` call in the process.
+    Each argument resolves: explicit argument, then `LUCNT_<NAME>` env var,
+    then default. Call once before any other `lucnt` call.
+
+        lucnt.configure(api_key="lk_live_...", base_url="https://api.example.com")
 
     Args:
-        api_key: Live or sandbox API key. Env: `LUCNT_API_KEY`.
-        base_url: Backend base URL. Env: `LUCNT_BASE_URL`. Default:
-            `http://localhost:8000`. Must be `https://` unless it points at
-            localhost.
-        timeout: Overall per-request budget in seconds, and the default for
-            any phase without its own value. Env: `LUCNT_TIMEOUT`.
-        connect_timeout: Connect-phase timeout. A dead host should fail fast
-            rather than burn the whole budget. Env: `LUCNT_CONNECT_TIMEOUT`.
-        read_timeout: Read-phase timeout. Policy evaluation is the slow part
-            and wants more room than connect. Env: `LUCNT_READ_TIMEOUT`.
-        max_retries: Retries **after** the first attempt, so 2 means up to 3
-            requests. 0 disables retrying. Env: `LUCNT_MAX_RETRIES`.
-        backoff_base: First backoff delay in seconds; doubles per attempt and
-            is then jittered. Env: `LUCNT_BACKOFF_BASE`.
-        backoff_max: Ceiling for any single backoff delay, including one taken
-            from `Retry-After`. Env: `LUCNT_BACKOFF_MAX`.
-        respect_retry_after: Honour a server `Retry-After` header in place of
-            computed backoff. Env: `LUCNT_RESPECT_RETRY_AFTER`.
-        pricing_feed: Fetch vendor pricing from the backend's `/pricing/feed`,
-            merging it over the packaged pack; the pack alone is used
-            when disabled or unreachable. Env: `LUCNT_PRICING_FEED`.
-        pricing_feed_ttl: Seconds a fetched feed (or a failed fetch) is cached
-            before re-fetching. Env: `LUCNT_PRICING_FEED_TTL`.
+        api_key: Live or sandbox API key.
+        base_url: Backend URL; must be https:// unless localhost.
+        timeout: Overall per-request seconds; default for unset phases.
+        connect_timeout: Connect-phase timeout.
+        read_timeout: Read-phase timeout.
+        max_retries: Retries after the first attempt (0 disables).
+        backoff_base: First backoff delay in seconds; doubles, jittered.
+        backoff_max: Ceiling on any single delay, including `Retry-After`.
+        respect_retry_after: Honour a server `Retry-After` over computed backoff.
+        pricing_feed: Merge the backend's `/pricing/feed` over the packaged pack.
+        pricing_feed_ttl: Seconds a feed fetch (or failure) is cached.
 
     Returns:
         The resolved, now-active `LucntConfig`.
 
     Raises:
-        ConfigurationError: No API key was found, the base URL is insecure, or
-            a `LUCNT_*` variable holds an unparseable value.
+        ConfigurationError: Missing API key, insecure URL, or bad env value.
     """
     global _active_config
 
@@ -205,9 +185,6 @@ def configure(
             ),
         )
     except ValidationError as exc:
-        # A negative max_retries or zero backoff is a caller mistake, not an
-        # internal error — surface it as ConfigurationError like every other
-        # bad-configuration path here.
         raise ConfigurationError(f"Invalid configuration: {exc}") from exc
     return _active_config
 

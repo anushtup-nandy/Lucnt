@@ -1,30 +1,7 @@
-"""Packaged pricing data pack — domain content, not operator configuration.
+"""Vendor pricing: packaged data pack, merged under the server `/pricing/feed`.
 
-Vendor token prices, the pre-call estimate heuristics, and each vendor's billing
-currency live in a JSON file shipped inside the wheel rather than as module
-constants in `adapters/*`. Two reasons: a new model id becomes a data change
-instead of a code change (an unpriced model otherwise hard-blocks the customer's
-own LLM calls), and the table stops being source code that has to be
-audited before the package goes public.
-
-**No on-disk discovery, deliberately.** A library that hunts for a `lucnt.toml`
-in the customer's working directory behaves differently depending on where their
-process was started, and reading arbitrary files off their filesystem is a
-security smell in a dependency. The pack is read from the installed package
-only; per-process overrides arrive as arguments (`meter(pricing=...)`).
-
-**The server feed is the authority; the pack is the offline fallback.**
-`load_active_pack()` fetches `GET /pricing/feed` — where date-ranged rates are
-resolved server-side against *today*, so a lapsing introductory rate never
-requires a client release — merges it over the packaged pack (feed wins per
-model), and caches the result for `pricing_feed_ttl` seconds. Any failure falls
-back to the pack with a warning; the money path never breaks on a feed outage.
-Precedence end to end: `meter(pricing=...)` > feed > packaged pack.
-
-**Money is encoded as strings and parsed to `Decimal` here, at the boundary.**
-A JSON number would arrive as a `float` and reintroduce exactly the binary
-precision error the ledger's Decimal discipline exists to prevent, so a
-non-string price is rejected rather than coerced.
+Precedence: `meter(pricing=...)` > feed > packaged pack. Feed failures fall back
+to the pack. Prices are JSON strings so they parse to `Decimal` exactly.
 """
 
 from __future__ import annotations
@@ -52,8 +29,7 @@ _FEED_PATH: Final = "/pricing/feed"
 # (input, output) price per 1M tokens, in the vendor's billing currency.
 ModelPrices = tuple[Decimal, Decimal]
 
-# Accepted for a caller-supplied override. `float` is absent on purpose: it is
-# the one type that cannot round-trip a price exactly.
+# No `float`: it cannot round-trip a price exactly.
 PriceInput = Decimal | int | str
 
 
@@ -67,28 +43,10 @@ class VendorPricing:
 
 @dataclass(frozen=True)
 class PricingPack:
-    """The packaged pack: estimate heuristics plus per-vendor pricing.
+    """The pricing pack: pre-call estimate heuristics plus per-vendor pricing.
 
-    Attributes:
-        version: The pack's release date, for support and drift diagnosis.
-        chars_per_token: Rough characters-per-token ratio for the pre-call
-            estimate. Estimate-only — never used to price actual usage.
-        default_output_tokens: Assumed output length when the request sets no
-            explicit cap.
-        image_tokens: Tokens charged per image in the pre-call estimate.
-            A flat figure because the request cannot be priced properly without
-            decoding the image: vendors bill roughly by pixel area, which is not
-            knowable from a base64 payload without parsing it, and a client
-            library has no business doing that on a money path. Set near the
-            high-resolution ceiling so the hold never *under*-reserves — an
-            over-reservation is released at capture, whereas an under-reservation
-            lets a spend through a budget the policy engine believed had room.
-        document_page_tokens: Tokens charged per PDF/document page in the
-            estimate.
-        default_document_pages: Assumed page count for an attached document.
-            Page count is genuinely unknowable pre-call, so this is a stated
-            assumption rather than a measurement.
-        vendors: Per-vendor currency and model prices, keyed by vendor name.
+    `image_tokens` is set near the high-resolution ceiling so a hold never
+    under-reserves; over-reservation is released at capture.
     """
 
     version: str
@@ -101,18 +59,7 @@ class PricingPack:
 
 
 def _price(raw: object, where: str) -> Decimal:
-    """Parse one price string into a `Decimal`, rejecting anything else.
-
-    Args:
-        raw: The value read from the pack.
-        where: Dotted location, used in the error message.
-
-    Returns:
-        The parsed price.
-
-    Raises:
-        LucntError: The value is not a string, or is not a valid decimal.
-    """
+    """Parse one price string into a `Decimal`, rejecting anything else."""
     if not isinstance(raw, str):
         raise LucntError(
             f"pricing pack {where} is {type(raw).__name__}, not a string: money "
@@ -174,12 +121,7 @@ def _parse_pack(payload: object) -> PricingPack:
 
 
 def _positive_int(estimation: dict[str, object], key: str) -> int:
-    """Read one estimation knob, rejecting a missing or non-positive value.
-
-    A zero or negative token count would silently produce a zero-cost estimate,
-    so the authorize gate would approve an unbounded spend. Fail on the pack
-    instead — a broken pack is a build problem, not something to guess around.
-    """
+    """Read one estimation knob; non-positive would zero the authorize estimate."""
     raw = estimation.get(key)
     if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
         raise LucntError(
@@ -190,17 +132,10 @@ def _positive_int(estimation: dict[str, object], key: str) -> int:
 
 @lru_cache(maxsize=1)
 def load_pricing_pack() -> PricingPack:
-    """Read and parse the pack shipped inside the installed package.
-
-    Cached: the file is immutable for the life of the process, and `meter()`
-    resolves an adapter on every call.
-
-    Returns:
-        The parsed `PricingPack`.
+    """Read and parse the pack shipped inside the installed package (cached).
 
     Raises:
-        LucntError: The pack is missing from the installed package (a broken
-            build) or fails validation.
+        LucntError: The pack is missing or fails validation.
     """
     try:
         raw = files(_PACK_PACKAGE).joinpath(_PACK_FILENAME).read_text(encoding="utf-8")
@@ -235,15 +170,7 @@ def _reset_feed_cache() -> None:
 
 
 def _fetch_feed() -> PricingPack:
-    """Fetch and validate `GET /pricing/feed` through the pooled transport.
-
-    Imported late: `ledger` is a heavier module than `pricing`, and importing
-    it at module scope would create an import cycle through `adapters`.
-
-    Raises:
-        LucntError: The SDK is unconfigured, the request failed, or the body
-            does not validate as a pricing pack.
-    """
+    """Fetch and validate `GET /pricing/feed` (late import avoids a cycle)."""
     from lucnt.ledger import _get_transport
 
     try:
@@ -257,13 +184,7 @@ def _fetch_feed() -> PricingPack:
 
 
 def _merge_feed(pack: PricingPack, feed: PricingPack) -> PricingPack:
-    """Merge the feed over the packaged pack — feed wins, per model.
-
-    Model-level so a feed that only carries corrections still leaves every
-    pack-only model priced; a feed-only vendor is added whole. The estimation
-    knobs come from the feed (it always carries them — `_parse_pack` requires
-    the block), so the server can also tune estimate heuristics fleet-wide.
-    """
+    """Merge the feed over the pack per model; estimation knobs come from the feed."""
     vendors: dict[str, VendorPricing] = dict(pack.vendors)
     for name, feed_vendor in feed.vendors.items():
         base = vendors.get(name)
@@ -295,15 +216,10 @@ def _feed_enabled() -> tuple[bool, float]:
 
 
 def load_active_pack() -> PricingPack:
-    """The pricing every adapter prices against: feed-merged, pack-fallback.
+    """Return the feed-merged pack, falling back to the packaged pack.
 
-    Fetches the feed at most once per `pricing_feed_ttl` (a failed fetch is
-    cached for the same TTL, so a feed outage costs one connect error per TTL,
-    not one per call). Inside a running event loop no blocking fetch is made —
-    the cached feed or the pack is used; async applications that want the feed
-    warm call `refresh_pricing_async()` at startup. Never raises on the feed's
-    account: any failure degrades to the packaged pack with one warning per
-    process.
+    Fetches at most once per TTL (failures cached too). Never fetches inside a
+    running event loop, and never raises on the feed's account.
     """
     global _feed_state, _feed_warned
     pack = load_pricing_pack()
@@ -320,8 +236,7 @@ def load_active_pack() -> PricingPack:
         except RuntimeError:
             pass
         else:
-            # A blocking fetch would stall every coroutine in the process
-            # (the async rule). Use what we have; do not poison the TTL cache.
+            # A blocking fetch would stall the loop; don't poison the TTL cache.
             feed = state[1] if state is not None else None
             return _merge_feed(pack, feed) if feed is not None else pack
         try:
@@ -344,17 +259,13 @@ def load_active_pack() -> PricingPack:
 def refresh_pricing() -> PricingPack:
     """Force-fetch the pricing feed now, replacing the cached copy.
 
-    Unlike the implicit fetch inside `meter()`, an explicit refresh **raises**
-    on failure — the caller asked for fresh prices and needs to know they did
-    not arrive. Async applications call this (or the `_async` twin) at startup
-    so adapters constructed inside a running loop find a warm feed.
+    Unlike the implicit fetch, this raises on failure.
 
     Returns:
         The feed-merged pack now in effect.
 
     Raises:
-        LucntError: The SDK is unconfigured, the fetch failed, or the feed
-            body is invalid.
+        LucntError: SDK unconfigured, fetch failed, or invalid feed body.
     """
     global _feed_state
     feed = _fetch_feed()
@@ -364,33 +275,14 @@ def refresh_pricing() -> PricingPack:
 
 
 async def refresh_pricing_async() -> PricingPack:
-    """Force-fetch the pricing feed without blocking the running loop.
-
-    The fetch runs in a worker thread (`asyncio.to_thread`), so it is safe to
-    await at application startup. Same semantics as `refresh_pricing()`.
-    """
+    """Async `refresh_pricing()`; fetches in a worker thread."""
     return await asyncio.to_thread(refresh_pricing)
 
 
 def normalize_prices(
     overrides: Mapping[str, tuple[PriceInput, PriceInput]],
 ) -> dict[str, ModelPrices]:
-    """Convert caller-supplied `meter(pricing=...)` entries to `Decimal` pairs.
-
-    `float` is rejected rather than coerced: `Decimal(2.5)` is not
-    `Decimal("2.5")`, and a price is the one input where that difference
-    propagates into booked money. Pass `"2.50"` or `Decimal("2.50")`.
-
-    Args:
-        overrides: Model id → `(input, output)` price per 1M tokens.
-
-    Returns:
-        The same mapping with both prices as `Decimal`.
-
-    Raises:
-        LucntError: An entry is not a 2-tuple, or a price is a `float` or an
-            otherwise unparseable value.
-    """
+    """Convert `meter(pricing=...)` entries to `Decimal` pairs, rejecting `float`."""
     normalized: dict[str, ModelPrices] = {}
     for model, prices in overrides.items():
         if not isinstance(prices, tuple) or len(prices) != 2:

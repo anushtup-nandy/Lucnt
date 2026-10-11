@@ -1,14 +1,7 @@
-"""Anthropic client adapter for `meter()` (Phase 3.5 / B).
+"""Anthropic client adapter for `meter()`.
 
-Wraps `client.messages.create(...)`; reads `response.usage.input_tokens` /
-`output_tokens` and `response.model`. Detection is by module so `lucnt` never
-imports `anthropic`.
-
-Prices live in the packaged data pack (`lucnt/data/pricing.json`), not here —
-a new model id is a data change, and `meter(pricing=...)` overrides one
-without waiting for a release. Cache-discounted input tokens are billed at
-the standard input rate (a conservative simplification; cache-aware pricing is
-a future refinement).
+Cache-discounted input tokens are billed at the standard input rate
+(conservative).
 """
 
 from __future__ import annotations
@@ -22,8 +15,7 @@ class AnthropicAdapter(MeterAdapter):
 
     vendor = "anthropic"
     method_path = ("messages", "create")
-    # `messages.stream()` is a separate method, so wrapping only `create`
-    # let every streamed call through completely unmetered.
+    # Separate method; without it streamed calls would go unmetered.
     stream_method_path = ("messages", "stream")
 
     @classmethod
