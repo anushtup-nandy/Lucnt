@@ -1,0 +1,12 @@
+{
+  "_generated_by": "backend/scripts/export_contract.py",
+  "_why": "Verdict.code is an open string on the wire, so VerdictCode never reaches the OpenAPI document. The SDK branches on 'budget_exhausted'.",
+  "codes": [
+    "amount_over_threshold",
+    "budget_exhausted",
+    "merchant_blocked",
+    "ok",
+    "outside_hours",
+    "velocity_exceeded"
+  ]
+}

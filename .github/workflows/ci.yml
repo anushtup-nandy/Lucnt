@@ -1,20 +1,20 @@
 name: CI
 
-# The repo's mandated "Green CI" gate (CLAUDE.md §4), enforced on every push/PR:
+# The repo's mandated "Green CI" gate, enforced on every push/PR:
 # ruff + mypy + pytest for both packages, plus an Alembic reversibility round-trip
 # and a schema-drift check for the backend. Runs the exact commands used locally
 # so CI never diverges.
 #
-# T4-2 additions beyond the original lint/type/test job:
-#   * a Redis service — T3-7 made Redis a real runtime dependency, and a suite
+# Beyond lint/type/test, this workflow also runs:
+#   * a Redis service — the rate limiter made Redis a real runtime dependency, and a suite
 #     that only ever ran with it absent proves the fail-open path and nothing else;
-#   * `alembic check`, which is only meaningful now that T4-7 turned on
+#   * `alembic check`, which is only meaningful now that env.py turns on
 #     `compare_type`/`compare_server_default` (it immediately found real drift);
 #   * a dedicated TEST_DATABASE_URL, so the destructive downgrade round-trip
-#     provably runs somewhere other than the database the suite reads (T4-12);
+#     provably runs somewhere other than the database the suite reads;
 #   * secret and dependency scanning;
 #   * a Docker build, because an image that only builds on the author's laptop is
-#     not a deployable artifact (T4-1).
+#     not a deployable artifact.
 
 on:
   push:
@@ -60,7 +60,7 @@ jobs:
       # the thing that migrates the database the tests then assert against.
       #
       # `TEST_DATABASE_URL` is deliberately NOT set here — only on the `pytest`
-      # step. The T4-12 validator in `config.py` rejects a config where the two
+      # step. The validator in `config.py` rejects a config where the two
       # are equal, and the alembic steps below have to point `DATABASE_URL` at
       # the throwaway database; with both in job scope they collide and every
       # `Settings()` construction raises before doing any work. Scoping each var
@@ -167,15 +167,15 @@ jobs:
         # covered `src/`, so a lint error in either was invisible to CI.
         run: ruff check src/ tests/ scripts/ gunicorn.conf.py alembic/env.py
       - name: Format (ruff format --check)
-        # F-21: formatting is a gate, not a habit — drift had reached 29 files
+        # Formatting is a gate, not a habit — drift had reached 29 files
         # before this step existed.
         run: ruff format --check src/ tests/ scripts/ gunicorn.conf.py alembic/env.py
       - name: Types (mypy)
         run: mypy src/ scripts/ gunicorn.conf.py
 
-      - name: API contract is current (X-6a)
-        # Gates `docs/api-contract.json` (a normalized projection of every path,
-        # field, type, required flag and enum) and `docs/verdict-codes.json`.
+      - name: API contract is current
+        # Gates `contracts/api-contract.json` (a normalized projection of every path,
+        # field, type, required flag and enum) and `contracts/verdict-codes.json`.
         #
         # A *projection*, not a byte-diff of `openapi.json`, deliberately: the raw
         # document moves with fastapi/pydantic bumps ($ref naming, anyOf ordering,
@@ -184,7 +184,7 @@ jobs:
         # `verdict-codes.json` is separate because `Verdict.code` is an open string
         # on the wire, so `VerdictCode` never reaches OpenAPI, while the SDK
         # branches on the literal "budget_exhausted". No schema gate can see that
-        # move; this one can. See docs/scale/repo_split.md §4.
+        # move; this one can.
         run: python scripts/export_contract.py --check
 
       - name: Migrations round-trip (upgrade → downgrade → upgrade)
@@ -202,7 +202,7 @@ jobs:
 
       - name: Schema drift (alembic check)
         # Fails if the models imply a migration nobody wrote. Only sharp now that
-        # T4-7 enabled type and server-default comparison.
+        # type and server-default comparison were enabled.
         env:
           DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: alembic check
@@ -210,7 +210,7 @@ jobs:
       - name: Tests (pytest)
         # The one step that reads `TEST_DATABASE_URL`: `tests/conftest.py` builds
         # its engine from it and warns when it is unset. `DATABASE_URL` keeps the
-        # job-level value, so the two differ and the T4-12 validator is satisfied.
+        # job-level value, so the two differ and the `config.py` validator is satisfied.
         env:
           TEST_DATABASE_URL: ${{ env.TEST_DB_URL }}
         run: pytest
@@ -250,7 +250,7 @@ jobs:
     strategy:
       # The SDK is a customer-facing library: `requires-python = ">=3.10"` is a
       # promise, so 3.10 stays in the matrix (the floor customers may run) while
-      # 3.12 matches the backend's runtime (F-23).
+      # 3.12 matches the backend's runtime.
       #
       # fail-fast off: a failure on one Python must not cancel the other leg —
       # "does this break on 3.10, 3.12, or both?" is exactly the signal a
@@ -297,7 +297,7 @@ jobs:
       - name: Install
         run: npm ci
       - name: Generated API types are current
-        # The backend job gates `docs/openapi.json` being current; this gates the
+        # The backend job gates `contracts/openapi.json` being current; this gates the
         # other half — that `src/types/api.ts` was regenerated from it. Without
         # this, a backend contract change leaves the frontend typed against the
         # old wire format and nothing goes red.
@@ -334,7 +334,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Dependency audit (pip-audit)
-        # F-24, blocking since 30 Jul 2026: the T4-8 lockfile now pins the whole
+        # Blocking since 30 Jul 2026: the lockfile now pins the whole
         # input set (with hashes), so the audit runs against exactly what the
         # image ships — no fresh resolve, no unrelated-PR flakiness. A CVE in a
         # pinned version is a real fact about the artifact and should be red.

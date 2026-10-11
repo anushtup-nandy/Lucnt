@@ -1,0 +1,3216 @@
+{
+  "_generated_by": "backend/scripts/export_contract.py",
+  "paths": {
+    "GET /agents": {
+      "params": [
+        "entity:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "AgentListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /agents/{agent_id}": {
+      "params": [
+        "agent_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "AgentDetail",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /api-keys": {
+      "params": [
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ApiKeyListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /approvals": {
+      "params": [
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ApprovalListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /audit-logs": {
+      "params": [
+        "action:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "AuditLogListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /auth/me": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "200": "MeResponse"
+      }
+    },
+    "GET /authorizations": {
+      "params": [
+        "agent:query:optional:null|string",
+        "entity:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer",
+        "status:query:optional:VerdictStatus|null"
+      ],
+      "request": null,
+      "responses": {
+        "200": "AuthorizationListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /books/bs": {
+      "params": [
+        "date_from:query:optional:null|string(date)",
+        "date_to:query:optional:null|string(date)",
+        "entity:query:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "BalanceSheetResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /books/cf": {
+      "params": [
+        "date_from:query:optional:null|string(date)",
+        "date_to:query:optional:null|string(date)",
+        "entity:query:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "CashFlowResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /books/gl": {
+      "params": [
+        "account:query:optional:null|string",
+        "date_from:query:optional:null|string(date)",
+        "date_to:query:optional:null|string(date)",
+        "entity:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "GeneralLedgerResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /books/journals": {
+      "params": [
+        "date_from:query:optional:null|string(date)",
+        "date_to:query:optional:null|string(date)",
+        "entity:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "JournalsResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /books/pl": {
+      "params": [
+        "date_from:query:optional:null|string(date)",
+        "date_to:query:optional:null|string(date)",
+        "entity:query:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ProfitAndLossResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /books/tb": {
+      "params": [
+        "date_from:query:optional:null|string(date)",
+        "date_to:query:optional:null|string(date)",
+        "entity:query:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "TrialBalanceResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /budgets": {
+      "params": [
+        "agent:query:optional:null|string",
+        "entity:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "BudgetsResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /entities": {
+      "params": [
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "EntityListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /health/live": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "200": "map<string>"
+      }
+    },
+    "GET /health/ready": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "200": "object"
+      }
+    },
+    "GET /insights": {
+      "params": [
+        "entity:query:optional:null|string",
+        "include_applied:query:optional:boolean",
+        "include_dismissed:query:optional:boolean",
+        "insight_type:query:optional:InsightType|null",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "InsightsListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /intelligence/query": {
+      "params": [
+        "agent:query:required:string",
+        "q:query:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "FinancialMemoryResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /memory": {
+      "params": [
+        "agent:query:optional:null|string",
+        "entity:query:optional:null|string",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "MemoryListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /policies": {
+      "params": [
+        "active:query:optional:boolean|null",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "PolicyListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /pricing/feed": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "200": "any"
+      }
+    },
+    "GET /recon": {
+      "params": [
+        "entity:query:optional:null|string",
+        "exception_type:query:optional:ReconExceptionType|null",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer",
+        "status:query:optional:ReconExceptionStatus|null"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ReconListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /recon/{exception_id}": {
+      "params": [
+        "exception_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ReconExceptionResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /transactions": {
+      "params": [
+        "agent:query:optional:null|string",
+        "entity:query:optional:null|string",
+        "estimated:query:optional:boolean|null",
+        "limit:query:optional:integer",
+        "offset:query:optional:integer",
+        "reversed:query:optional:boolean|null",
+        "vendor:query:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "TransactionListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /transactions/{transaction_id}": {
+      "params": [
+        "transaction_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "TransactionFull",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /users": {
+      "params": [
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "UserListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /vendors": {
+      "params": [
+        "limit:query:optional:integer",
+        "offset:query:optional:integer"
+      ],
+      "request": null,
+      "responses": {
+        "200": "VendorListResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "GET /vendors/{vendor_id}": {
+      "params": [
+        "vendor_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "VendorRead",
+        "422": "HTTPValidationError"
+      }
+    },
+    "PATCH /budgets/{agent_id}": {
+      "params": [
+        "agent_id:path:required:string(uuid)"
+      ],
+      "request": "BudgetUpdate",
+      "responses": {
+        "200": "AgentBudget",
+        "422": "HTTPValidationError"
+      }
+    },
+    "PATCH /policies/{policy_id}": {
+      "params": [
+        "policy_id:path:required:string(uuid)"
+      ],
+      "request": "PolicyUpdate",
+      "responses": {
+        "200": "PolicyResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "PATCH /vendors/{vendor_id}": {
+      "params": [
+        "vendor_id:path:required:string(uuid)"
+      ],
+      "request": "VendorUpdate",
+      "responses": {
+        "200": "VendorRead",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /approvals/{approval_id}/approve": {
+      "params": [
+        "approval_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ApprovalActionResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /approvals/{approval_id}/reject": {
+      "params": [
+        "approval_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "ApprovalActionResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /auth/login": {
+      "params": [],
+      "request": "LoginRequest",
+      "responses": {
+        "200": "TokenResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /auth/logout": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "204": "any"
+      }
+    },
+    "POST /auth/refresh": {
+      "params": [
+        "lucnt_refresh:cookie:optional:null|string"
+      ],
+      "request": null,
+      "responses": {
+        "200": "TokenResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /books/funding": {
+      "params": [],
+      "request": "FundingRequest",
+      "responses": {
+        "201": "PostedJournalResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /books/journal": {
+      "params": [],
+      "request": "ManualJournalRequest",
+      "responses": {
+        "201": "PostedJournalResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /books/tax-settlement": {
+      "params": [],
+      "request": "TaxSettlementRequest",
+      "responses": {
+        "201": "TaxSettlementResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /insights/{insight_id}/apply": {
+      "params": [
+        "insight_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "InsightResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /insights/{insight_id}/dismiss": {
+      "params": [
+        "insight_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "InsightResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /intelligence/recompute": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "200": "RecomputeResponse"
+      }
+    },
+    "POST /policies": {
+      "params": [],
+      "request": "PolicyCreate",
+      "responses": {
+        "201": "PolicyResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /recon/failed-delivery": {
+      "params": [],
+      "request": "FailedDeliveryRequest",
+      "responses": {
+        "201": "ReconExceptionResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /recon/scan": {
+      "params": [],
+      "request": null,
+      "responses": {
+        "200": "ScanResponse"
+      }
+    },
+    "POST /recon/{exception_id}/resolve": {
+      "params": [
+        "exception_id:path:required:string(uuid)"
+      ],
+      "request": "ReconResolveRequest",
+      "responses": {
+        "200": "ReconExceptionResponse",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /transactions/authorize": {
+      "params": [
+        "Idempotency-Key:header:optional:null|string"
+      ],
+      "request": "SpendRequest",
+      "responses": {
+        "200": "Verdict",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /transactions/capture": {
+      "params": [],
+      "request": "CaptureRequest",
+      "responses": {
+        "200": "Transaction",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /transactions/void": {
+      "params": [],
+      "request": "VoidRequest",
+      "responses": {
+        "200": "VoidResult",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /transactions/{transaction_id}/reverse": {
+      "params": [
+        "transaction_id:path:required:string(uuid)"
+      ],
+      "request": null,
+      "responses": {
+        "200": "Transaction",
+        "422": "HTTPValidationError"
+      }
+    },
+    "POST /vendors": {
+      "params": [],
+      "request": "VendorCreate",
+      "responses": {
+        "201": "VendorRead",
+        "422": "HTTPValidationError"
+      }
+    }
+  },
+  "schemas": {
+    "AgentBudget": {
+      "available": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "monthly_budget": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "pct_used": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "remaining": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "reserved": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "slug": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "spent": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "spent_today": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "AgentDetail": {
+      "confidence_pct": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "glyph": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "is_live": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "models_list": {
+        "enum": null,
+        "required": true,
+        "type": "array<string>"
+      },
+      "monthly_budget": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "role": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "slug": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "spent_today": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "spent_ytd": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "vendors_list": {
+        "enum": null,
+        "required": true,
+        "type": "array<string>"
+      },
+      "wallet_ref": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      }
+    },
+    "AgentListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<AgentDetail>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "ApiKeyListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<ApiKeySummary>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "ApiKeySummary": {
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "is_active": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "key_prefix": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "last_used_at": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(date-time)"
+      },
+      "mode": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "scope": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ApprovalActionResponse": {
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ApprovalItem": {
+      "agent_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "reason": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "reason_text": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ApprovalListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<ApprovalItem>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "AuditLogEntry": {
+      "action": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "actor_api_key_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "actor_user_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "after": {
+        "enum": null,
+        "required": true,
+        "type": "null|object"
+      },
+      "before": {
+        "enum": null,
+        "required": true,
+        "type": "null|object"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "entity_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      }
+    },
+    "AuditLogListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<AuditLogEntry>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "AuthorizationListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<AuthorizationSummary>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "AuthorizationSummary": {
+      "agent_glyph": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "agent_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "agent_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "intent": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "project": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "reason": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "reason_text": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "status": {
+        "enum": [
+          "approved",
+          "blocked",
+          "human_hold",
+          "review"
+        ],
+        "required": true,
+        "type": "string"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "verdict_code": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      }
+    },
+    "BalanceSheetResponse": {
+      "assets": {
+        "enum": null,
+        "required": true,
+        "type": "array<BookLine>"
+      },
+      "balanced": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "currencies": {
+        "enum": null,
+        "required": true,
+        "type": "array<BalanceSheetTotals>"
+      },
+      "equity": {
+        "enum": null,
+        "required": true,
+        "type": "array<BookLine>"
+      },
+      "liabilities": {
+        "enum": null,
+        "required": true,
+        "type": "array<BookLine>"
+      }
+    },
+    "BalanceSheetTotals": {
+      "balanced": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_assets": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_equity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_liabilities": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "BookLine": {
+      "account_code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "account_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "BudgetBlock": {
+      "monthly_budget": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "pct_used": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "remaining": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "spent": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "BudgetUpdate": {
+      "monthly_budget": {
+        "enum": null,
+        "required": true,
+        "type": "number|string"
+      }
+    },
+    "BudgetsResponse": {
+      "agents": {
+        "enum": null,
+        "required": true,
+        "type": "array<AgentBudget>"
+      },
+      "total": {
+        "enum": null,
+        "required": false,
+        "type": "integer"
+      },
+      "workflows": {
+        "enum": null,
+        "required": true,
+        "type": "array<WorkflowBudget>"
+      }
+    },
+    "CaptureRequest": {
+      "amount": {
+        "enum": null,
+        "required": false,
+        "type": "null|number|string"
+      },
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "estimated": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      },
+      "invoice_url": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "model": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "source": {
+        "enum": [
+          "card",
+          "invoice",
+          "sdk"
+        ],
+        "required": false,
+        "type": "string"
+      },
+      "tokens": {
+        "enum": null,
+        "required": false,
+        "type": "integer|null"
+      }
+    },
+    "CashFlowResponse": {
+      "currencies": {
+        "enum": null,
+        "required": true,
+        "type": "array<CashFlowTotals>"
+      },
+      "operating": {
+        "enum": null,
+        "required": true,
+        "type": "array<BookLine>"
+      }
+    },
+    "CashFlowTotals": {
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "net_cash_flow": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "CostUnitBlock": {
+      "avg_cost": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "cost_per_1k_tokens": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "count": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "dimension": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_spent": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_tokens": {
+        "enum": null,
+        "required": true,
+        "type": "integer|null"
+      },
+      "unit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "CurrencyTotals": {
+      "balanced": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "EntityListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<EntityResponse>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "EntityResponse": {
+      "accounting_std": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "country": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "erp": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "full_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "is_active": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "tax_regime": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "timezone": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "FailedDeliveryRequest": {
+      "amount_at_stake": {
+        "enum": null,
+        "required": false,
+        "type": "null|number|string"
+      },
+      "reason": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "transaction_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      }
+    },
+    "FinancialMemoryResponse": {
+      "agent": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "budget": {
+        "enum": null,
+        "required": true,
+        "type": "BudgetBlock"
+      },
+      "cost_per_output": {
+        "enum": null,
+        "required": true,
+        "type": "array<CostUnitBlock>"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "fingerprint": {
+        "enum": null,
+        "required": true,
+        "type": "FingerprintBlock|null"
+      },
+      "headline": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "projection": {
+        "enum": null,
+        "required": true,
+        "type": "ProjectionBlock"
+      }
+    },
+    "FingerprintBlock": {
+      "anomaly_score": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "daily_velocity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "home_currency": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "mean_amount": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "median_amount": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "sample_size": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "stddev_amount": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "top_vendors": {
+        "enum": null,
+        "required": true,
+        "type": "array<VendorShareBlock>"
+      },
+      "total_records": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "FundingRequest": {
+      "amount": {
+        "enum": null,
+        "required": true,
+        "type": "number|string"
+      },
+      "entity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "memo": {
+        "enum": null,
+        "required": false,
+        "type": "string"
+      },
+      "posting_date": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      }
+    },
+    "GLAccount": {
+      "account_code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "account_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "balance": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "category": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "entries": {
+        "enum": null,
+        "required": false,
+        "type": "array<JournalLineRead>"
+      },
+      "entry_count": {
+        "enum": null,
+        "required": false,
+        "type": "integer"
+      },
+      "total_credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "GeneralLedgerResponse": {
+      "accounts": {
+        "enum": null,
+        "required": true,
+        "type": "array<GLAccount>"
+      }
+    },
+    "HTTPValidationError": {
+      "detail": {
+        "enum": null,
+        "required": false,
+        "type": "array<ValidationError>"
+      }
+    },
+    "InsightResponse": {
+      "action_label": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "action_payload": {
+        "enum": null,
+        "required": true,
+        "type": "object"
+      },
+      "agent_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "applied_at": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(date-time)"
+      },
+      "body": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "dismissed_at": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(date-time)"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "insight_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "is_applied": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "is_dismissed": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "title": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "value_text": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      }
+    },
+    "InsightType": {
+      "enum": [
+        "anomaly",
+        "budget_risk",
+        "cost_spike"
+      ],
+      "type": "string"
+    },
+    "InsightsListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<InsightResponse>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "unapplied_count": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "JournalGroup": {
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "date": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "lines": {
+        "enum": null,
+        "required": true,
+        "type": "array<JournalLineRead>"
+      },
+      "total_credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "transaction_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "JournalLine": {
+      "account_code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "account_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "ledger": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "JournalLineRead": {
+      "account_code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "account_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "ledger": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "JournalsResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<JournalGroup>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "LoginRequest": {
+      "email": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "password": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ManualJournalLineInput": {
+      "account_code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "credit": {
+        "enum": null,
+        "required": false,
+        "type": "number|string"
+      },
+      "debit": {
+        "enum": null,
+        "required": false,
+        "type": "number|string"
+      }
+    },
+    "ManualJournalRequest": {
+      "entity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "lines": {
+        "enum": null,
+        "required": true,
+        "type": "array<ManualJournalLineInput>"
+      },
+      "memo": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "posting_date": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      }
+    },
+    "MeResponse": {
+      "company_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "company_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "perms": {
+        "enum": null,
+        "required": true,
+        "type": "PermsResponse"
+      },
+      "user": {
+        "enum": null,
+        "required": true,
+        "type": "UserResponse"
+      }
+    },
+    "MemoryListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<MemoryResponse>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "MemoryResponse": {
+      "agent_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "detail_text": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "memory_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "metrics_json": {
+        "enum": null,
+        "required": true,
+        "type": "object"
+      },
+      "summary": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "updated_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      }
+    },
+    "NavItemResponse": {
+      "key": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "label": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "path": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "PermsResponse": {
+      "agent_scope": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "can_approve": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "can_read_books": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "can_write_budgets": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "can_write_policies": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "landing": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "nav": {
+        "enum": null,
+        "required": true,
+        "type": "array<NavItemResponse>"
+      },
+      "role": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "PolicyCreate": {
+      "active": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      },
+      "config": {
+        "enum": null,
+        "required": true,
+        "type": "object"
+      },
+      "description": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "rule_type": {
+        "enum": null,
+        "required": true,
+        "type": "PolicyRuleType"
+      },
+      "scope_id": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(uuid)"
+      },
+      "scope_type": {
+        "enum": null,
+        "required": false,
+        "type": "PolicyScopeType"
+      }
+    },
+    "PolicyListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<PolicyResponse>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "PolicyResponse": {
+      "active": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "block_count": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "config": {
+        "enum": null,
+        "required": true,
+        "type": "object"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "description": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "hit_count": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "rule_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "scope_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "scope_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "updated_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      }
+    },
+    "PolicyRuleType": {
+      "enum": [
+        "amount_threshold",
+        "budget_cap",
+        "merchant_list",
+        "time_of_day",
+        "velocity"
+      ],
+      "type": "string"
+    },
+    "PolicyScopeType": {
+      "enum": [
+        "agent",
+        "company"
+      ],
+      "type": "string"
+    },
+    "PolicyUpdate": {
+      "active": {
+        "enum": null,
+        "required": false,
+        "type": "boolean|null"
+      },
+      "config": {
+        "enum": null,
+        "required": false,
+        "type": "null|object"
+      },
+      "description": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "name": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      }
+    },
+    "PostedJournalResponse": {
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "entity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "lines": {
+        "enum": null,
+        "required": true,
+        "type": "array<JournalLineRead>"
+      },
+      "memo": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "posting_date": {
+        "enum": null,
+        "required": true,
+        "type": "string(date)"
+      },
+      "total_credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ProfitAndLossResponse": {
+      "currencies": {
+        "enum": null,
+        "required": true,
+        "type": "array<ProfitAndLossTotals>"
+      },
+      "expenses": {
+        "enum": null,
+        "required": true,
+        "type": "array<BookLine>"
+      },
+      "income": {
+        "enum": null,
+        "required": true,
+        "type": "array<BookLine>"
+      }
+    },
+    "ProfitAndLossTotals": {
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "net_profit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_expenses": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_income": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ProjectionBlock": {
+      "day_of_month": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "days_in_month": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "month_to_date": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "monthly_budget": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "on_track": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "projected_month_end": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "projected_overrun": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "RecomputeResponse": {
+      "agents_analyzed": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "by_insight_type": {
+        "enum": null,
+        "required": true,
+        "type": "map<integer>"
+      },
+      "fingerprints": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "insights": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "memories": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "ReconExceptionResponse": {
+      "amount_at_stake": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "created_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "evidence": {
+        "enum": null,
+        "required": true,
+        "type": "object"
+      },
+      "exception_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "fix_notes": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "resolved_at": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(date-time)"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "transaction_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "updated_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      }
+    },
+    "ReconExceptionStatus": {
+      "enum": [
+        "dismissed",
+        "open",
+        "recovering",
+        "resolved"
+      ],
+      "type": "string"
+    },
+    "ReconExceptionType": {
+      "enum": [
+        "duplicate",
+        "failed_delivery",
+        "overcharge",
+        "tax_unclassified",
+        "unused_subscription"
+      ],
+      "type": "string"
+    },
+    "ReconListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<ReconExceptionResponse>"
+      },
+      "open_count": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "total_at_stake": {
+        "enum": null,
+        "required": true,
+        "type": "map<string>"
+      }
+    },
+    "ReconResolveRequest": {
+      "action": {
+        "enum": [
+          "dismiss",
+          "resolve"
+        ],
+        "required": true,
+        "type": "string"
+      },
+      "fix_notes": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      }
+    },
+    "ScanResponse": {
+      "by_type": {
+        "enum": null,
+        "required": true,
+        "type": "map<integer>"
+      },
+      "created": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "scanned": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "SpendRequest": {
+      "agent": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "amount": {
+        "enum": null,
+        "required": true,
+        "type": "number|string"
+      },
+      "category": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "entity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "intent": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "model": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "project": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "reason": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "supply_type": {
+        "enum": [
+          "goods",
+          "service"
+        ],
+        "required": false,
+        "type": "string"
+      },
+      "tax_category": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "tax_inclusive": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      },
+      "tokens": {
+        "enum": null,
+        "required": false,
+        "type": "integer|null"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TaxInfo": {
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "is_reclaimable": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "jurisdiction": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "legal_reference": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "rate": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "reclaim_amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "reverse_charge": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "self_invoice_generated": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "tax_amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "tax_type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TaxSettlementHead": {
+      "head": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "input_credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "output_tax": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TaxSettlementRequest": {
+      "date_from": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      },
+      "date_to": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      },
+      "entity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "memo": {
+        "enum": null,
+        "required": false,
+        "type": "string"
+      },
+      "posting_date": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      }
+    },
+    "TaxSettlementResponse": {
+      "credit_carried_forward": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "entity": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "heads": {
+        "enum": null,
+        "required": true,
+        "type": "array<TaxSettlementHead>"
+      },
+      "journal": {
+        "enum": null,
+        "required": true,
+        "type": "PostedJournalResponse|null"
+      },
+      "net_payable": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "posting_date": {
+        "enum": null,
+        "required": true,
+        "type": "string(date)"
+      },
+      "total_input_credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "total_output_tax": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TokenResponse": {
+      "access_token": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "expires_in": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "token_type": {
+        "enum": null,
+        "required": false,
+        "type": "string"
+      }
+    },
+    "Transaction": {
+      "amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "currency": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "estimated": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "invoice_url": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "journal": {
+        "enum": null,
+        "required": false,
+        "type": "array<JournalLine>"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "tax": {
+        "enum": null,
+        "required": false,
+        "type": "TaxInfo|null"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TransactionDetail": {
+      "agent_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "estimated": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "failure_reason": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "intent": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "invoice_url": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "is_reversed": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "item_description": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "local_amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "local_currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "model_used": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "paid_amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "paid_currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "project": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "reason_text": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "source": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "tokens_consumed": {
+        "enum": null,
+        "required": true,
+        "type": "integer|null"
+      },
+      "transaction_date": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TransactionFull": {
+      "agent_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(uuid)"
+      },
+      "entity_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "estimated": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "failure_reason": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "intent": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "invoice_url": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "is_reversed": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "item_description": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "journal": {
+        "enum": null,
+        "required": false,
+        "type": "array<JournalLine>"
+      },
+      "local_amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "local_currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "model_used": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "paid_amount": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "paid_currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "project": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "reason_text": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "source": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "tax": {
+        "enum": null,
+        "required": false,
+        "type": "TaxInfo|null"
+      },
+      "tokens_consumed": {
+        "enum": null,
+        "required": true,
+        "type": "integer|null"
+      },
+      "transaction_date": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "TransactionListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<TransactionDetail>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "TrialBalanceResponse": {
+      "balanced": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "currencies": {
+        "enum": null,
+        "required": true,
+        "type": "array<CurrencyTotals>"
+      },
+      "rows": {
+        "enum": null,
+        "required": true,
+        "type": "array<TrialBalanceRow>"
+      }
+    },
+    "TrialBalanceRow": {
+      "account_code": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "account_name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "category": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "credit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "currency": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "debit": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "UserListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<UserResponse>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "UserResponse": {
+      "email": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "is_active": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "role": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "ValidationError": {
+      "ctx": {
+        "enum": null,
+        "required": false,
+        "type": "object"
+      },
+      "input": {
+        "enum": null,
+        "required": false,
+        "type": "any"
+      },
+      "loc": {
+        "enum": null,
+        "required": true,
+        "type": "array<integer|string>"
+      },
+      "msg": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "type": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "VendorCreate": {
+      "country": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "form_10f_on_file": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      },
+      "gst_registered_in": {
+        "enum": null,
+        "required": false,
+        "type": "array<string>"
+      },
+      "gstin": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "state": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "trc_expiry": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      },
+      "trc_on_file": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      }
+    },
+    "VendorListResponse": {
+      "items": {
+        "enum": null,
+        "required": true,
+        "type": "array<VendorRead>"
+      },
+      "total": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "VendorRead": {
+      "country": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "form_10f_on_file": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "gst_registered_in": {
+        "enum": null,
+        "required": true,
+        "type": "array<string>"
+      },
+      "gstin": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "is_registered": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "state": {
+        "enum": null,
+        "required": true,
+        "type": "null|string"
+      },
+      "trc_expiry": {
+        "enum": null,
+        "required": true,
+        "type": "null|string(date)"
+      },
+      "trc_on_file": {
+        "enum": null,
+        "required": true,
+        "type": "boolean"
+      }
+    },
+    "VendorShareBlock": {
+      "count": {
+        "enum": null,
+        "required": true,
+        "type": "integer"
+      },
+      "share": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "vendor": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    },
+    "VendorUpdate": {
+      "country": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "form_10f_on_file": {
+        "enum": null,
+        "required": false,
+        "type": "boolean|null"
+      },
+      "gst_registered_in": {
+        "enum": null,
+        "required": false,
+        "type": "array<string>|null"
+      },
+      "gstin": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "state": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "trc_expiry": {
+        "enum": null,
+        "required": false,
+        "type": "null|string(date)"
+      },
+      "trc_on_file": {
+        "enum": null,
+        "required": false,
+        "type": "boolean|null"
+      }
+    },
+    "Verdict": {
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "code": {
+        "enum": null,
+        "required": false,
+        "type": "string"
+      },
+      "reason": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "status": {
+        "enum": [
+          "approved",
+          "blocked",
+          "human_hold",
+          "review"
+        ],
+        "required": true,
+        "type": "string"
+      }
+    },
+    "VerdictStatus": {
+      "enum": [
+        "approved",
+        "blocked",
+        "human_hold",
+        "review"
+      ],
+      "type": "string"
+    },
+    "VoidRequest": {
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "reason": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      }
+    },
+    "VoidResult": {
+      "already_released": {
+        "enum": null,
+        "required": false,
+        "type": "boolean"
+      },
+      "authorization_id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "release_reason": {
+        "enum": null,
+        "required": false,
+        "type": "null|string"
+      },
+      "released_at": {
+        "enum": null,
+        "required": true,
+        "type": "string(date-time)"
+      }
+    },
+    "WorkflowBudget": {
+      "agent_ids": {
+        "enum": null,
+        "required": true,
+        "type": "array<string(uuid)>"
+      },
+      "budget": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "id": {
+        "enum": null,
+        "required": true,
+        "type": "string(uuid)"
+      },
+      "name": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "pct_used": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "remaining": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "spent": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      },
+      "status": {
+        "enum": null,
+        "required": true,
+        "type": "string"
+      }
+    }
+  }
+}

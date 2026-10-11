@@ -1,12 +1,12 @@
-"""Export the API contract artifacts (X-6a — `docs/scale/repo_split.md` §4).
+"""Export the API contract artifacts to `contracts/`.
 
 Three artifacts, two of which are gated:
 
 | Artifact | Gate? | Purpose |
 |---|---|---|
-| `docs/api-contract.json` | yes | projection: path, field, type, required, enum |
-| `docs/verdict-codes.json` | yes | `VerdictCode` set — never reaches OpenAPI |
-| `docs/openapi.json` | no | raw doc; feeds `openapi-typescript` → frontend types |
+| `contracts/api-contract.json` | yes | projection: path, field, type, required, enum |
+| `contracts/verdict-codes.json` | yes | `VerdictCode` set — never reaches OpenAPI |
+| `contracts/openapi.json` | no | raw doc; feeds `openapi-typescript` → frontend types |
 
 Why a *projection* rather than a byte-diff of `openapi.json`: the raw document
 moves with every fastapi/pydantic bump (`$ref` naming, `anyOf` ordering, generated
@@ -44,10 +44,10 @@ from lucnt_api.main import app  # noqa: E402
 from lucnt_api.services.policy_engine import VerdictCode  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-DOCS = _REPO_ROOT / "docs"
-OPENAPI_PATH = DOCS / "openapi.json"
-CONTRACT_PATH = DOCS / "api-contract.json"
-VERDICT_CODES_PATH = DOCS / "verdict-codes.json"
+CONTRACTS = _REPO_ROOT / "contracts"
+OPENAPI_PATH = CONTRACTS / "openapi.json"
+CONTRACT_PATH = CONTRACTS / "api-contract.json"
+VERDICT_CODES_PATH = CONTRACTS / "verdict-codes.json"
 
 _SCHEMA_REF_PREFIX = "#/components/schemas/"
 _METHODS = ("get", "post", "put", "patch", "delete")
@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    DOCS.mkdir(parents=True, exist_ok=True)
+    CONTRACTS.mkdir(parents=True, exist_ok=True)
     for path, text in gated.items():
         path.write_text(text)
         print(f"wrote {path.relative_to(_REPO_ROOT)}")

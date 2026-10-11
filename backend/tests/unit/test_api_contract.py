@@ -1,12 +1,12 @@
-"""X-6a — the committed contract artifacts must match the code that generates them.
+"""The committed contract artifacts must match the code that generates them.
 
-`docs/scale/repo_split.md` §4. Two gates, because one of them cannot be expressed
+Two gates, because one of them cannot be expressed
 in OpenAPI at all:
 
-1. `docs/api-contract.json` — a normalized projection of every path, field, type,
+1. `contracts/api-contract.json` — a normalized projection of every path, field, type,
    required flag and enum. Catches "someone renamed a response field" without
    going red every time fastapi reorders an `anyOf`.
-2. `docs/verdict-codes.json` — the `VerdictCode` value set. `Verdict.code` is an
+2. `contracts/verdict-codes.json` — the `VerdictCode` value set. `Verdict.code` is an
    open string on the wire by design, so the enum never reaches the OpenAPI
    document; `sdk/src/lucnt/ledger.py` nonetheless branches on the literal
    `"budget_exhausted"` to raise `BudgetExhausted` rather than `PolicyBlocked`.
@@ -50,7 +50,7 @@ def test_the_committed_projection_matches_the_code(document: dict[str, object]) 
     committed = json.loads(exporter.CONTRACT_PATH.read_text())
     generated = exporter.build_contract(document)
     assert committed == generated, (
-        "docs/api-contract.json is stale. Regenerate with "
+        "contracts/api-contract.json is stale. Regenerate with "
         "`cd backend && python scripts/export_contract.py` and review the diff "
         "as a contract change — the SDK and frontend/src/types/api.ts read it."
     )

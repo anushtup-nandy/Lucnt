@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "gen:types": "openapi-typescript ../docs/openapi.json -o src/types/api.ts"
+    "gen:types": "openapi-typescript ../contracts/openapi.json -o src/types/api.ts"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

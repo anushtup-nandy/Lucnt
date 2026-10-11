@@ -1,7 +1,7 @@
 /**
  * Hand-kept domain types.
  *
- * `src/types/api.ts` is generated from `docs/openapi.json` and is the authority
+ * `src/types/api.ts` is generated from `contracts/openapi.json` and is the authority
  * on shape; these are the narrow, ergonomic views the pages actually consume,
  * plus the **one thing the generator cannot know**.
  *
@@ -9,12 +9,12 @@
  * wire by design — a new policy rule adds a code, and a new code must never
  * break an older SDK — so the generator emits `string` and no schema gate can
  * see the value set move (`docs/scale/repo_split.md` §4, blind spot 2). The
- * union below is therefore hand-kept against `docs/verdict-codes.json`, which
+ * union below is therefore hand-kept against `contracts/verdict-codes.json`, which
  * `backend/tests/unit/test_api_contract.py` and `sdk/tests/test_verdict_codes.py`
  * both gate. Widening it to `string` is what the two tests exist to prevent.
  */
 
-/** Mirrors `docs/verdict-codes.json`. Keep in step with it, by hand. */
+/** Mirrors `contracts/verdict-codes.json`. Keep in step with it, by hand. */
 export type VerdictCode =
   | 'ok'
   | 'budget_exhausted'

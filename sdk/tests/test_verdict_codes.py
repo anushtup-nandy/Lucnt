@@ -25,7 +25,7 @@ import pytest
 
 from lucnt.ledger import _BUDGET_EXHAUSTED_CODE
 
-_VERDICT_CODES = Path(__file__).resolve().parents[2] / "docs" / "verdict-codes.json"
+_VERDICT_CODES = Path(__file__).resolve().parents[2] / "contracts" / "verdict-codes.json"
 
 
 def _committed_codes() -> list[str]:
