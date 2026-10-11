@@ -1,5 +1,5 @@
 /**
- * Routes — 15 of them (12 nav + 2 detail + login), per `frontend/PLAN.md` §6.
+ * Routes — 15 of them (12 nav + 2 detail + login).
  *
  * Each nav route is wrapped in its `RoleGate`, which reads the *same* `nav` key
  * the server's `require_nav` gates on. Detail routes inherit their parent's

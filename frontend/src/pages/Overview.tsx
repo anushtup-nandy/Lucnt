@@ -1,7 +1,7 @@
 /**
  * Overview — attention cards composed **client-side** from existing reads.
  *
- * There is deliberately no `GET /overview` aggregate (`frontend/PLAN.md` §14):
+ * There is deliberately no `GET /overview` aggregate:
  * four small reads the dashboard already makes are cheaper to build, cheaper to
  * keep honest, and cannot drift from the pages they link to. If this page ever
  * feels slow, that is the signal to add the aggregate — not before.

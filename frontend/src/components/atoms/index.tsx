@@ -3,7 +3,7 @@
  *
  * Each is three to ten lines over a class from the ported design system. Eight
  * files of five lines each would be eight imports and eight places to look; the
- * grouping is the DRY rule (`CLAUDE.md` §2.3) applied to the file count rather
+ * grouping is the DRY rule applied to the file count rather
  * than only to the code.
  */
 
@@ -102,7 +102,7 @@ export function Empty({ title, hint }: { title: string; hint?: string }): ReactN
 }
 
 /**
- * Every status renders as itself (`frontend/PLAN.md` §11).
+ * Every status renders as itself.
  *
  * No error is ever collapsed into an empty table: an empty table means "no
  * rows", always. A 403 says which role was refused, a 429 says how long to

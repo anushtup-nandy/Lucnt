@@ -1,7 +1,7 @@
 /**
  * The one HTTP client. Access-token injection, 401 → single silent refresh.
  *
- * **One refresh, not N** (`frontend/PLAN.md` §13). A dashboard page fires five
+ * **One refresh, not N**. A dashboard page fires five
  * or six queries at once; when the access token expires they all 401 within a
  * few milliseconds. Without the shared `refreshInFlight` promise below, each
  * would start its own refresh, and because `/auth/refresh` rotates the cookie,

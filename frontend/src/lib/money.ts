@@ -1,7 +1,7 @@
 /**
  * Money formatting. **Amounts never become a JS `number`.**
  *
- * `frontend/PLAN.md` §11.2, and not a style preference: the backend stores money
+ * Not a style preference: the backend stores money
  * as `Numeric(18,4)` and serialises it as a *string* for exactly this reason. A
  * `parseFloat` on the way in is how a ledger renders `₹6,00,000.00000001`, and
  * how a trial balance stops balancing on screen while balancing in the database.

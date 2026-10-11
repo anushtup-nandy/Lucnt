@@ -1,7 +1,7 @@
 /**
  * The token-refresh race, and error normalisation.
  *
- * **Concurrent 401s must trigger one refresh, not N** (`frontend/PLAN.md` §13).
+ * **Concurrent 401s must trigger one refresh, not N**.
  * `/auth/refresh` rotates the cookie, so a second concurrent refresh presents a
  * token the server has already rotated away and logs the user out. The bug only
  * appears after the access token expires — fifteen idle minutes, i.e. exactly

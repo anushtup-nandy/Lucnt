@@ -3,13 +3,13 @@
  *
  * **The snippet matches the real SDK surface.** The mockup shows
  * `from lucnt import Agent`; there is no `Agent` class and there deliberately
- * never will be (`CLAUDE.local.md`: the SDK *attaches* to the customer's agents,
+ * never will be (the SDK *attaches* to the customer's agents,
  * it does not own the noun). What is shown here is `lucnt.task()` +
  * `authorize()` / `capture()`, which is what a customer actually writes.
  *
  * **Webhooks are a labelled Phase 6 empty state**, not fake rows. Rendering
  * plausible-looking deliveries for a feature that does not exist is exactly the
- * façade `docs/production/plan2.md` F-3 rules out.
+ * kind of façade this dashboard does not build.
  */
 
 import { useState, type ReactNode } from 'react'

@@ -2,8 +2,8 @@
  * The topbar: breadcrumb, entity badge, and the `/` search palette.
  *
  * Search is client-side over the agent list, deliberately: there is no search
- * endpoint, and inventing one for the demo would be the façade `plan2.md` F-3
- * says not to build. What it does do — jump to an agent by name — is the thing
+ * endpoint, and inventing one for the demo would be a façade.
+ * What it does do — jump to an agent by name — is the thing
  * the mockup's palette is actually used for.
  */
 

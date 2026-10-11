@@ -6,9 +6,10 @@ name: CI
 # so CI never diverges.
 #
 # Beyond lint/type/test, this workflow also runs:
-#   * a Redis service — the rate limiter made Redis a real runtime dependency, and a suite
-#     that only ever ran with it absent proves the fail-open path and nothing else;
-#   * `alembic check`, which is only meaningful now that env.py turns on
+#   * a Redis service — the rate limiter made Redis a real runtime dependency,
+#     and a suite that only ever ran with it absent proves the fail-open path
+#     and nothing else;
+#   * `alembic check`, which is only meaningful now that `alembic/env.py` turns on
 #     `compare_type`/`compare_server_default` (it immediately found real drift);
 #   * a dedicated TEST_DATABASE_URL, so the destructive downgrade round-trip
 #     provably runs somewhere other than the database the suite reads;
@@ -71,7 +72,7 @@ jobs:
       TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/lucnt_test
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: development
-      # P7.0 made SECRET_KEY required — it signs dashboard JWTs, so an unset one
+      # SECRET_KEY is required — it signs dashboard JWTs, so an unset one
       # is a startup failure by design (`config.py`). CI is `development`, where
       # the committed example value is accepted.
       SECRET_KEY: dev_secret_change_me_before_deploying_lucnt

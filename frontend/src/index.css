@@ -1,8 +1,7 @@
 /*
- * LUCNT design system — a port of `docs/lucnt-v9.html`, not a redesign.
+ * LUCNT design system — a port of the HTML design mockup, not a redesign.
  *
- * `frontend/PLAN.md` §3: "This phase is translation, not invention: port the
- * tokens, don't redesign." The mockup is already a coherent system, so its CSS
+ * Translation, not invention: port the tokens, don't redesign. The mockup is already a coherent system, so its CSS
  * is carried over close to verbatim rather than dissolved into utility classes.
  * Two reasons: a utility rewrite is a rewrite (every value becomes a chance to
  * drift from the approved design), and a component class like `.tbl-r` reads

@@ -1,4 +1,4 @@
-# Deployed stack (T4-1/T4-6). Not for local development — use docker-compose.yml.
+# Deployed stack. Not for local development — use docker-compose.yml.
 #
 #     docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 #
@@ -22,7 +22,7 @@
 
 services:
   nginx:
-    # F-25: digest-pinned — the tag is for humans, the digest is the pin.
+    # Digest-pinned — the tag is for humans, the digest is the pin.
     # Re-pin deliberately with: docker buildx imagetools inspect <tag>
     image: nginx:1.27-bookworm@sha256:6784fb0834aa7dbbe12e3d7471e69c290df3e6ba810dc38b34ae33d3c1c05f7d
     ports:
@@ -50,7 +50,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      # P7.0: required, and validated — outside development it must be >=32 chars
+      # Required, and validated — outside development it must be >=32 chars
       # and must not be the committed example. `:?` so a missing one fails at
       # `compose up`, not at the first login.
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (>=32 chars, not the committed example)}
@@ -128,7 +128,7 @@ services:
   #     retries: 5
   #   restart: unless-stopped
 
-  # Certificate issuance/renewal (F-6). Opt-in via the `certs` profile so it
+  # Certificate issuance/renewal. Opt-in via the `certs` profile so it
   # never runs as part of a normal `up`. First issuance (port 80 must already
   # be serving the ACME webroot via nginx):
   #
@@ -142,7 +142,7 @@ services:
   # reload. Renewal is `... run --rm certbot renew` from cron/systemd.
   certbot:
     # Was a bare untagged `certbot/certbot` (i.e. :latest) — the exact drift
-    # F-25 exists to stop on a certificate-issuing container.
+    # digest-pinning exists to stop on a certificate-issuing container.
     image: certbot/certbot:latest@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
     profiles: ["certs"]
     volumes:
@@ -150,7 +150,7 @@ services:
       - certbot_webroot:/var/www/certbot
     restart: "no"
 
-# F-4: the compose network is pinned to a fixed subnet so nginx.conf's
+# The compose network is pinned to a fixed subnet so nginx.conf's
 # `set_real_ip_from` can trust EXACTLY this network instead of the whole
 # 172.16.0.0/12 — under the /12, any address in that range that could reach
 # the edge was able to forge X-Forwarded-For and pick its own rate-limit

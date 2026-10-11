@@ -1,5 +1,5 @@
 /**
- * Agents — the first page built end-to-end (P7.1's vertical slice).
+ * Agents — the first page built end-to-end.
  *
  * The list an `agent_owner` sees is narrowed **server-side** (`scope_agents` in
  * the SQL). This page does no filtering of its own, on purpose: a client-side

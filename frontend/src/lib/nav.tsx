@@ -1,8 +1,7 @@
 /**
  * Nav rendering. **The sidebar is data, never a hardcoded array.**
  *
- * `CLAUDE.local.md` §Step 4 names this non-negotiable, and `frontend/PLAN.md`
- * §11.1 repeats it: the list comes from `perms.nav` on `/auth/me`. The server
+ * This is non-negotiable: the list comes from `perms.nav` on `/auth/me`. The server
  * gates the same tuple (`require_nav`), so a link that is not rendered is also
  * an endpoint that 403s — the two cannot drift apart.
  *

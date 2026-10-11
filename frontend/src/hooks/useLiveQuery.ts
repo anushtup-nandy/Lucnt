@@ -1,5 +1,5 @@
 /**
- * The ONE polling wrapper (`frontend/PLAN.md` D4 + §11.3).
+ * The ONE polling wrapper.
  *
  * Polling lives here and nowhere else. `refetchInterval` sprinkled across pages
  * drifts to a different cadence per page and — the part that actually bites —

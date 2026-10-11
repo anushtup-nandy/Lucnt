@@ -1,7 +1,7 @@
 /**
  * Session state: the access token, the user, and their resolved permissions.
  *
- * **The access token lives in memory only** (`frontend/PLAN.md` §11). Not
+ * **The access token lives in memory only**. Not
  * `localStorage`, not `sessionStorage`: both are readable by any script that
  * gets injected, and a token that outlives the tab is a token that outlives the
  * user's intent. The cost is that a hard refresh has no token — which is why

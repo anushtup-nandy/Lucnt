@@ -1,7 +1,7 @@
 /**
  * Query keys. **Every key carries the user id and the entity code.**
  *
- * `frontend/PLAN.md` §5: switching either must not serve the other scope's
+ * Switching either must not serve the other scope's
  * cached rows. Without the user id, logging out as a CFO and in as an
  * `agent_owner` on the same machine shows the CFO's agent list until the first
  * refetch lands — a scoping leak produced entirely in the browser, against a

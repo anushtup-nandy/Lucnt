@@ -1,8 +1,7 @@
 /**
  * **The nav is data, not JSX.**
  *
- * `CLAUDE.local.md` §Step 4 names this non-negotiable and `frontend/PLAN.md`
- * §11.1 repeats it. A hardcoded sidebar array is the exact failure mode: it
+ * This is non-negotiable. A hardcoded sidebar array is the exact failure mode: it
  * renders a link the server will 403, or hides one the role is entitled to, and
  * either way the two halves of the permission model have silently diverged.
  *

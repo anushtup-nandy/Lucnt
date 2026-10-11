@@ -1,5 +1,5 @@
 /**
- * Verdict → tag mapping (`frontend/PLAN.md` §3).
+ * Verdict → tag mapping.
  *
  * Mislabelling `blocked` as `approved` inverts the product's central claim, so
  * this mapping is one table with one test rather than a ternary per page.

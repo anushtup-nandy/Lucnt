@@ -1,11 +1,11 @@
-# Local development stack (T4-11).
+# Local development stack.
 #
 # What changed and why:
 #
 # * **Ports bind to 127.0.0.1.** They were on `0.0.0.0` with default credentials,
 #   so on any shared network — coworking wifi, a conference, a hotel LAN — the
 #   ledger database was reachable by anyone who scanned port 5432. Redis was
-#   worse: no credentials at all, and since T3-7 it holds the rate-limit counters.
+#   worse: no credentials at all, and it holds the rate-limit counters.
 # * **Credentials come from the environment**, defaulting to the previous values
 #   so nothing breaks on first run. Copy `.env.example` to `.env` in this
 #   directory to override; compose reads it automatically.
@@ -15,7 +15,7 @@
 #
 # The `backend` service sits behind a profile on purpose: `docker compose up -d`
 # must keep meaning "start my dependencies", so the documented `uvicorn` workflow
-# in `docs/DEMO.md` still works and nothing contends for port 8000. Run the
+# still works and nothing contends for port 8000. Run the
 # containerised API explicitly with:
 #
 #     docker compose --profile backend up -d --build
@@ -50,7 +50,7 @@ services:
     image: redis:7.4-bookworm
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
-    # T3-7 made Redis a real runtime dependency, so it needs a healthcheck like
+    # The rate limiter made Redis a real runtime dependency, so it needs a healthcheck like
     # anything else the app waits on. No persistence configured: the rate-limit
     # counters are fixed-window and disposable by design.
     healthcheck:
@@ -82,7 +82,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lucnt}
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
-      # P7.0: required — it signs dashboard JWTs (`backend/src/lucnt_api/config.py`).
+      # Required — it signs dashboard JWTs (`backend/src/lucnt_api/config.py`).
       # The committed example is accepted only because ENVIRONMENT is development.
       SECRET_KEY: ${SECRET_KEY:-dev_secret_change_me_before_deploying_lucnt}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}

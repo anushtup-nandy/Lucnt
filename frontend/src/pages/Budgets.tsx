@@ -1,7 +1,7 @@
 /**
  * Budgets — allocated / deployed / available, and a live stepper per agent.
  *
- * **`reserved` and `available` are shown, not just `spent`** (F-10). An
+ * **`reserved` and `available` are shown, not just `spent`**. An
  * approved-but-uncaptured hold is real money: it has already been promised to a
  * vendor and the gate already counts it. A page that showed only `spent` would
  * tell a CFO they have headroom the policy engine will refuse to grant.
