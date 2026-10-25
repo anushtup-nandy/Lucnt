@@ -1,19 +1,21 @@
 # LUCNT
 
-**Financial infrastructure that attaches to your existing AI agents.**
+**A spend gate and a ledger for the AI agents you already run.**
 
 [![CI](https://github.com/anushtup-nandy/lucnt/actions/workflows/ci.yml/badge.svg)](https://github.com/anushtup-nandy/lucnt/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
-LUCNT gives agent spending a **gate** and a **ledger**:
+![LUCNT dashboard: five agent spends blocked before money moved, each with the reason](.github/assets/dashboard-blocked.png)
 
-- **Policy runs before money moves**, so a spend can be blocked, not just logged.
-- **Every committed spend is booked** into double-entry journals with tax treatment applied.
-- **One primitive for all spend**: a flight, a SaaS seat, or a batch of LLM tokens.
-- **No `Agent` class.** Identity is a string handle, so it works with any framework.
+LUCNT gives agent spend a **gate** and a **ledger**.
 
-LUCNT is self-hosted and not yet published to PyPI. Install it from source.
+- **The gate runs before money moves.** The policy engine can stop a spend. It does not only log it.
+- **The ledger books each spend.** Each captured spend gets a double-entry journal and a tax treatment.
+- **One primitive covers all spend.** A flight, a SaaS seat and a batch of LLM tokens use the same two calls.
+- **There is no `Agent` class.** Agent identity is a string. LUCNT works with any agent framework.
+
+LUCNT is self-hosted. It is not on PyPI. Install it from source.
 
 ---
 
@@ -31,36 +33,60 @@ capture()    ──▶  commit transaction, then:
                     └─ events             agent.spend.created, budget.exhausted
 ```
 
-Capture is source-agnostic: SDK, card-rail, and invoice spend all commit through the same path.
+1. Your agent calls `authorize()` before it spends.
+2. The policy engine examines budgets, merchant lists, velocity, amount limits and hours.
+3. The engine returns a verdict. A `blocked` or `human_hold` verdict stops the spend.
+4. Your agent makes the purchase on its own payment rail.
+5. Your agent calls `capture()`. LUCNT writes the transaction, the journal and the tax record.
+
+All spend sources use the same capture path: SDK, card rail and invoice.
+
+---
+
+## Dashboard
+
+The dashboard is the control surface for people. Use it to set policies and budgets, approve held spends and read the books.
+
+| Agents | Approvals | Budgets |
+|---|---|---|
+| ![Agents page: each agent with its monthly budget and spend today](.github/assets/dashboard-agents.png) | ![Approvals page: a spend held for human review](.github/assets/dashboard-approvals.png) | ![Budgets page: per-agent limits in INR, SGD and USD](.github/assets/dashboard-budgets.png) |
+
+Each persona sees a different scope: engineer, CFO, agent owner, approver and auditor. The server applies the scope, not the UI.
 
 ---
 
 ## Quickstart
 
-**Prerequisites:** Python 3.12, Docker. Node 22 only for the dashboard.
+**Prerequisites:** Python 3.12 and Docker. Node 22 is necessary only for the dashboard.
 
 ```bash
 git clone https://github.com/anushtup-nandy/lucnt.git
 cd lucnt
 
-# 1. Postgres, Redis, Mailpit
+# 1. Start Postgres, Redis and Mailpit
 docker compose -f infra/docker-compose.yml up -d
 
-# 2. Backend
+# 2. Start the backend
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env              # defaults match infra/docker-compose.yml
+cp .env.example .env              # the defaults match infra/docker-compose.yml
 alembic upgrade head
-python scripts/seed_dev.py        # prints a dev API key
+python scripts/seed_dev.py        # prints a dev API key and dashboard logins
 uvicorn lucnt_api.main:app --reload --port 8000
 
-# 3. SDK (new terminal, from the repo root)
+# 3. Install the SDK (new terminal, from the repo root)
 pip install -e ./sdk
 export LUCNT_API_KEY=<key printed by seed_dev.py>
 ```
 
-The SDK defaults to `http://localhost:8000`. To install it in another project without cloning:
+To start the dashboard, run this command. Then open `http://localhost:5173` and use a login from `seed_dev.py`.
+
+```bash
+cd frontend && npm ci && npm run dev
+```
+
+The SDK connects to `http://localhost:8000` by default. To install the SDK in a different project without a clone, run:
 
 ```bash
 pip install "git+https://github.com/anushtup-nandy/lucnt.git#subdirectory=sdk"
@@ -75,25 +101,25 @@ import lucnt
 
 lucnt.configure()  # reads LUCNT_API_KEY and LUCNT_BASE_URL
 
-with lucnt.task(agent="travel-bot", entity="acme-in", intent="founder summit"):
+with lucnt.task(agent="travel-bot", entity="acme-in", intent="team offsite"):
     verdict = lucnt.authorize(
         vendor="United Airlines", amount="842.50", currency="USD", reason="SFO->EWR"
     )
     if verdict.approved:
         book_the_flight()              # your code, your payment rail
-        tx = lucnt.capture(verdict)    # journal + tax are on tx
+        tx = lucnt.capture(verdict)    # tx has the journal and the tax record
     else:
         print("blocked:", verdict.reason)
 ```
 
 | Call | Purpose |
 |---|---|
-| `spend()` | `authorize` + `capture` in one call |
-| `meter(client)` | Auto-meters an OpenAI or Anthropic client |
-| `check_budget()` / `query()` | Let an agent read its own budget and spend history |
-| `*_async` | An async twin for every call |
+| `spend()` | Does `authorize` and `capture` in one call |
+| `meter(client)` | Meters an OpenAI or Anthropic client automatically |
+| `check_budget()` / `query()` | Lets an agent read its own budget and spend history |
+| `*_async` | Async version of each call |
 
-See [`sdk/README.md`](sdk/README.md) for the full SDK guide.
+For the full SDK guide, see [`sdk/README.md`](sdk/README.md).
 
 ---
 
@@ -102,18 +128,18 @@ See [`sdk/README.md`](sdk/README.md) for the full SDK guide.
 | Where | Variable | Notes |
 |---|---|---|
 | SDK | `LUCNT_API_KEY` | Required |
-| SDK | `LUCNT_BASE_URL` | Default `http://localhost:8000`. Non-local hosts must be `https://` |
+| SDK | `LUCNT_BASE_URL` | Default `http://localhost:8000`. A host that is not local must use `https://` |
 | Backend | `ENVIRONMENT` | `development` / `staging` / `production`. No default |
 | Backend | `DATABASE_URL` | Postgres DSN |
-| Backend | `SECRET_KEY` | ≥32 chars outside `development` |
+| Backend | `SECRET_KEY` | 32 characters minimum outside `development` |
 
-[`backend/.env.example`](backend/.env.example) documents every other setting.
+[`backend/.env.example`](backend/.env.example) gives all other settings.
 
 **Production notes**
 
-- Keep `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × workers` under Postgres `max_connections`.
-- Behind Nginx, set `set_real_ip_from` / `real_ip_header`. Otherwise all clients share one rate-limit bucket.
-- If Redis is unreachable, rate limiting fails open, so `authorize()` keeps working.
+- Keep `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × workers` less than Postgres `max_connections`.
+- Behind Nginx, set `set_real_ip_from` and `real_ip_header`. If you do not, all clients share one rate-limit bucket.
+- If Redis is not available, rate limiting fails open. `authorize()` continues to operate.
 
 ---
 
@@ -125,7 +151,7 @@ See [`sdk/README.md`](sdk/README.md) for the full SDK guide.
 | `backend/` | `lucnt_api` service: policy, books, budgets, reconciliation | FastAPI, SQLAlchemy 2.0, Alembic, Postgres 16, Redis 7 |
 | `frontend/` | Dashboard | React 19, TypeScript, Vite, Tailwind, TanStack Query |
 | `infra/` | Docker Compose, Nginx, Prometheus alerts | |
-| `contracts/` | OpenAPI schema and verdict codes shared by SDK and frontend | |
+| `contracts/` | OpenAPI schema and verdict codes that the SDK and the frontend share | |
 
 ---
 
@@ -135,19 +161,19 @@ See [`sdk/README.md`](sdk/README.md) for the full SDK guide.
 # Backend
 cd backend && ruff check src/ tests/ scripts/ && mypy src/ scripts/ && pytest && alembic check
 
-# SDK (fully mocked, no backend needed)
+# SDK (fully mocked, no backend necessary)
 cd sdk && pip install -e ".[dev]" && ruff check . && mypy src/ && pytest
 
-# Dashboard at http://localhost:5173
-cd frontend && npm ci && npm run dev
+# Dashboard
+cd frontend && npm ci
 npm run lint && npm run typecheck && npm run test && npm run build
 ```
 
-CI ([`ci.yml`](.github/workflows/ci.yml)) also runs these checks:
+CI ([`ci.yml`](.github/workflows/ci.yml)) also does these checks:
 
-- An Alembic upgrade and downgrade round-trip
+- An Alembic upgrade and downgrade round trip
 - An API contract diff
-- A gitleaks scan over the full history
+- A gitleaks scan of the full history
 - `pip-audit` against the hashed `backend/requirements.lock`
 - A check that the container image runs as non-root
 
@@ -155,7 +181,7 @@ CI ([`ci.yml`](.github/workflows/ci.yml)) also runs these checks:
 
 ## Contributing
 
-Issues and PRs are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md). Report vulnerabilities privately per [`SECURITY.md`](SECURITY.md).
+Issues and pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md). To report a vulnerability, follow [`SECURITY.md`](SECURITY.md). Do not open a public issue.
 
 ## License
 
